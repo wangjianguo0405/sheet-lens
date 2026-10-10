@@ -1,0 +1,73 @@
+import { Crosshair, FolderOpen, PanelLeft, Search } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+
+interface ToolbarProps {
+  onOpen: () => void;
+  onToggleSearch: () => void;
+  onToggleSidebar: () => void;
+  onGoTo: () => void;
+  searchOpen: boolean;
+  sidebarOpen: boolean;
+  hasWorkbook: boolean;
+}
+
+export function Toolbar({
+  onOpen,
+  onToggleSearch,
+  onToggleSidebar,
+  onGoTo,
+  searchOpen,
+  sidebarOpen,
+  hasWorkbook,
+}: ToolbarProps) {
+  return (
+    <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
+      <span className="mr-2 text-xs font-semibold tracking-wide">SheetLens</span>
+
+      <Button
+        size="sm"
+        variant={sidebarOpen ? "secondary" : "ghost"}
+        className="h-7 px-2"
+        disabled={!hasWorkbook}
+        onClick={onToggleSidebar}
+        aria-pressed={sidebarOpen}
+        title={sidebarOpen ? "Hide the sheet list" : "Show the sheet list"}
+      >
+        <PanelLeft className="size-3.5" />
+      </Button>
+
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 gap-1.5 px-2 text-xs"
+        onClick={onOpen}
+      >
+        <FolderOpen className="size-3.5" />
+        Open
+      </Button>
+
+      <Button
+        size="sm"
+        variant={searchOpen ? "secondary" : "ghost"}
+        className="h-7 gap-1.5 px-2 text-xs"
+        disabled={!hasWorkbook}
+        onClick={onToggleSearch}
+      >
+        <Search className="size-3.5" />
+        Search
+      </Button>
+
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 gap-1.5 px-2 text-xs"
+        disabled={!hasWorkbook}
+        onClick={onGoTo}
+      >
+        <Crosshair className="size-3.5" />
+        Go To
+      </Button>
+    </div>
+  );
+}

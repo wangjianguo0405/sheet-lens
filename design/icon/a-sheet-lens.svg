@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="a-sheet">
+      <rect x="112" y="96" width="672" height="752" rx="72"/>
+    </clipPath>
+    <clipPath id="a-lens">
+      <circle cx="648" cy="624" r="180"/>
+    </clipPath>
+  </defs>
+
+  <!-- the sheet -->
+  <rect x="112" y="96" width="672" height="752" rx="72" fill="#FFFFFF"/>
+  <g clip-path="url(#a-sheet)">
+    <rect x="112" y="96" width="672" height="152" fill="#DDE8FF"/>
+    <rect x="112" y="240" width="672" height="12" fill="#B9CDF2"/>
+    <rect x="448" y="252" width="12" height="596" fill="#D8E2F4"/>
+    <rect x="112" y="398" width="672" height="12" fill="#D8E2F4"/>
+    <rect x="112" y="548" width="672" height="12" fill="#D8E2F4"/>
+    <rect x="112" y="698" width="672" height="12" fill="#D8E2F4"/>
+  </g>
+  <rect x="116" y="100" width="664" height="744" rx="68" fill="none" stroke="#C9D5E8" stroke-width="8"/>
+
+  <!-- the lens -->
+  <circle cx="648" cy="624" r="216" fill="#FFFFFF"/>
+  <g clip-path="url(#a-lens)">
+    <rect x="498" y="520" width="300" height="52" rx="26" fill="#2563EB"/>
+    <rect x="498" y="598" width="300" height="52" rx="26" fill="#2563EB"/>
+    <rect x="498" y="676" width="300" height="52" rx="26" fill="#2563EB"/>
+  </g>
+  <line x1="801" y1="777" x2="904" y2="880" stroke="#2563EB" stroke-width="96" stroke-linecap="round"/>
+  <circle cx="648" cy="624" r="216" fill="none" stroke="#2563EB" stroke-width="72"/>
+</svg>

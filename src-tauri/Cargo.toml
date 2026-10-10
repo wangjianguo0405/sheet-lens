@@ -1,0 +1,37 @@
+[package]
+name = "sheet-lens"
+version = "0.1.0"
+description = "Fast, local-first Excel viewer for developers and QA"
+authors = ["SheetLens"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name on Windows.
+# https://github.com/rust-lang/cargo/issues/8519
+name = "sheet_lens_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.1", features = [] }
+tauri-plugin-opener = "=2.7.0"
+tauri-plugin-dialog = "=2.8.1"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+calamine = { version = "=0.36.1", features = ["dates"] }
+# Same versions calamine already pulls in, so nothing new is compiled. Used to
+# read column widths and row heights, which calamine does not expose.
+quick-xml = "=0.41.0"
+zip = "=8.6.0"
+# Already in the tree via calamine's `dates` feature; used to render them.
+chrono = "=0.4.45"
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

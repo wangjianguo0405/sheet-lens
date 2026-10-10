@@ -1,0 +1,189 @@
+import { useEffect, useState } from "react";
+import { ListFilter, Loader2 } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { columnValues, type ValueCount } from "@/lib/excel";
+import { cn } from "@/lib/utils";
+
+interface FilterButtonProps {
+  path: string;
+  sheet: string;
+  col: number;
+  /** Data rows only — the header row is excluded. */
+  firstRow: number;
+  lastRow: number;
+  selected: string[];
+  onApply: (values: string[] | null) => void;
+}
+
+export function FilterButton({
+  path,
+  sheet,
+  col,
+  firstRow,
+  lastRow,
+  selected,
+  onApply,
+}: FilterButtonProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [options, setOptions] = useState<ValueCount[]>([]);
+  const [draft, setDraft] = useState<Set<string>>(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft(new Set(selected));
+    setQuery("");
+  }, [open, selected]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setBusy(true);
+    // Typing in the search box re-queries the backend, so a column with more
+    // distinct values than the cap still remains reachable.
+    const timer = window.setTimeout(() => {
+      columnValues(path, sheet, col, firstRow, lastRow, query)
+        .then((result) => {
+          if (cancelled) return;
+          setOptions(result);
+          setError(null);
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          setError(String(reason));
+        })
+        .finally(() => {
+          if (!cancelled) setBusy(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, path, sheet, col, firstRow, lastRow, query]);
+
+  const toggle = (value: string) =>
+    setDraft((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
+
+  const isFiltered = selected.length > 0;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          // The cell underneath selects on click; the button must not.
+          onClick={(event) => event.stopPropagation()}
+          aria-label={isFiltered ? "Edit filter" : "Filter column"}
+          className={cn(
+            // Excel pins this to the right edge of the header cell, centred
+            // vertically — not trailing the text wherever it happens to end.
+            "absolute top-1/2 right-0.5 flex size-3.5 -translate-y-1/2 items-center justify-center rounded-sm",
+            isFiltered
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:bg-accent",
+          )}
+        >
+          <ListFilter className="size-3" />
+        </button>
+      </PopoverTrigger>
+
+      <PopoverContent
+        align="start"
+        className="w-64 p-0"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="border-b border-border p-1.5">
+          <Input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search values…"
+            className="h-6 text-[11px]"
+          />
+        </div>
+
+        <ScrollArea className="h-56">
+          <div className="flex flex-col gap-px p-1">
+            {options.map((option) => (
+              <label
+                key={option.value || "\u0000empty"}
+                className="flex cursor-pointer items-center gap-2 rounded-sm px-1.5 py-1 text-[11px] hover:bg-accent"
+              >
+                <Checkbox
+                  checked={draft.has(option.value)}
+                  onCheckedChange={() => toggle(option.value)}
+                  className="size-3.5"
+                />
+                <span className="min-w-0 flex-1 truncate" title={option.value}>
+                  {option.value || "(空白)"}
+                </span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {option.count}
+                </span>
+              </label>
+            ))}
+
+            {options.length === 0 && !busy && (
+              <p className="px-2 py-3 text-[11px] text-muted-foreground">
+                No values match.
+              </p>
+            )}
+          </div>
+        </ScrollArea>
+
+        {error && (
+          <p className="border-t border-border px-2 py-1 text-[10px] text-destructive">
+            {error}
+          </p>
+        )}
+
+        <div className="flex items-center justify-between gap-2 border-t border-border p-1.5">
+          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            {busy && <Loader2 className="size-3 animate-spin" />}
+            {draft.size > 0 ? `${draft.size} selected` : "All values"}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => {
+                onApply(null);
+                setOpen(false);
+              }}
+            >
+              Clear
+            </Button>
+            <Button
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => {
+                onApply(draft.size > 0 ? [...draft] : null);
+                setOpen(false);
+              }}
+            >
+              Apply
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
