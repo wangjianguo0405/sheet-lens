@@ -470,113 +470,6 @@ mod tests {
         Some(load(path).expect("sample workbook should load"))
     }
 
-    #[test]
-    #[ignore = "reads a workbook from the developer's machine"]
-    fn dump_real_workbook() {
-        let path = r"D:\svn\fbs\Marusan\branches\202610_現物継承サービス案件\01doc\01.設計書\01.基本設計\04.営業支援システム\03.画面定義\ESCON0101.契約詳細_画面定義書.xlsx";
-        let started = std::time::Instant::now();
-        let mut book = load(path).expect("workbook should load");
-        println!("open_workbook total: {:?}", started.elapsed());
-
-        {
-            use std::io::Read;
-            let file = std::fs::File::open(path).expect("open");
-            let mut zip =
-                zip::read::ZipArchive::new(std::io::BufReader::new(file)).expect("zip");
-            let mut entry = zip.by_name("xl/worksheets/sheet6.xml").expect("entry");
-            println!(
-                "raw entry: declared {} bytes, compression {:?}",
-                entry.size(),
-                entry.compression()
-            );
-            let mut buf = Vec::new();
-            let read = entry.read_to_end(&mut buf).expect("read");
-            println!("raw read_to_end: {read} bytes");
-        }
-        let names: Vec<String> = book
-            .info
-            .sheets
-            .iter()
-            .map(|sheet| sheet.name.clone())
-            .collect();
-        println!("sheets ({}): {:?}", names.len(), names);
-
-        // What calamine thinks the used range is, per sheet.
-        for sheet in book.info.sheets.iter().take(3) {
-            println!("size: {} = {} rows x {} cols", sheet.name, sheet.rows, sheet.cols);
-        }
-
-        let first = names.first().cloned().expect("at least one sheet");
-        let layout = book.layout(&first).expect("layout should parse");
-
-        // How long a sheet switch has to wait before it can draw anything.
-        for name in names.iter().take(6) {
-            let started = std::time::Instant::now();
-            let _ = book.layout(name).expect("layout");
-            println!("layout {name}: {:?}", started.elapsed());
-        }
-        let started = std::time::Instant::now();
-        let _ = book.cells(&first, 0, 0, 200, 20).expect("cells");
-        println!("first cells ({first}): {:?}", started.elapsed());
-        println!("--- {first} ---");
-        println!("extent      : {} rows x {} cols", layout.rows, layout.cols);
-        println!("default col : {} chars", layout.default_col_width_chars);
-        println!("default row : {}px", layout.default_row_height_px);
-        println!("font        : {:?} @ {}px", layout.font_family, layout.font_size_px);
-        println!("cols        : {:?}", layout.col_widths_chars);
-        println!(
-            "rows 0..6   : {:?}",
-            (0..6)
-                .map(|row| layout.row_heights_px.get(&row).copied())
-                .collect::<Vec<_>>()
-        );
-        println!("merges      : {}", layout.merges.len());
-        println!(
-            "styles      : {} distinct over {} runs",
-            layout.styles.len(),
-            layout.cell_runs.values().map(Vec::len).sum::<usize>()
-        );
-        let mut fills: Vec<String> = layout
-            .styles
-            .iter()
-            .filter_map(|style| style.fill.clone())
-            .collect();
-        fills.sort();
-        fills.dedup();
-        println!("fills       : {fills:?}");
-        let mut border_colors: Vec<String> = layout
-            .styles
-            .iter()
-            .filter_map(|style| style.border.as_ref())
-            .flat_map(|border| [&border.top, &border.right, &border.bottom, &border.left])
-            .filter_map(|edge| edge.as_ref())
-            .filter_map(|edge| edge.color.clone())
-            .collect();
-        border_colors.sort();
-        border_colors.dedup();
-        println!("border inks : {border_colors:?}");
-        for name in names.iter().take(14) {
-            let Ok(parsed) = book.layout(name) else { continue };
-            let mut fills: Vec<String> = parsed
-                .styles
-                .iter()
-                .filter_map(|style| style.fill.clone())
-                .collect();
-            fills.sort();
-            fills.dedup();
-            println!("fills {name}: {fills:?}");
-            println!(
-                "   payload {name}: {} KB ({} runs, {} row styles, {} col runs)",
-                serde_json::to_string(&parsed).map(|j| j.len() / 1024).unwrap_or(0),
-                parsed.cell_runs.values().map(Vec::len).sum::<usize>(),
-                parsed.row_styles.len(),
-                parsed.col_styles.len(),
-            );
-        }
-        for style in layout.styles.iter().take(4) {
-            println!("  style -> {style:?}");
-        }
-    }
 
     /// Where the time goes between clicking a sheet and seeing it.
     #[test]
@@ -668,7 +561,7 @@ mod tests {
         let head = book.cells("基本情報", 1, 0, 2, 2).unwrap();
         assert_eq!(head[0][0].text, "項目");
         assert_eq!(head[0][1].text, "内容");
-        assert_eq!(head[1][1].text, "ゴールベースチャート作成");
+        assert_eq!(head[1][1].text, "サンプル機能A");
 
         // Row 0 holds the header, so row 3 is the record whose "行" is 3.
         let logic = book.cells("ロジック", 3, 0, 1, 4).unwrap();
@@ -735,17 +628,17 @@ mod tests {
         let Some(book) = sample() else { return };
         let tail = book.cells("変更履歴", 2, 0, 128, 32).unwrap();
         assert_eq!(tail.len(), 1);
-        assert_eq!(tail[0][2].text, "定時定額払戻開始日 の条件を追加");
+        assert_eq!(tail[0][2].text, "サンプル日付項目 の条件を追加");
     }
 
     #[test]
     fn search_covers_japanese_text_across_sheets() {
         let Some(book) = sample() else { return };
-        let hits = book.search(None, &Matcher::new("定時定額払戻開始日", false, false));
+        let hits = book.search(None, &Matcher::new("サンプル日付項目", false, false));
         assert!(hits.iter().any(|h| h.sheet == "DB抽出仕様"));
         assert!(hits.iter().any(|h| h.sheet == "変更履歴"));
 
-        let scoped = book.search(Some("変更履歴"), &Matcher::new("定時定額払戻開始日", false, false));
+        let scoped = book.search(Some("変更履歴"), &Matcher::new("サンプル日付項目", false, false));
         assert!(scoped.iter().all(|h| h.sheet == "変更履歴"));
 
         assert!(book.search(None, &Matcher::new("", false, false)).is_empty());
