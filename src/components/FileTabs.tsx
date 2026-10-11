@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,8 @@ interface FileTabsProps {
 }
 
 export function FileTabs({ tabs, active, onSelect, onClose }: FileTabsProps) {
+  const { t } = useTranslation();
+
   if (tabs.length === 0) return null;
 
   return (
@@ -41,7 +44,7 @@ export function FileTabs({ tabs, active, onSelect, onClose }: FileTabsProps) {
             </button>
             <button
               type="button"
-              aria-label={`Close ${tab.fileName}`}
+              aria-label={t("tabs.close", { name: tab.fileName })}
               className={cn(
                 "rounded-sm p-0.5 transition-opacity hover:bg-accent",
                 isActive ? "opacity-60" : "opacity-0 group-hover:opacity-60",

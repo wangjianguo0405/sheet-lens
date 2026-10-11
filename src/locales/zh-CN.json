@@ -1,0 +1,106 @@
+{
+  "app": {
+    "name": "SheetLens",
+    "resizeSheetList": "调整工作表列表宽度",
+    "dragToResize": "拖动以调整大小",
+    "dismiss": "关闭",
+    "noSheets": "此工作簿没有可读取的工作表。",
+    "extent": "{{rows}} 行 × {{cols}} 列"
+  },
+  "toolbar": {
+    "open": "打开",
+    "search": "搜索",
+    "goTo": "定位",
+    "showSheetList": "显示工作表列表",
+    "hideSheetList": "隐藏工作表列表",
+    "checkUpdates": "检查更新",
+    "updateAvailable": "有新版本可用",
+    "language": "语言"
+  },
+  "language": {
+    "en": "English",
+    "zh-CN": "简体中文",
+    "ja": "日本語"
+  },
+  "welcome": {
+    "tagline": "快速、本地优先的 Excel 查看器。打开一个工作簿，或把文件拖到窗口任意位置。",
+    "open": "打开工作簿",
+    "kbdOpen": "打开",
+    "kbdSearch": "搜索",
+    "kbdGoTo": "定位"
+  },
+  "dialog": {
+    "close": "关闭"
+  },
+  "tabs": {
+    "close": "关闭 {{name}}"
+  },
+  "sheets": {
+    "filter": "筛选工作表",
+    "clearFilter": "清除筛选",
+    "count_other": "{{count}} 个工作表",
+    "none": "没有匹配的工作表。"
+  },
+  "formulaBar": {
+    "expand": "展开",
+    "collapse": "收起"
+  },
+  "search": {
+    "title": "搜索",
+    "close": "关闭搜索",
+    "placeholder": "在工作表中查找…",
+    "thisSheet": "当前工作表",
+    "workbook": "整个工作簿",
+    "wholeCell": "整个单元格",
+    "results_other": "{{count}}{{plus}} 条结果",
+    "typeToSearch": "输入以搜索"
+  },
+  "filter": {
+    "column": "筛选此列",
+    "edit": "编辑筛选",
+    "searchValues": "搜索值…",
+    "blank": "(空白)",
+    "noMatch": "没有匹配的值。",
+    "selected": "已选 {{count}} 项",
+    "allValues": "全部值",
+    "clear": "清除",
+    "apply": "应用"
+  },
+  "goTo": {
+    "title": "跳转到单元格",
+    "description": "按引用跳转到单元格。在引用前加上工作表名可同时切换工作表，例如 <code>{{ref}}</code>。",
+    "invalid": "请输入类似 G408 或 Sheet1!G408 的引用。",
+    "noSheet": "没有名为“{{name}}”的工作表。",
+    "go": "跳转"
+  },
+  "status": {
+    "noFile": "无文件",
+    "zoomOut": "缩小",
+    "zoom": "缩放",
+    "zoomIn": "放大",
+    "resetZoom": "将缩放重置为 100%",
+    "kind": {
+      "text": "文本",
+      "number": "数值",
+      "bool": "布尔",
+      "date": "日期",
+      "error": "错误"
+    }
+  },
+  "grid": {
+    "resizeColumn": "调整列 {{column}} 的宽度",
+    "resizeColumnHint": "拖动调整宽度，双击自适应",
+    "resizeRow": "调整第 {{row}} 行的高度"
+  },
+  "update": {
+    "title": "软件更新",
+    "checking": "正在检查更新…",
+    "available": "版本 <b>{{version}}</b> 已发布。",
+    "latest": "已是最新版本。",
+    "installing": "正在下载并校验更新…",
+    "progress": "更新下载进度",
+    "restarting": "正在重启以完成更新…",
+    "install": "更新并重启",
+    "checkAgain": "重新检查"
+  }
+}
