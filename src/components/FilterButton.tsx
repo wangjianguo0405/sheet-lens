@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ListFilter, Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,6 +34,7 @@ export function FilterButton({
   selected,
   onApply,
 }: FilterButtonProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<ValueCount[]>([]);
@@ -90,7 +92,7 @@ export function FilterButton({
           type="button"
           // The cell underneath selects on click; the button must not.
           onClick={(event) => event.stopPropagation()}
-          aria-label={isFiltered ? "Edit filter" : "Filter column"}
+          aria-label={isFiltered ? t("filter.edit") : t("filter.column")}
           className={cn(
             // Excel pins this to the right edge of the header cell, centred
             // vertically — not trailing the text wherever it happens to end.
@@ -114,7 +116,7 @@ export function FilterButton({
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search values…"
+            placeholder={t("filter.searchValues")}
             className="h-6 text-[11px]"
           />
         </div>
@@ -132,7 +134,7 @@ export function FilterButton({
                   className="size-3.5"
                 />
                 <span className="min-w-0 flex-1 truncate" title={option.value}>
-                  {option.value || "(空白)"}
+                  {option.value || t("filter.blank")}
                 </span>
                 <span className="shrink-0 tabular-nums text-muted-foreground">
                   {option.count}
@@ -142,7 +144,7 @@ export function FilterButton({
 
             {options.length === 0 && !busy && (
               <p className="px-2 py-3 text-[11px] text-muted-foreground">
-                No values match.
+                {t("filter.noMatch")}
               </p>
             )}
           </div>
@@ -157,7 +159,9 @@ export function FilterButton({
         <div className="flex items-center justify-between gap-2 border-t border-border p-1.5">
           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
             {busy && <Loader2 className="size-3 animate-spin" />}
-            {draft.size > 0 ? `${draft.size} selected` : "All values"}
+            {draft.size > 0
+              ? t("filter.selected", { count: draft.size })
+              : t("filter.allValues")}
           </span>
           <div className="flex items-center gap-1">
             <Button
@@ -169,7 +173,7 @@ export function FilterButton({
                 setOpen(false);
               }}
             >
-              Clear
+              {t("filter.clear")}
             </Button>
             <Button
               size="sm"
@@ -179,7 +183,7 @@ export function FilterButton({
                 setOpen(false);
               }}
             >
-              Apply
+              {t("filter.apply")}
             </Button>
           </div>
         </div>

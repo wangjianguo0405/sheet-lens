@@ -1,0 +1,108 @@
+{
+  "app": {
+    "name": "SheetLens",
+    "resizeSheetList": "Resize the sheet list",
+    "dragToResize": "Drag to resize",
+    "dismiss": "Dismiss",
+    "noSheets": "This workbook has no readable sheets.",
+    "extent": "{{rows}} rows × {{cols}} cols"
+  },
+  "toolbar": {
+    "open": "Open",
+    "search": "Search",
+    "goTo": "Go To",
+    "showSheetList": "Show the sheet list",
+    "hideSheetList": "Hide the sheet list",
+    "checkUpdates": "Check for updates",
+    "updateAvailable": "A newer version is available",
+    "language": "Language"
+  },
+  "language": {
+    "en": "English",
+    "zh-CN": "简体中文",
+    "ja": "日本語"
+  },
+  "welcome": {
+    "tagline": "Fast, local-first Excel viewer. Open a workbook, or drag one anywhere onto this window.",
+    "open": "Open workbook",
+    "kbdOpen": "open",
+    "kbdSearch": "search",
+    "kbdGoTo": "go to"
+  },
+  "dialog": {
+    "close": "Close"
+  },
+  "tabs": {
+    "close": "Close {{name}}"
+  },
+  "sheets": {
+    "filter": "Filter sheets",
+    "clearFilter": "Clear filter",
+    "count_one": "{{count}} sheet",
+    "count_other": "{{count}} sheets",
+    "none": "No sheets match."
+  },
+  "formulaBar": {
+    "expand": "Expand",
+    "collapse": "Collapse"
+  },
+  "search": {
+    "title": "Search",
+    "close": "Close search",
+    "placeholder": "Find in sheet…",
+    "thisSheet": "This sheet",
+    "workbook": "Workbook",
+    "wholeCell": "Whole cell",
+    "results_one": "{{count}}{{plus}} result",
+    "results_other": "{{count}}{{plus}} results",
+    "typeToSearch": "Type to search"
+  },
+  "filter": {
+    "column": "Filter column",
+    "edit": "Edit filter",
+    "searchValues": "Search values…",
+    "blank": "(blank)",
+    "noMatch": "No values match.",
+    "selected": "{{count}} selected",
+    "allValues": "All values",
+    "clear": "Clear",
+    "apply": "Apply"
+  },
+  "goTo": {
+    "title": "Go to cell",
+    "description": "Jump to a cell by reference. Prefix with a sheet name to switch sheets, for example <code>{{ref}}</code>.",
+    "invalid": "Enter a reference such as G408 or Sheet1!G408.",
+    "noSheet": "No sheet named \"{{name}}\".",
+    "go": "Go"
+  },
+  "status": {
+    "noFile": "No file",
+    "zoomOut": "Zoom out",
+    "zoom": "Zoom",
+    "zoomIn": "Zoom in",
+    "resetZoom": "Reset the zoom to 100%",
+    "kind": {
+      "text": "text",
+      "number": "number",
+      "bool": "bool",
+      "date": "date",
+      "error": "error"
+    }
+  },
+  "grid": {
+    "resizeColumn": "Resize column {{column}}",
+    "resizeColumnHint": "Drag to resize, double-click to fit",
+    "resizeRow": "Resize row {{row}}"
+  },
+  "update": {
+    "title": "Software update",
+    "checking": "Checking for updates…",
+    "available": "Version <b>{{version}}</b> is available.",
+    "latest": "This is the latest version.",
+    "installing": "Downloading and checking the update…",
+    "progress": "Update download progress",
+    "restarting": "Restarting to finish the update…",
+    "install": "Update and restart",
+    "checkAgain": "Check again"
+  }
+}

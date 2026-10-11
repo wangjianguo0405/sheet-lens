@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download } from "lucide-react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -41,6 +42,7 @@ export function UpdateDialog({
   status,
   onAvailableChange,
 }: UpdateDialogProps) {
+  const { t, i18n } = useTranslation();
   const [release, setRelease] = useState<Release | null>(null);
   const [phase, setPhase] = useState<Phase>("checking");
   const [error, setError] = useState<string | null>(null);
@@ -55,14 +57,14 @@ export function UpdateDialog({
   const check = useCallback(() => {
     setPhase("checking");
     setError(null);
-    return checkForUpdate()
+    return checkForUpdate(i18n.language)
       .then((found) => {
         setRelease(found);
         onAvailableChange(found !== null);
       })
       .catch((reason: unknown) => setError(String(reason)))
       .finally(() => setPhase("ready"));
-  }, [onAvailableChange]);
+  }, [onAvailableChange, i18n.language]);
 
   // Re-checked on every open rather than reusing the startup result: the
   // releases page is the thing being asked about, and it may have moved on.
@@ -97,21 +99,24 @@ export function UpdateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-sm">Software update</DialogTitle>
+          <DialogTitle className="text-sm">{t("update.title")}</DialogTitle>
           <DialogDescription className="text-xs">
             {status ? `SheetLens ${status.version}` : "SheetLens"}
           </DialogDescription>
         </DialogHeader>
 
         {phase === "checking" && (
-          <p className="text-xs text-muted-foreground">Checking for updates…</p>
+          <p className="text-xs text-muted-foreground">{t("update.checking")}</p>
         )}
 
         {phase !== "checking" && release && (
           <div className="space-y-2">
             <p className="text-xs">
-              Version <span className="font-medium">{release.version}</span> is
-              available.
+              <Trans
+                i18nKey="update.available"
+                values={{ version: release.version }}
+                components={{ b: <span className="font-medium" /> }}
+              />
             </p>
             {release.notes && (
               <pre className="max-h-40 overflow-auto rounded border border-border bg-muted/40 p-2 text-[11px] whitespace-pre-wrap text-muted-foreground">
@@ -123,14 +128,14 @@ export function UpdateDialog({
 
         {phase === "ready" && !release && !error && (
           <p className="text-xs text-muted-foreground">
-            This is the latest version.
+            {t("update.latest")}
           </p>
         )}
 
         {phase === "installing" && (
           <div className="space-y-1.5">
             <p className="text-xs text-muted-foreground">
-              Downloading and checking the update…
+              {t("update.installing")}
               {percent !== null && ` ${percent}%`}
             </p>
             {percent !== null && (
@@ -139,7 +144,7 @@ export function UpdateDialog({
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={percent}
-                aria-label="Update download progress"
+                aria-label={t("update.progress")}
                 className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
               >
                 <div
@@ -153,7 +158,7 @@ export function UpdateDialog({
 
         {phase === "restarting" && (
           <p className="text-xs text-muted-foreground">
-            Restarting to finish the update…
+            {t("update.restarting")}
           </p>
         )}
 
@@ -167,7 +172,7 @@ export function UpdateDialog({
           {phase === "ready" && release && (
             <Button size="sm" className="h-7 gap-1.5 text-xs" onClick={install}>
               <Download className="size-3.5" />
-              Update and restart
+              {t("update.install")}
             </Button>
           )}
           {phase === "ready" && !release && (
@@ -177,7 +182,7 @@ export function UpdateDialog({
               className="h-7 text-xs"
               onClick={() => void check()}
             >
-              Check again
+              {t("update.checkAgain")}
             </Button>
           )}
         </DialogFooter>
