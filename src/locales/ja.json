@@ -2,6 +2,7 @@
   "app": {
     "name": "SheetLens",
     "resizeSheetList": "シート一覧の幅を変更",
+    "resizeSearch": "検索パネルの幅を変更",
     "dragToResize": "ドラッグでサイズ変更",
     "dismiss": "閉じる",
     "noSheets": "このブックには読み取り可能なシートがありません。",
@@ -33,7 +34,9 @@
     "close": "閉じる"
   },
   "tabs": {
-    "close": "{{name}} を閉じる"
+    "close": "{{name}} を閉じる",
+    "new": "新しいタブ",
+    "openAnother": "別のブックを開く"
   },
   "sheets": {
     "filter": "シートを絞り込む",

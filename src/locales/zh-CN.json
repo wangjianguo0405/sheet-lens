@@ -2,6 +2,7 @@
   "app": {
     "name": "SheetLens",
     "resizeSheetList": "调整工作表列表宽度",
+    "resizeSearch": "调整搜索面板宽度",
     "dragToResize": "拖动以调整大小",
     "dismiss": "关闭",
     "noSheets": "此工作簿没有可读取的工作表。",
@@ -33,7 +34,9 @@
     "close": "关闭"
   },
   "tabs": {
-    "close": "关闭 {{name}}"
+    "close": "关闭 {{name}}",
+    "new": "新标签页",
+    "openAnother": "打开其他工作簿"
   },
   "sheets": {
     "filter": "筛选工作表",

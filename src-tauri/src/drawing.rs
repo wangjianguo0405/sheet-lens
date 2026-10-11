@@ -402,6 +402,13 @@ impl<'a> Parser<'a> {
                         self.text(&content);
                     }
                 }
+                // An entity is its own event rather than part of the text beside
+                // it, so `&lt;` in a shape's wording is stitched back in here.
+                Ok(Event::GeneralRef(reference)) => {
+                    if let Some(ch) = crate::layout::entity_text(&reference) {
+                        self.text(&ch.to_string());
+                    }
+                }
                 Ok(Event::End(element)) => {
                     let name = element.local_name().as_ref().to_vec();
                     self.end(&name);

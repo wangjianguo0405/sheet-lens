@@ -3,10 +3,10 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 
+import { CanvasGrid } from "@/components/CanvasGrid";
 import { FileTabs } from "@/components/FileTabs";
 import { FormulaBar } from "@/components/FormulaBar";
 import { GoToDialog } from "@/components/GoToDialog";
-import { Grid } from "@/components/Grid";
 import { SearchPanel } from "@/components/SearchPanel";
 import { SheetList } from "@/components/SheetList";
 import { StatusBar } from "@/components/StatusBar";
@@ -39,6 +39,10 @@ const DEFAULT_SHEET_LIST_W = 240;
 const MIN_SHEET_LIST_W = 160;
 const MAX_SHEET_LIST_W = 480;
 
+const DEFAULT_SEARCH_W = 288;
+const MIN_SEARCH_W = 200;
+const MAX_SEARCH_W = 640;
+
 function looksLikeWorkbook(path: string): boolean {
   const lower = path.toLowerCase();
   return EXCEL_EXTENSIONS.some((ext) => lower.endsWith(`.${ext}`));
@@ -60,13 +64,22 @@ export default function App() {
   /** View scale as a percentage, the way Excel names it. */
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [sheetListWidth, setSheetListWidth] = useState(DEFAULT_SHEET_LIST_W);
+  const [searchWidth, setSearchWidth] = useState(DEFAULT_SEARCH_W);
+  /**
+   * Which side panel a drag is sizing, so one set of listeners serves both —
+   * the two differ only in which way the pointer's delta counts.
+   */
+  const [draggingPanel, setDraggingPanel] = useState<"sheetList" | "search" | null>(null);
   /** Where the drag started, so the width follows the pointer's delta. */
-  const sheetListDrag = useRef<{ x: number; width: number } | null>(null);
-  const [draggingSheetList, setDraggingSheetList] = useState(false);
+  const panelDrag = useRef<{ x: number; width: number } | null>(null);
   /** Only a portable build reports `portable`, and only then is it offered. */
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
+  /** The start page shown as a tab, created by the "+" and closed by its own ×. */
+  const [homeOpen, setHomeOpen] = useState(false);
+  /** The workbook to put back when that tab is closed. */
+  const lastFileRef = useRef<string | null>(null);
 
   const active = useMemo(
     () => tabs.find((tab) => tab.info.path === activePath) ?? null,
@@ -98,6 +111,10 @@ export default function App() {
               ],
         );
         setActivePath(info.path);
+        lastFileRef.current = info.path;
+        // Opening a workbook closes the start page's tab: it was somewhere to
+        // start from, not somewhere to come back to.
+        setHomeOpen(false);
       } catch (reason: unknown) {
         setError(`${path} — ${String(reason)}`);
       }
@@ -116,6 +133,35 @@ export default function App() {
       setError(String(reason));
     }
   }, [openPaths]);
+
+  /**
+   * The "+" beside the file tabs. It opens the start page as a tab of its own —
+   * and, pressed while the start page is already showing, opens the picker,
+   * because that is what the start page is for.
+   */
+  const handleNewTab = useCallback(() => {
+    if (homeOpen && activePath === null) {
+      void handleOpen();
+      return;
+    }
+    if (activePath !== null) lastFileRef.current = activePath;
+    setHomeOpen(true);
+    setActivePath(null);
+  }, [homeOpen, activePath, handleOpen]);
+
+  /** Its ×, which puts back whichever workbook was showing before it. */
+  const closeHome = useCallback(() => {
+    setHomeOpen(false);
+    if (activePath !== null) return;
+    const remembered = tabs.find((tab) => tab.info.path === lastFileRef.current);
+    setActivePath(remembered?.info.path ?? tabs.at(-1)?.info.path ?? null);
+  }, [activePath, tabs]);
+
+  /** Remember where we were, so the start page has somewhere to go back to. */
+  const selectTab = useCallback((path: string) => {
+    lastFileRef.current = path;
+    setActivePath(path);
+  }, []);
 
   const closeTab = useCallback(
     (path: string) => {
@@ -161,6 +207,23 @@ export default function App() {
   const handleSheetSelect = useCallback(
     (name: string) => updateActive({ sheet: name }),
     [updateActive],
+  );
+
+  /**
+   * Ctrl+PageUp/PageDown steps along the workbook's sheets in tab order, and
+   * stops at either end rather than wrapping — which is what Excel does.
+   */
+  const handleSheetStep = useCallback(
+    (delta: number) => {
+      if (!active) return;
+      const names = active.info.sheets.map((sheet) => sheet.name);
+      const at = names.indexOf(active.sheet);
+      if (at < 0) return;
+      const next = at + delta;
+      if (next < 0 || next >= names.length) return;
+      updateActive({ sheet: names[next] });
+    },
+    [active, updateActive],
   );
 
   const handleJump = useCallback(
@@ -269,12 +332,15 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleOpen, activePath, closeTab]);
 
-  const startSheetListDrag = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      sheetListDrag.current = { x: event.clientX, width: sheetListWidth };
-      setDraggingSheetList(true);
+  const startPanelDrag = useCallback(
+    (which: "sheetList" | "search", event: React.PointerEvent<HTMLDivElement>) => {
+      panelDrag.current = {
+        x: event.clientX,
+        width: which === "sheetList" ? sheetListWidth : searchWidth,
+      };
+      setDraggingPanel(which);
     },
-    [sheetListWidth],
+    [sheetListWidth, searchWidth],
   );
 
   /**
@@ -283,16 +349,24 @@ export default function App() {
    * reading as a resize once it is outside.
    */
   useEffect(() => {
-    if (!draggingSheetList) return;
+    if (!draggingPanel) return;
+    const isLeft = draggingPanel === "sheetList";
+    const clamp = (next: number) =>
+      isLeft
+        ? Math.min(MAX_SHEET_LIST_W, Math.max(MIN_SHEET_LIST_W, next))
+        : Math.min(MAX_SEARCH_W, Math.max(MIN_SEARCH_W, next));
+
     const onMove = (event: PointerEvent) => {
-      const drag = sheetListDrag.current;
+      const drag = panelDrag.current;
       if (!drag) return;
-      const next = drag.width + event.clientX - drag.x;
-      setSheetListWidth(
-        Math.min(MAX_SHEET_LIST_W, Math.max(MIN_SHEET_LIST_W, next)),
-      );
+      // The left panel grows as the pointer moves right, the right one as it
+      // moves left.
+      const delta = (event.clientX - drag.x) * (isLeft ? 1 : -1);
+      const next = clamp(drag.width + delta);
+      if (isLeft) setSheetListWidth(next);
+      else setSearchWidth(next);
     };
-    const onUp = () => setDraggingSheetList(false);
+    const onUp = () => setDraggingPanel(null);
 
     const { cursor, userSelect } = document.body.style;
     document.body.style.cursor = "col-resize";
@@ -307,7 +381,7 @@ export default function App() {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [draggingSheetList]);
+  }, [draggingPanel]);
 
   return (
     <TooltipProvider>
@@ -334,8 +408,13 @@ export default function App() {
             fileName: tab.info.fileName,
           }))}
           active={activePath}
-          onSelect={setActivePath}
+          onSelect={selectTab}
           onClose={closeTab}
+          homeOpen={homeOpen}
+          atHome={homeOpen && activePath === null}
+          onHome={() => setActivePath(null)}
+          onCloseHome={closeHome}
+          onNew={handleNewTab}
         />
 
         {error && active && (
@@ -370,20 +449,21 @@ export default function App() {
                     aria-orientation="vertical"
                     aria-label={t("app.resizeSheetList")}
                     title={t("app.dragToResize")}
-                    onPointerDown={startSheetListDrag}
+                    onPointerDown={(event) => startPanelDrag("sheetList", event)}
                     className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#217346]/40"
                   />
                 </>
               )}
 
               <div className="min-w-0 flex-1">
-                <Grid
+                <CanvasGrid
                   path={active.info.path}
                   sheet={activeSheet}
                   selection={selection}
                   onSelect={handleSelect}
                   onDetail={setDetail}
                   onExtent={handleExtent}
+                  onSheetStep={handleSheetStep}
                   zoom={zoom}
                   onZoom={setZoom}
                   bar={
@@ -396,14 +476,25 @@ export default function App() {
               </div>
 
               {searchOpen && (
-                <div className="w-72 shrink-0">
-                  <SearchPanel
-                    path={active.info.path}
-                    sheet={active.sheet}
-                    onJump={handleJump}
-                    onClose={() => setSearchOpen(false)}
+                <>
+                  {/* Mirrors the sheet list's handle, on the other side. */}
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={t("app.resizeSearch")}
+                    title={t("app.dragToResize")}
+                    onPointerDown={(event) => startPanelDrag("search", event)}
+                    className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#217346]/40"
                   />
-                </div>
+                  <div className="shrink-0" style={{ width: searchWidth }}>
+                    <SearchPanel
+                      path={active.info.path}
+                      sheet={active.sheet}
+                      onJump={handleJump}
+                      onClose={() => setSearchOpen(false)}
+                    />
+                  </div>
+                </>
               )}
             </>
           ) : active ? (

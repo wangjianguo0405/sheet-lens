@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek};
 
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::Reader as XmlReader;
 use quick_xml::XmlVersion;
 use serde::Serialize;
@@ -29,7 +29,7 @@ const INDEXED: [&str; 64] = [
     "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF", "000000",
     "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF", "800000", "008000",
     "000080", "808000", "800080", "008080", "C0C0C0", "808080", "9999FF", "993366", "FFFFCC",
-    "CCFFFF", "660066", "FF8080", "0066CC", "CCCCCC", "000080", "FF00FF", "FFFF00", "00FFFF",
+    "CCFFFF", "660066", "FF8080", "0066CC", "CCCCFF", "000080", "FF00FF", "FFFF00", "00FFFF",
     "800080", "800000", "008080", "0000FF", "00CCFF", "CCFFFF", "CCFFCC", "FFFF99", "99CCFF",
     "FF99CC", "CC99FF", "FFCC99", "3366FF", "33CCCC", "99CC00", "FFCC00", "FF9900", "FF6600",
     "666699", "969696", "003366", "339966", "003300", "333300", "993300", "993366", "333399",
@@ -239,26 +239,19 @@ impl SheetLayout {
     /// What Excel prints when the sheet defines no `_xlnm.Print_Area`, and so
     /// also what it shades around.
     ///
-    /// It falls back to the used range — but to the range that has something in
-    /// it, not to the box around every cell the file mentions. Those differ
-    /// wherever a cell keeps formatting and nothing else: `変更履歴` of ESCUS0102
-    /// has ghost cells in columns BC and BD, which stretch its `UsedRange` to 56
-    /// columns while Excel paints 54. A merged banner counts even with no value
-    /// in it, which is what holds `表紙` open to column AW.
+    /// Excel's used range — what `Ctrl+End` jumps to — covers every cell the
+    /// sheet *formats*, not only the ones holding a value. Checked on `表紙` of
+    /// ESCUS0102, where the values stop at row 36 and a `Ctrl+End` lands on
+    /// `AW44`: the shading and the page's edge both run to row 44, and the
+    /// earlier reading that only value-bearing cells counted put that edge four
+    /// rows too high. Merged ranges already extend the extent, which is what
+    /// holds a merged banner open to the sheet's last column.
     fn print_region(&self) -> Option<MergeRect> {
-        let merged = self.merges.iter().fold((0, 0), |(rows, cols), merge| {
-            (
-                rows.max(merge.row + merge.rows),
-                cols.max(merge.col + merge.cols),
-            )
-        });
-        let rows = self.content_rows.max(merged.0);
-        let cols = self.content_cols.max(merged.1);
-        (rows > 0 && cols > 0).then_some(MergeRect {
+        (self.rows > 0 && self.cols > 0).then_some(MergeRect {
             row: 0,
             col: 0,
-            rows,
-            cols,
+            rows: self.rows,
+            cols: self.cols,
         })
     }
 
@@ -355,15 +348,6 @@ pub struct SheetLayout {
     /// how tables close off their right edge — vanishes from it.
     pub rows: u32,
     pub cols: u32,
-    /// The box around the cells that hold *something* — the counterpart of
-    /// `rows`/`cols`, which box every cell that is formatted. Excel prints and
-    /// shades around this one, and the two genuinely differ: a cell that keeps
-    /// only a font after its content was deleted is formatted but not used.
-    /// Not sent to the grid, which has no use for it.
-    #[serde(skip)]
-    pub content_rows: u32,
-    #[serde(skip)]
-    pub content_cols: u32,
     /// Columns arrive in the file's own unit — a multiple of the workbook
     /// font's maximum digit width — and stay in it: only the renderer, which
     /// can measure that font, knows how many pixels one of them is.
@@ -410,6 +394,23 @@ pub struct SheetLayout {
     /// used to read it in. Not part of what the grid sees.
     #[serde(skip)]
     pub drawing_rel: Option<String>,
+    /// Cells whose text is written as several runs with colours of their own,
+    /// keyed by the string they spell out — which is what a cell holds, so the
+    /// renderer can find a cell's runs without the sheet recording anything per
+    /// cell. Sparse by nature: only strings that really carry a colour appear.
+    pub rich_text: HashMap<String, Vec<RichRun>>,
+}
+
+/// One coloured run of a cell's rich text.
+///
+/// A cell shows the concatenation of its runs, so the text is nothing new; what
+/// a run adds is a colour for part of it, which is how a document makes one word
+/// inside a sentence red.
+#[derive(Serialize, Clone)]
+pub struct RichRun {
+    pub text: String,
+    /// `#rrggbb`, or `None` when the run takes the cell's own colour.
+    pub color: Option<String>,
 }
 
 impl SheetLayout {
@@ -417,8 +418,6 @@ impl SheetLayout {
         Self {
             rows: 0,
             cols: 0,
-            content_rows: 0,
-            content_cols: 0,
             default_col_width_chars: STOCK_COL_WIDTH_CHARS,
             default_row_height_px: points_to_px(STOCK_ROW_HEIGHT_PT),
             font_family: None,
@@ -435,6 +434,7 @@ impl SheetLayout {
             col_styles: Vec::new(),
             drawings: Vec::new(),
             drawing_rel: None,
+            rich_text: HashMap::new(),
         }
     }
 }
@@ -479,6 +479,10 @@ pub struct Cache {
     /// The theme's own line widths, which a shape's `lnRef idx` selects from.
     ln_widths: Vec<f64>,
     styles: Styles,
+    /// Shared strings split into coloured runs, keyed by the text they spell
+    /// out. Nearly every string in every sheet is shared, so this is read once
+    /// per workbook rather than once per sheet.
+    rich_strings: HashMap<String, Vec<RichRun>>,
 }
 
 impl Cache {
@@ -491,6 +495,11 @@ impl Cache {
         self.theme = theme_slots(&read_theme(&mut zip));
         self.ln_widths = read_line_widths(&mut zip);
         self.styles = read_styles(&mut zip, &self.theme);
+        // Absent in a workbook that writes its strings inline, which is why
+        // this is a lookup on failure rather than an error.
+        if let Ok(xml) = read_entry(&mut zip, "xl/sharedStrings.xml") {
+            self.rich_strings = rich_strings(&xml, &self.theme);
+        }
         self.loaded = true;
         Ok(())
     }
@@ -511,6 +520,9 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     // white to the edge while every other sheet in the same workbook greyed out
     // past its last cell.
     layout.print_area = print_area(&workbook, sheet).or_else(|| layout.print_region());
+    // Workbook-wide, so every sheet carries the same table and the renderer
+    // simply looks up whatever text it is about to draw.
+    layout.rich_text = cache.rich_strings.clone();
     read_drawings(&mut zip, cache, &part, &mut layout);
     Ok(layout)
 }
@@ -609,6 +621,113 @@ fn resolve_target(dir: &str, target: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+/// The character an entity reference stands for.
+///
+/// quick-xml hands `&lt;` back as its own event rather than as part of the text
+/// around it, so a parser that reads only `Event::Text` drops it silently — which
+/// is how `<>` inside a label came out as nothing at all, and with it every
+/// coloured run keyed by that label.
+pub(crate) fn entity_text(reference: &BytesRef) -> Option<char> {
+    if let Ok(Some(ch)) = reference.resolve_char_ref() {
+        return Some(ch);
+    }
+    match reference.decode().ok()?.as_ref() {
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "amp" => Some('&'),
+        "apos" => Some('\''),
+        "quot" => Some('"'),
+        _ => None,
+    }
+}
+
+/// The shared strings that are split into coloured runs, keyed by the text they
+/// spell out.
+///
+/// A cell shows the concatenation of its runs either way, so the text is nothing
+/// new; what a run adds is a colour for part of it — how one word inside a
+/// sentence comes out red. Keying by the whole string is what lets the renderer
+/// find a cell's runs without the sheet having to record anything per cell, and
+/// it costs nothing: the runs already spell the key out.
+///
+/// Only strings whose runs really carry a colour are kept. A run that merely
+/// restates the cell's own colour draws exactly like the plain text, and keeping
+/// those would put most of the workbook in the table.
+fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<RichRun>> {
+    let mut out = HashMap::new();
+    let mut reader = XmlReader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut runs: Option<Vec<RichRun>> = None;
+    let mut run: Option<RichRun> = None;
+    let mut in_text = false;
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) => match element.local_name().as_ref() {
+                b"si" => runs = Some(Vec::new()),
+                b"r" => {
+                    run = Some(RichRun {
+                        text: String::new(),
+                        color: None,
+                    });
+                }
+                b"t" => in_text = true,
+                b"color" => {
+                    if let (Some(run), Some(color)) = (run.as_mut(), color_of(&element, theme)) {
+                        run.color = Some(color);
+                    }
+                }
+                _ => {}
+            },
+            // `<color …/>` is how a run names its colour, and an empty element
+            // never gets a start/end pair.
+            Ok(Event::Empty(element)) if element.local_name().as_ref() == b"color" => {
+                if let (Some(run), Some(color)) = (run.as_mut(), color_of(&element, theme)) {
+                    run.color = Some(color);
+                }
+            }
+            // An entity arrives as its own event, so the text around it has to be
+            // stitched back together here or the run loses those characters and
+            // stops matching the cell it belongs to.
+            Ok(Event::GeneralRef(reference)) => {
+                if let (Some(run), Some(ch)) = (run.as_mut(), entity_text(&reference)) {
+                    run.text.push(ch);
+                }
+            }
+            // Only text inside a `<r>` counts; a phonetic `<rPh>` sets the same
+            // flag but has no run open, so its reading is left out.
+            Ok(Event::Text(text)) if in_text => {
+                if let (Some(run), Ok(text)) =
+                    (run.as_mut(), text.xml_content(XmlVersion::default()))
+                {
+                    run.text.push_str(&text);
+                }
+            }
+            Ok(Event::End(element)) => match element.local_name().as_ref() {
+                b"t" => in_text = false,
+                b"r" => {
+                    if let (Some(list), Some(run)) = (runs.as_mut(), run.take()) {
+                        list.push(run);
+                    }
+                }
+                b"si" => {
+                    if let Some(list) = runs.take() {
+                        if list.iter().any(|run| run.color.is_some()) {
+                            let text: String = list.iter().map(|run| run.text.as_str()).collect();
+                            out.insert(text, list);
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The sheet's `_xlnm.Print_Area`, if it has one.
@@ -1206,14 +1325,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
     let mut declared_default_row: Option<f64> = None;
     let mut extent_rows: u32 = 0;
     let mut extent_cols: u32 = 0;
-    // The two boxes are tracked apart: the extent above boxes every formatted
-    // cell, `content` only the cells that hold something. Excel prints the
-    // second, and the gap between them is what makes 変更履歴 paint 54 columns
-    // where its `UsedRange` claims 56.
-    let mut content_rows: u32 = 0;
-    let mut content_cols: u32 = 0;
-    // The `<c>` whose children are being read, so a `<v>` finds its cell.
-    let mut cell_at: Option<(u32, u32)> = None;
     // Distinct styles seen so far, so each is stored once.
     let mut style_ids: HashMap<CellStyle, u32> = HashMap::new();
     let mut styled_cells: HashMap<u32, u32> = HashMap::new();
@@ -1315,17 +1426,17 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         extent_rows = extent_rows.max(row);
                     }
                     b"c" => {
-                        // Remember the cell before its children are read: a
-                        // `<v>` (or an `<is>` for inline text) below it is what
-                        // says the cell holds something.
-                        cell_at = attr(&element, b"r").and_then(|r| parse_cell(&r));
-
                         // Cell display values come from calamine; this pass only
                         // recovers the style, and only when it says something.
                         if cell_count >= MAX_STYLED_CELLS {
                             continue;
                         }
                         cell_count += 1;
+                        let Some((row, col)) =
+                            attr(&element, b"r").and_then(|r| parse_cell(&r))
+                        else {
+                            continue;
+                        };
                         let Some(index) = attr(&element, b"s")
                             .and_then(|v| v.parse::<usize>().ok())
                         else {
@@ -1334,19 +1445,10 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         let Some(style) = styles.cell_style(index, default_font_px) else {
                             continue;
                         };
-                        let Some((row, col)) = cell_at else {
-                            continue;
-                        };
                         let index = intern(&mut layout.styles, &mut style_ids, style);
                         styled_cells.insert(pack(row, col), index);
                         extent_rows = extent_rows.max(row + 1);
                         extent_cols = extent_cols.max(col + 1);
-                    }
-                    b"v" | b"is" => {
-                        if let Some((row, col)) = cell_at {
-                            content_rows = content_rows.max(row + 1);
-                            content_cols = content_cols.max(col + 1);
-                        }
                     }
                     b"mergeCell" => {
                         if layout.merges.len() >= MAX_MERGES {
@@ -1396,9 +1498,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
             }
             Ok(Event::End(element)) => {
                 match element.local_name().as_ref() {
-                    // An `<c>` written as an empty element never gets an `End`,
-                    // so `row` clears the rest.
-                    b"c" | b"row" => cell_at = None,
                     b"filterColumn" => filter_col = None,
                     _ => {}
                 }
@@ -1421,8 +1520,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
 
     layout.rows = extent_rows.min(MAX_SHEET_ROWS);
     layout.cols = extent_cols.min(MAX_SHEET_COLS);
-    layout.content_rows = content_rows.min(MAX_SHEET_ROWS);
-    layout.content_cols = content_cols.min(MAX_SHEET_COLS);
 
     // Collapse styled cells into per-row runs.
     let mut by_row: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
@@ -1823,6 +1920,13 @@ mod tests {
             color_of(&element(r#"<color indexed="8"/>"#), &theme).as_deref(),
             Some("#000000")
         );
+        // 31 is the pale blue these design documents fill their headings with,
+        // and it is the one slot the palette is easy to get wrong: read from a
+        // neighbouring entry it comes out grey and the fill looks plausible.
+        assert_eq!(
+            color_of(&element(r#"<color indexed="31"/>"#), &theme).as_deref(),
+            Some("#CCCCFF")
+        );
         assert_eq!(
             color_of(&element(r#"<color indexed="64"/>"#), &theme).as_deref(),
             Some("#000000")
@@ -1900,40 +2004,135 @@ mod tests {
         assert!(layout.auto_filter.is_none());
     }
 
-    /// The fallback boxes the cells that hold something, plus any merged range —
-    /// not the box around every formatted cell. The two really are different, and
-    /// taking the wrong one is what made a sheet paint two columns too wide.
+    /// The fallback is the sheet's used range — every cell it formats, with
+    /// merged ranges folded in during the parse. `Ctrl+End` on `表紙` of
+    /// ESCUS0102 lands on `AW44` while its values stop at row 36, which is what
+    /// put the page's edge back down on row 44.
     #[test]
-    fn the_print_fallback_is_content_and_merges_not_the_extent() {
+    fn the_print_fallback_is_the_sheets_used_range() {
         let mut layout = SheetLayout::empty();
-        // `表紙` of ESCUS0102, to scale: formatting reaches 44×49, the content
-        // stops at 36×44, and a banner merge closes off all 49 columns.
+        // `表紙` of ESCUS0102, to scale: formatted out to 44 rows and 49 columns.
         layout.rows = 44;
         layout.cols = 49;
-        layout.content_rows = 36;
-        layout.content_cols = 44;
-        layout.merges.push(MergeRect {
-            row: 0,
-            col: 0,
-            rows: 2,
-            cols: 49,
-        });
 
         let area = layout.print_region().expect("a fallback is always there");
-        assert_eq!((area.row, area.col, area.rows, area.cols), (0, 0, 36, 49));
+        assert_eq!((area.row, area.col, area.rows, area.cols), (0, 0, 44, 49));
     }
 
-    /// Excel prints the range that has something in it when a sheet defines no
-    /// `_xlnm.Print_Area`, and shades around it just the same — so the sheets
-    /// that never had one still grey out past their last cell instead of running
-    /// white to the edge.
+    /// Excel prints the used range when a sheet defines no `_xlnm.Print_Area`,
+    /// and shades around it just the same — so the sheets that never had one
+    /// still grey out past their last cell instead of running white to the edge.
     #[test]
     fn without_a_print_area_the_used_range_stands_in() {
         let Some(layout) = sample("基本情報") else { return };
         let area = layout.print_area.expect("the fallback should stand in");
-        assert!(area.rows >= layout.content_rows && area.cols >= layout.content_cols);
+        assert!(area.rows >= layout.rows && area.cols >= layout.cols);
         // Guards against a vacuous pass on a degenerate sheet.
         assert!(area.rows > 1 && area.cols > 1);
+    }
+
+    /// Only the strings that colour part of themselves are kept, they are keyed
+    /// by the text they spell out — which is what the cell holds, so the renderer
+    /// can find a cell's runs without the sheet recording anything — and an
+    /// escaped character inside one is put back, since the key has to match the
+    /// text the cell reports.
+    #[test]
+    fn keeps_the_runs_of_a_string_that_colours_a_word() {
+        let xml = r#"<sst><si><t>plain</t></si><si><r><rPr><sz val="9"/></rPr><t>a</t></r><r><rPr><color rgb="FFFF0000"/></rPr><t>red</t></r><r><t>w&lt;&gt;ord</t></r></si></sst>"#;
+        let runs = rich_strings(xml, &[]);
+        assert_eq!(runs.len(), 1, "a string with no colour is not worth a table entry");
+        let list = runs.get("aredw<>ord").expect("keyed by the whole text");
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].color, None);
+        assert_eq!(list[1].color.as_deref(), Some("#FF0000"));
+        assert_eq!(list[2].color, None);
+    }
+
+    /// Dumps the coloured-run table a workbook yields, and — the part that
+    /// matters — whether the cells really report the text those runs are keyed
+    /// by. The renderer looks a cell's runs up by its own text, so a key no cell
+    /// reports would leave the feature silently doing nothing.
+    ///
+    /// Ignored by default: it reads the workbook named by `SHEETLENS_XLSX`.
+    #[test]
+    #[ignore = "reads a workbook from the developer's machine"]
+    fn dump_rich_text() {
+        let Ok(path) = std::env::var("SHEETLENS_XLSX") else {
+            return;
+        };
+        let book = crate::excel::load(&path).expect("open");
+        let mut cache = Cache::default();
+        for sheet in &book.info.sheets {
+            let Ok(layout) = read_cached(&mut cache, &path, &sheet.name) else {
+                continue;
+            };
+            if layout.rich_text.is_empty() {
+                continue;
+            }
+            println!("--- {} : {} rich strings", sheet.name, layout.rich_text.len());
+            for (text, runs) in layout.rich_text.iter().take(5) {
+                let head: String = text.chars().take(28).collect();
+                let colours: Vec<&str> = runs.iter().filter_map(|run| run.color.as_deref()).collect();
+                println!(
+                    "    {:?}… — {} runs, {} chars, colours {:?}",
+                    head,
+                    runs.len(),
+                    text.chars().count(),
+                    colours
+                );
+            }
+
+            let cells = book
+                .cells(&sheet.name, 0, 0, sheet.rows.min(400), sheet.cols.min(64))
+                .unwrap_or_default();
+            let matched = cells
+                .iter()
+                .flatten()
+                .filter(|cell| layout.rich_text.contains_key(&cell.text))
+                .count();
+            let plain = cells.iter().flatten().filter(|cell| cell.text != "").count();
+            println!("    {matched} of {plain} non-empty cells found their runs");
+            // What the nearest cell text looks like, when nothing matched.
+            let longest = cells
+                .iter()
+                .flatten()
+                .filter(|cell| !cell.text.is_empty())
+                .max_by_key(|cell| cell.text.chars().count());
+            if let Some(cell) = longest {
+                let head: String = cell.text.chars().take(28).collect();
+                let tail: String = cell.text.chars().skip(cell.text.chars().count().saturating_sub(24)).collect();
+                println!(
+                    "    longest cell text: {:?}… ({} chars) tail {:?}",
+                    head,
+                    cell.text.chars().count(),
+                    tail
+                );
+                if let Some((key, _)) = layout
+                    .rich_text
+                    .iter()
+                    .max_by_key(|(text, _)| text.chars().count())
+                {
+                    let tail: String = key.chars().skip(key.chars().count().saturating_sub(24)).collect();
+                    println!("    longest key tail: {:?}", tail);
+                    let at = cell
+                        .text
+                        .chars()
+                        .zip(key.chars())
+                        .position(|(a, b)| a != b);
+                    let around = |text: &str| -> String {
+                        text.chars().skip(at.unwrap_or(0).saturating_sub(8)).take(40).collect()
+                    };
+                    println!(
+                        "    first difference at char {:?}; cell {} chars, key {} chars",
+                        at,
+                        cell.text.chars().count(),
+                        key.chars().count()
+                    );
+                    println!("      cell: {:?}", around(&cell.text));
+                    println!("      key : {:?}", around(key));
+                }
+            }
+        }
     }
 
     #[test]

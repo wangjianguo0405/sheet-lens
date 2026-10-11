@@ -75,6 +75,19 @@ export interface MergeRect {
   cols: number;
 }
 
+/**
+ * One coloured run of a cell's rich text.
+ *
+ * A cell shows the concatenation of its runs, so the text says nothing new; what
+ * a run adds is a colour for part of it, which is how a document makes one word
+ * inside a sentence red.
+ */
+export interface RichRun {
+  text: string;
+  /** `#rrggbb`, or null when the run takes the cell's own colour. */
+  color: string | null;
+}
+
 export interface AutoFilter {
   /** Sheet row holding the filter buttons. */
   row: number;
@@ -226,6 +239,13 @@ export interface SheetLayout {
    * draws them — later ones sit on top.
    */
   drawings: Shape[];
+  /**
+   * Strings split into runs with colours of their own, keyed by the text they
+   * spell out — which is exactly what a cell holds, so a cell's runs are found
+   * without the sheet recording anything per cell. Empty for a workbook that
+   * never colours part of a string.
+   */
+  richText: Record<string, RichRun[]>;
 }
 
 export interface ValueCount {

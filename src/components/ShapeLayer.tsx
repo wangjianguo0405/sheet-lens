@@ -281,7 +281,7 @@ export interface ShapeDebugFacts {
   printArea: { row: number; col: number; rows: number; cols: number } | null;
   /** The selected cell's resolved style, already laid out as printed. */
   cellReadout: string;
-  /** How long the last sheet switch took, and how much of it was this frame. */
+  /** What the last frame repainted, how long each layer took, and what it drew. */
   timings: string;
 }
 
