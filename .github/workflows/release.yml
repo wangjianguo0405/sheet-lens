@@ -29,6 +29,10 @@ jobs:
   diagnose:
     runs-on: windows-latest
     steps:
+      # Without a checkout `gh release create` gives up before it makes the call
+      # ("failed to run git"), which is the call this job exists to watch.
+      - uses: actions/checkout@v4
+
       - name: What this token can do
         shell: pwsh
         env:
@@ -44,7 +48,7 @@ jobs:
           gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=1" --jq 'length'
           Write-Output "=== the call that fails, with the whole conversation shown ==="
           $env:GH_DEBUG = "api"
-          gh release create "v0.0.0-diagnostic" --draft --target "$env:GITHUB_SHA" --title "diagnostic - safe to delete" --notes "probe" 2>&1 | Select-Object -Last 60
+          gh release create "v0.0.0-diagnostic" --draft --target "$env:GITHUB_SHA" --title "diagnostic - safe to delete" --notes "probe" 2>&1 | Select-Object -Last 120
           Write-Output "=== end: a 403 above is the bug; 'Created draft release' means it worked ==="
           exit 0
 
