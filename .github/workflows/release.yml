@@ -1,0 +1,116 @@
+name: Release windows portable
+
+# Push a tag to publish. The version baked into the build is read from
+# src-tauri/tauri.conf.json, so bump package.json, Cargo.toml and
+# tauri.conf.json together and make the tag match:
+#
+#   git tag v0.1.1 && git push origin v0.1.1
+#
+# The tag must be newer than what users are running, or no client will offer it.
+#
+# Requires the repository secret TAURI_SIGNING_PRIVATE_KEY: the private half of
+# the key whose public half is plugins.updater.pubkey in tauri.conf.json. Losing
+# it means never being able to update an already-installed copy again.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # A cold release build of a Tauri app is slow; this makes a rebuild after
+      # a small change a few minutes instead.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - run: pnpm install --frozen-lockfile
+
+      # No bundle: the portable build *is* the bare executable.
+      - run: pnpm tauri build --no-bundle --ci
+
+      - name: Package, sign and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ runner.temp }}\sheetlens.key
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SIGNING_KEY)) {
+            throw "Repository secret TAURI_SIGNING_PRIVATE_KEY is not set."
+          }
+          Set-Content -Path $env:TAURI_SIGNING_PRIVATE_KEY_PATH -Value $env:SIGNING_KEY -NoNewline
+
+          $version = (Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          $arch = "x64"
+          $zipName = "SheetLens_${version}_${arch}-portable.zip"
+
+          # `--no-bundle` leaves the raw cargo build, named after the crate; some
+          # Tauri versions rename it to the product name instead. Take whichever
+          # is there rather than guessing.
+          $built = @(
+            "src-tauri/target/release/SheetLens.exe"
+            "src-tauri/target/release/sheet-lens.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $built) { throw "No built executable in src-tauri/target/release." }
+
+          $stage = "portable/SheetLens_${version}_${arch}"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item $built (Join-Path $stage "SheetLens.exe") -Force
+          Copy-Item "README.md" (Join-Path $stage "README.md") -Force
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" (Join-Path $stage "LICENSE") -Force }
+
+          # Its presence beside the executable is what lets the app replace
+          # itself; a build without it will not offer to update.
+          Set-Content -Path (Join-Path $stage "portable.sheetlens") -Value "" -NoNewline
+
+          # Carried inside the signed archive. The app checks it against the
+          # version it was told about before it installs anything.
+          $manifest = [ordered]@{ schema = 1; version = $version; arch = $arch } | ConvertTo-Json
+          Set-Content -Path (Join-Path $stage "update-manifest.json") -Value $manifest -Encoding utf8NoBOM
+
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zipName -Force
+
+          # The key has no password, so pass an explicit empty one: omitting it
+          # makes the signer prompt, which hangs a non-interactive job.
+          pnpm tauri signer sign --app-version $version --password= $zipName
+          if (!(Test-Path "$zipName.sig")) { throw "Missing signature: $zipName.sig" }
+
+          # The updater reads this for the latest version and derives the archive
+          # URL from it, so the file name, the tag and the version must agree.
+          $latest = [ordered]@{
+            version   = $version
+            notes     = "Portable build."
+            pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = (Get-Content "$zipName.sig" -Raw).Trim()
+                url       = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$zipName"
+              }
+            }
+          } | ConvertTo-Json -Depth 4
+          Set-Content -Path "latest.json" -Value $latest -Encoding utf8NoBOM
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --target "$env:GITHUB_SHA" --title "SheetLens $version" --notes "Portable build."
+          }
+          gh release upload $tag $zipName "$zipName.sig" "latest.json" --clobber
