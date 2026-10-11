@@ -63,6 +63,34 @@ jobs:
           $arch = "x64"
           $zipName = "SheetLens_${version}_${arch}-portable.zip"
 
+          # The changelog section for this version. All three languages must have
+          # one — a release with nothing to say about itself is worse than no
+          # release, and a translation that quietly lags is worse than none.
+          function Get-VersionNotes([string]$ChangelogPath, [string]$Target) {
+            $match = [regex]::Match(
+              # Explicitly UTF-8: an inherited ANSI codepage silently mangles the
+              # CJK sections into mojibake rather than failing.
+              (Get-Content $ChangelogPath -Raw -Encoding utf8),
+              "(?sm)^##\s+\[?$([regex]::Escape($Target))\]?[^\n]*\r?\n(.*?)(?=^##\s|\z)"
+            )
+            if (-not $match.Success) { throw "$ChangelogPath has no '## [$Target]' section. Add one for this release." }
+            $text = $match.Groups[1].Value.Trim()
+            if (-not $text) { throw "The $Target section of $ChangelogPath is empty." }
+            return $text
+          }
+
+          # The release page carries every language; the app shows one. It has no
+          # language setting yet and its interface is English, so English is what
+          # it is handed — revisit when the app can choose for itself.
+          $notes = Get-VersionNotes "CHANGELOG.md" $version
+          $releaseBody = @(
+            "## English", $notes,
+            "", "## 简体中文", (Get-VersionNotes "CHANGELOG.zh-CN.md" $version),
+            "", "## 日本語", (Get-VersionNotes "CHANGELOG.ja.md" $version)
+          ) -join "`n"
+          $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -Path $notesFile -Value $releaseBody -Encoding utf8NoBOM
+
           # `--no-bundle` leaves the raw cargo build, named after the crate; some
           # Tauri versions rename it to the product name instead. Take whichever
           # is there rather than guessing.
@@ -75,7 +103,8 @@ jobs:
           $stage = "portable/SheetLens_${version}_${arch}"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item $built (Join-Path $stage "SheetLens.exe") -Force
-          Copy-Item "README.md" (Join-Path $stage "README.md") -Force
+          Copy-Item "README*.md" $stage -Force
+          Copy-Item "CHANGELOG*.md" $stage -Force
           if (Test-Path "LICENSE") { Copy-Item "LICENSE" (Join-Path $stage "LICENSE") -Force }
 
           # Its presence beside the executable is what lets the app replace
@@ -98,7 +127,7 @@ jobs:
           # URL from it, so the file name, the tag and the version must agree.
           $latest = [ordered]@{
             version   = $version
-            notes     = "Portable build."
+            notes     = $notes
             pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
@@ -111,6 +140,10 @@ jobs:
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --target "$env:GITHUB_SHA" --title "SheetLens $version" --notes "Portable build."
+            gh release create $tag --target "$env:GITHUB_SHA" --title "SheetLens $version" --notes-file $notesFile
+          } else {
+            # A re-run should land the same notes as a first run, not leave
+            # whatever the previous attempt wrote.
+            gh release edit $tag --notes-file $notesFile
           }
           gh release upload $tag $zipName "$zipName.sig" "latest.json" --clobber

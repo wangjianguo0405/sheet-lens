@@ -31,6 +31,22 @@ committing instead of editing it by hand.
 not from the tag. A `v0.1.3` tag on a build that still says `0.1.2` would go on
 to re-upload over the *existing* `v0.1.2` release and overwrite its artifacts.
 
+## Writing the notes
+
+Add the new version's section to **all three** changelogs — `CHANGELOG.md`,
+`CHANGELOG.zh-CN.md`, `CHANGELOG.ja.md`. The build refuses to run if any of them
+is missing it, which is deliberate: a release with nothing to say about itself
+is worse than no release, and a translation that quietly lags is worse than none
+at all.
+
+Those sections become the release page (all three, under a heading each) and the
+notes the app shows when it offers the update. The app gets **English only** for
+now — it has no language setting, and its interface is English. Point that at
+the user's language once the app has one.
+
+Write for whoever is being asked to install it, not for whoever wrote the code.
+
+
 ## What a release needs that is not in the repo
 
 The private half of the signing key, as the repository secret
