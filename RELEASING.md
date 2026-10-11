@@ -39,7 +39,7 @@ Write for whoever is being asked to install it, not for whoever wrote the code.
 **3. Commit, tag, push.**
 
 ```bash
-git add package.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG*.md
+git add package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json CHANGELOG*.md
 git commit -m "chore: release 0.1.2"
 git tag v0.1.2
 git push origin main && git push origin v0.1.2
