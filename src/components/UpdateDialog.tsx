@@ -13,8 +13,10 @@ import {
 import {
   checkForUpdate,
   installUpdate,
+  onUpdateProgress,
   restartToApply,
   type Release,
+  type UpdateProgress,
   type UpdateStatus,
 } from "@/lib/update";
 
@@ -42,6 +44,13 @@ export function UpdateDialog({
   const [release, setRelease] = useState<Release | null>(null);
   const [phase, setPhase] = useState<Phase>("checking");
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
+
+  /** Percent downloaded, or null when the server never announced a length. */
+  const percent =
+    progress && progress.total > 0
+      ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
+      : null;
 
   const check = useCallback(() => {
     setPhase("checking");
@@ -64,6 +73,12 @@ export function UpdateDialog({
   const install = async () => {
     setPhase("installing");
     setError(null);
+    setProgress(null);
+    // Listened for before the command is invoked: the first chunks can land
+    // before its promise resolves, and a listener added afterwards misses them.
+    const stopListening = await onUpdateProgress(setProgress).catch(
+      () => () => {},
+    );
     try {
       await installUpdate();
       setPhase("restarting");
@@ -73,6 +88,8 @@ export function UpdateDialog({
     } catch (reason: unknown) {
       setPhase("ready");
       setError(String(reason));
+    } finally {
+      stopListening();
     }
   };
 
@@ -111,9 +128,27 @@ export function UpdateDialog({
         )}
 
         {phase === "installing" && (
-          <p className="text-xs text-muted-foreground">
-            Downloading and checking the update…
-          </p>
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground">
+              Downloading and checking the update…
+              {percent !== null && ` ${percent}%`}
+            </p>
+            {percent !== null && (
+              <div
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={percent}
+                aria-label="Update download progress"
+                className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+              >
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-150"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+            )}
+          </div>
         )}
 
         {phase === "restarting" && (

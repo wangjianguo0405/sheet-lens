@@ -11,7 +11,7 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
 /// An install is portable — and so can update itself — when this file sits
@@ -48,6 +48,18 @@ pub struct Release {
     pub version: String,
     pub notes: Option<String>,
 }
+
+/// Broadcast while the archive downloads, so the window can draw a bar. Only
+/// sent when the server announced a length — without one there is no
+/// percentage to draw, and the window falls back to its own wording.
+#[derive(Clone, Serialize)]
+struct Progress {
+    downloaded: u64,
+    total: u64,
+}
+
+/// The event name the window listens on.
+const PROGRESS_EVENT: &str = "update-progress";
 
 /// The folder holding the running executable, if this is a portable install.
 fn portable_dir() -> Result<PathBuf, String> {
@@ -346,8 +358,27 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
 
     // `download` is what verifies the signature, so bytes that arrive are bytes
     // that came from a release signed with this app's key.
+    let emitter = app.clone();
+    let mut downloaded: u64 = 0;
+    let mut announced: Option<u64> = None;
     let archive = update
-        .download(|_, _| {}, || {})
+        .download(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let Some(total) = total.filter(|total| *total > 0) else {
+                    return;
+                };
+                // One event per whole percent: the callback fires per chunk, far
+                // more often than a window can usefully redraw.
+                let percent = downloaded * 100 / total;
+                if announced == Some(percent) {
+                    return;
+                }
+                announced = Some(percent);
+                let _ = emitter.emit(PROGRESS_EVENT, Progress { downloaded, total });
+            },
+            || {},
+        )
         .await
         .map_err(|error| format!("Could not download the update: {error}"))?;
 

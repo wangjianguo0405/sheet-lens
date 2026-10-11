@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export interface UpdateStatus {
   /** The version this build reports. */
@@ -35,4 +36,22 @@ export function installUpdate(): Promise<void> {
 /** Exits, so the staged executable can replace this one and start in its place. */
 export function restartToApply(): Promise<void> {
   return invoke<void>("update_restart");
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number;
+}
+
+/**
+ * Download progress during `installUpdate`. Sent only when the server announced
+ * a length, so a listener may legitimately hear nothing at all — read a missing
+ * event as "unknown", never as "stalled".
+ */
+export function onUpdateProgress(
+  handler: (progress: UpdateProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<UpdateProgress>("update-progress", (event) =>
+    handler(event.payload),
+  );
 }
