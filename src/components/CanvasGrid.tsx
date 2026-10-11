@@ -221,6 +221,10 @@ function describePaint(timing: PaintTimings): string {
         `${stats.texts} of them holding text; ${stats.spans} merges and runs drawn as one box`,
       `  its style lookups: ${stats.styleResolved} resolved for real, ${stats.styleMemoHits} from the memo` +
         ` — ${((stats.styleResolved + stats.styleMemoHits) / Math.max(1, cells)).toFixed(1)} per cell`,
+      // The two halves of the surface pass, side by side: how many rectangles it
+      // drew, and how long the whole pass was. Whichever of the two the time
+      // tracks is the one worth attacking.
+      `  its drawing: ${stats.surfaceFills} rectangles filled (${(stats.surfaceFills / Math.max(1, cells)).toFixed(1)} per cell)`,
     );
   }
   return lines.join("\n");
@@ -885,7 +889,13 @@ export function CanvasGrid({
      * Style resolution walks the cell's row runs and then its column runs, so
      * asking per cell per frame is linear in the number of runs. This pass asks
      * about each visible cell more than once (once for the runs, once for the
-     * paint), so the answers are held for the length of the pass.
+     * paint, once per neighbour its borders resolve against), so the answers are
+     * held for the length of the pass.
+     *
+     * A window array indexed by display position was tried here, on the theory
+     * that the hashing was the cost. It measured no faster — the pass is not
+     * bound by any one lookup — and the index arithmetic was the only part of
+     * this file that ever produced a silent wrong-border bug. The map stays.
      */
     const styleMemo = new Map<number, CellStyle | null>();
     const styleCalls = { resolved: 0, memo: 0 };

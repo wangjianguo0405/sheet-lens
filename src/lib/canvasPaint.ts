@@ -133,6 +133,17 @@ function originY(view: GridView): number {
   return COL_HEADER_H - view.scrollTop;
 }
 
+/**
+ * How many rectangles this module has filled. Counted rather than inferred,
+ * because the surface pass walks the same cells whichever way the timings move:
+ * what separates "resolving a cell's style and borders is expensive" from
+ * "drawing them is expensive" is how much the pass actually drew, and dividing
+ * its total time by one of those counts assumes the other is free.
+ *
+ * A snapshot delta, so the overlay's own fills do not land in the base pass.
+ */
+let fillRects = 0;
+
 function fill(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -142,6 +153,7 @@ function fill(
   color: string,
 ): void {
   if (w <= 0 || h <= 0) return;
+  fillRects += 1;
   ctx.fillStyle = color;
   ctx.fillRect(x, y, w, h);
 }
@@ -503,6 +515,8 @@ export interface PaintStats {
   texts: number;
   /** Milliseconds over the surface pass: fills, gridlines, borders. */
   surfaceMs: number;
+  /** Rectangles the surface pass filled — a border side is one of these. */
+  surfaceFills: number;
   /** Milliseconds over the text pass. */
   textMs: number;
   /** Style lookups that did the work, and those the memo answered. */
@@ -517,6 +531,7 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
     spans: 0,
     texts: 0,
     surfaceMs: 0,
+    surfaceFills: 0,
     textMs: 0,
     styleResolved: 0,
     styleMemoHits: 0,
@@ -559,6 +574,7 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
 
   // Everything the text sits on: fills, print shading, gridlines, borders.
   const surfaceStarted = performance.now();
+  const fillsBefore = fillRects;
   for (const span of spans) {
     if (span.kind === "merge") paintSpanSurface(ctx, view, ox, oy, page, span);
   }
@@ -571,6 +587,7 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
     }
   }
   stats.surfaceMs = performance.now() - surfaceStarted;
+  stats.surfaceFills = fillRects - fillsBefore;
 
   // Then every string, over all of it. Excel lets a left-aligned value run on
   // into the empty cells beside it and draws that spill across their fills and
