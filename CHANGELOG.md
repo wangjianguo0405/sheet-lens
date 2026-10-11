@@ -7,6 +7,16 @@ both the release notes on GitHub and the notes the app shows when it offers the
 update — so write it for whoever is being asked to install it, not for whoever
 wrote the code.
 
+## [0.2.0] - 2026-10-11
+
+The interface now comes in English, Chinese and Japanese, and opens in your
+system language. The button at the right of the toolbar switches it, and what
+you pick is remembered.
+
+- Simplified Chinese and Japanese throughout
+- A language switcher in the toolbar
+- The notes shown when an update is available are in that language too
+
 ## [0.1.1] - 2026-10-11
 
 - The update dialog now shows how far the download has got, instead of a line
