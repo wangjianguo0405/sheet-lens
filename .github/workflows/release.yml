@@ -15,12 +15,42 @@ name: Release windows portable
 on:
   push:
     tags: ["v*"]
+  # For the diagnose job below: a tag push is the only thing that publishes, and
+  # burning a nine-minute build to ask why publishing fails is no way to work.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # `gh workflow run release.yml` runs just this. It changes nothing unless the
+  # thing it is testing starts working, and then only leaves a draft release
+  # named to be obviously disposable.
+  diagnose:
+    runs-on: windows-latest
+    steps:
+      - name: What this token can do
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Write-Output "=== gh ==="
+          gh --version
+          Write-Output "=== which credential gh picked up ==="
+          gh auth status 2>&1
+          Write-Output "=== what the repository says this token may do ==="
+          gh api "repos/$env:GITHUB_REPOSITORY" --jq '{visibility, fork, archived, permissions}'
+          Write-Output "=== can it read releases? (a number means yes) ==="
+          gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=1" --jq 'length'
+          Write-Output "=== the call that fails, with the whole conversation shown ==="
+          $env:GH_DEBUG = "api"
+          gh release create "v0.0.0-diagnostic" --draft --target "$env:GITHUB_SHA" --title "diagnostic - safe to delete" --notes "probe" 2>&1 | Select-Object -Last 60
+          Write-Output "=== end: a 403 above is the bug; 'Created draft release' means it worked ==="
+          exit 0
+
   portable:
+    # Only a tag publishes; a manual run is for the diagnose job alone.
+    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
