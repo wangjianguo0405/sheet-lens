@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Search, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,6 +15,7 @@ interface SheetListProps {
 }
 
 export function SheetList({ sheets, active, onSelect }: SheetListProps) {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState("");
 
   const visible = useMemo(() => {
@@ -29,13 +31,13 @@ export function SheetList({ sheets, active, onSelect }: SheetListProps) {
         <Input
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
-          placeholder="Filter sheets"
+          placeholder={t("sheets.filter")}
           className="h-6 border-0 bg-transparent px-0 text-xs shadow-none select-text focus-visible:ring-0"
         />
         {filter && (
           <button
             type="button"
-            aria-label="Clear filter"
+            aria-label={t("sheets.clearFilter")}
             onClick={() => setFilter("")}
             className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent"
           >
@@ -45,7 +47,7 @@ export function SheetList({ sheets, active, onSelect }: SheetListProps) {
       </div>
 
       <div className="shrink-0 px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-        {sheets.length} sheet{sheets.length === 1 ? "" : "s"}
+        {t("sheets.count", { count: sheets.length })}
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -80,7 +82,7 @@ export function SheetList({ sheets, active, onSelect }: SheetListProps) {
           ))}
           {visible.length === 0 && (
             <p className="px-2 py-4 text-xs text-muted-foreground">
-              No sheets match.
+              {t("sheets.none")}
             </p>
           )}
         </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 
 import { FileTabs } from "@/components/FileTabs";
 import { FormulaBar } from "@/components/FormulaBar";
@@ -44,6 +45,7 @@ function looksLikeWorkbook(path: string): boolean {
 }
 
 export default function App() {
+  const { t, i18n } = useTranslation();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -214,7 +216,7 @@ export default function App() {
         if (cancelled) return;
         setUpdate(status);
         if (!status.portable) return;
-        const found = await checkForUpdate();
+        const found = await checkForUpdate(i18n.language);
         if (!cancelled) setUpdateAvailable(found !== null);
       } catch {
         /* nothing to report */
@@ -346,7 +348,7 @@ export default function App() {
               className="shrink-0 underline"
               onClick={() => setError(null)}
             >
-              Dismiss
+              {t("app.dismiss")}
             </button>
           </div>
         )}
@@ -366,8 +368,8 @@ export default function App() {
                   <div
                     role="separator"
                     aria-orientation="vertical"
-                    aria-label="Resize the sheet list"
-                    title="Drag to resize"
+                    aria-label={t("app.resizeSheetList")}
+                    title={t("app.dragToResize")}
                     onPointerDown={startSheetListDrag}
                     className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#217346]/40"
                   />
@@ -406,7 +408,7 @@ export default function App() {
             </>
           ) : active ? (
             <p className="m-auto text-xs text-muted-foreground">
-              This workbook has no readable sheets.
+              {t("app.noSheets")}
             </p>
           ) : (
             <Welcome onOpen={handleOpen} error={error} />
@@ -416,7 +418,11 @@ export default function App() {
         <StatusBar
           fileName={active?.info.fileName ?? null}
           sheet={active?.sheet ?? null}
-          size={extent ? `${extent.rows} rows × ${extent.cols} cols` : null}
+          size={
+            extent
+              ? t("app.extent", { rows: extent.rows, cols: extent.cols })
+              : null
+          }
           cell={activeSheet ? selectionRef(selection) : null}
           kind={detail?.kind ?? null}
           value={detail?.text ?? null}

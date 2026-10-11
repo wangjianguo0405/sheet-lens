@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
@@ -14,6 +15,7 @@ interface FormulaBarProps {
  * read in full — grid cells are clipped at the column edge.
  */
 export function FormulaBar({ reference, value }: FormulaBarProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   // Collapse again whenever the selection moves somewhere else.
@@ -52,8 +54,8 @@ export function FormulaBar({ reference, value }: FormulaBarProps) {
         {value !== "" && (
           <button
             type="button"
-            aria-label={expanded ? "Collapse" : "Expand"}
-            title={expanded ? "Collapse" : "Expand"}
+            aria-label={expanded ? t("formulaBar.collapse") : t("formulaBar.expand")}
+            title={expanded ? t("formulaBar.collapse") : t("formulaBar.expand")}
             onClick={() => setExpanded((open) => !open)}
             className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent"
           >

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,7 @@ interface SearchPanelProps {
 type Scope = "sheet" | "workbook";
 
 export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeCell, setWholeCell] = useState(false);
@@ -74,13 +76,13 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
   return (
     <div className="flex h-full min-h-0 flex-col border-l border-border bg-sidebar">
       <div className="flex shrink-0 items-center justify-between border-b border-border px-2 py-1.5">
-        <span className="text-xs font-medium">Search</span>
+        <span className="text-xs font-medium">{t("search.title")}</span>
         <Button
           size="sm"
           variant="ghost"
           className="size-6 p-0"
           onClick={onClose}
-          aria-label="Close search"
+          aria-label={t("search.close")}
         >
           <X className="size-3.5" />
         </Button>
@@ -91,7 +93,7 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Find in sheet…"
+          placeholder={t("search.placeholder")}
           className="h-7 text-xs select-text"
         />
 
@@ -101,14 +103,14 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
             className={toggleClass(scope === "sheet")}
             onClick={() => setScope("sheet")}
           >
-            This sheet
+            {t("search.thisSheet")}
           </button>
           <button
             type="button"
             className={toggleClass(scope === "workbook")}
             onClick={() => setScope("workbook")}
           >
-            Workbook
+            {t("search.workbook")}
           </button>
           <span className="mx-0.5 h-3 w-px bg-border" />
           <button
@@ -123,7 +125,7 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
             className={toggleClass(wholeCell)}
             onClick={() => setWholeCell((v) => !v)}
           >
-            Whole cell
+            {t("search.wholeCell")}
           </button>
         </div>
 
@@ -131,8 +133,11 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
           {busy && <Loader2 className="size-3 animate-spin" />}
           <span>
             {query.trim()
-              ? `${hits.length}${hits.length >= 5000 ? "+" : ""} result${hits.length === 1 ? "" : "s"}`
-              : "Type to search"}
+              ? t("search.results", {
+                  count: hits.length,
+                  plus: hits.length >= 5000 ? "+" : "",
+                })
+              : t("search.typeToSearch")}
           </span>
         </div>
       </div>

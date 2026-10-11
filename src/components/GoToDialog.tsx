@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +28,7 @@ export function GoToDialog({
   currentSheet,
   onGo,
 }: GoToDialogProps) {
+  const { t } = useTranslation();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -47,7 +49,7 @@ export function GoToDialog({
 
     const target = parseRef(refPart);
     if (!target) {
-      setError("Enter a reference such as G408 or Sheet1!G408.");
+      setError(t("goTo.invalid"));
       return;
     }
 
@@ -55,7 +57,7 @@ export function GoToDialog({
     if (sheetPart) {
       const match = sheets.find((name) => name === sheetPart);
       if (!match) {
-        setError(`No sheet named "${sheetPart}".`);
+        setError(t("goTo.noSheet", { name: sheetPart }));
         return;
       }
       sheet = match;
@@ -69,10 +71,13 @@ export function GoToDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle className="text-sm">Go to cell</DialogTitle>
+          <DialogTitle className="text-sm">{t("goTo.title")}</DialogTitle>
           <DialogDescription className="text-xs">
-            Jump to a cell by reference. Prefix with a sheet name to switch
-            sheets, for example <code>DB抽出仕様!G408</code>.
+            <Trans
+              i18nKey="goTo.description"
+              values={{ ref: "DB抽出仕様!G408" }}
+              components={{ code: <code /> }}
+            />
           </DialogDescription>
         </DialogHeader>
 
@@ -94,7 +99,7 @@ export function GoToDialog({
 
         <DialogFooter>
           <Button size="sm" className="h-7 text-xs" onClick={submit}>
-            Go
+            {t("goTo.go")}
           </Button>
         </DialogFooter>
       </DialogContent>

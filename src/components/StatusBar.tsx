@@ -1,4 +1,5 @@
 import { Minus, Plus } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Separator } from "@/components/ui/separator";
 import {
@@ -22,6 +23,15 @@ interface StatusBarProps {
   onZoom: (percent: number) => void;
 }
 
+/** The cell kinds the backend reports, mapped to their translated labels. */
+const KIND_KEY = {
+  text: "status.kind.text",
+  number: "status.kind.number",
+  bool: "status.kind.bool",
+  date: "status.kind.date",
+  error: "status.kind.error",
+} as const;
+
 export function StatusBar({
   fileName,
   sheet,
@@ -32,10 +42,12 @@ export function StatusBar({
   zoom,
   onZoom,
 }: StatusBarProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex shrink-0 items-center gap-2 border-t border-border bg-muted/40 px-3 py-1 text-[11px] text-muted-foreground">
       <span className="truncate" title={fileName ?? undefined}>
-        {fileName ?? "No file"}
+        {fileName ?? t("status.noFile")}
       </span>
       {sheet && (
         <>
@@ -57,7 +69,7 @@ export function StatusBar({
           <span className="font-medium text-foreground select-text">{cell}</span>
           {kind && kind !== "empty" && (
             <span className="rounded-sm bg-muted px-1 py-px text-[10px]">
-              {kind}
+              {t(KIND_KEY[kind as keyof typeof KIND_KEY], { defaultValue: kind })}
             </span>
           )}
           <span className="min-w-0 flex-1 truncate text-foreground/80 select-text" title={value ?? ""}>
@@ -70,8 +82,8 @@ export function StatusBar({
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <button
             type="button"
-            aria-label="Zoom out"
-            title="Zoom out"
+            aria-label={t("status.zoomOut")}
+            title={t("status.zoomOut")}
             disabled={zoom <= MIN_ZOOM}
             onClick={() => onZoom(stepZoom(zoom, -1))}
             className="rounded-sm p-0.5 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -80,7 +92,7 @@ export function StatusBar({
           </button>
           <input
             type="range"
-            aria-label="Zoom"
+            aria-label={t("status.zoom")}
             min={0}
             max={ZOOM_STOPS.length - 1}
             step={1}
@@ -90,8 +102,8 @@ export function StatusBar({
           />
           <button
             type="button"
-            aria-label="Zoom in"
-            title="Zoom in"
+            aria-label={t("status.zoomIn")}
+            title={t("status.zoomIn")}
             disabled={zoom >= MAX_ZOOM}
             onClick={() => onZoom(stepZoom(zoom, 1))}
             className="rounded-sm p-0.5 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -100,7 +112,7 @@ export function StatusBar({
           </button>
           <button
             type="button"
-            title="Reset the zoom to 100%"
+            title={t("status.resetZoom")}
             onClick={() => onZoom(DEFAULT_ZOOM)}
             className="w-9 text-right tabular-nums text-foreground hover:underline"
           >
