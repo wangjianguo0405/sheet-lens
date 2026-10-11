@@ -96,7 +96,9 @@ export function FilterButton({
           className={cn(
             // Excel pins this to the right edge of the header cell, centred
             // vertically — not trailing the text wherever it happens to end.
-            "absolute top-1/2 right-0.5 flex size-3.5 -translate-y-1/2 items-center justify-center rounded-sm",
+            // `pointer-events-auto` because the canvas grid puts this inside a
+            // click-through overlay, where the default would swallow the press.
+            "pointer-events-auto absolute top-1/2 right-0.5 flex size-3.5 -translate-y-1/2 items-center justify-center rounded-sm",
             isFiltered
               ? "bg-primary text-primary-foreground"
               : "text-muted-foreground hover:bg-accent",

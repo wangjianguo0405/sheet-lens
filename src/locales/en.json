@@ -2,6 +2,7 @@
   "app": {
     "name": "SheetLens",
     "resizeSheetList": "Resize the sheet list",
+    "resizeSearch": "Resize the search panel",
     "dragToResize": "Drag to resize",
     "dismiss": "Dismiss",
     "noSheets": "This workbook has no readable sheets.",
@@ -33,7 +34,9 @@
     "close": "Close"
   },
   "tabs": {
-    "close": "Close {{name}}"
+    "close": "Close {{name}}",
+    "new": "New tab",
+    "openAnother": "Open another workbook"
   },
   "sheets": {
     "filter": "Filter sheets",
