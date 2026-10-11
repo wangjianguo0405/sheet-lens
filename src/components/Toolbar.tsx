@@ -1,4 +1,4 @@
-import { Crosshair, FolderOpen, PanelLeft, Search } from "lucide-react";
+import { Crosshair, Download, FolderOpen, PanelLeft, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -10,6 +10,10 @@ interface ToolbarProps {
   searchOpen: boolean;
   sidebarOpen: boolean;
   hasWorkbook: boolean;
+  /** False for a build that cannot replace itself, which hides the entry. */
+  canUpdate: boolean;
+  updateAvailable: boolean;
+  onShowUpdate: () => void;
 }
 
 export function Toolbar({
@@ -20,6 +24,9 @@ export function Toolbar({
   searchOpen,
   sidebarOpen,
   hasWorkbook,
+  canUpdate,
+  updateAvailable,
+  onShowUpdate,
 }: ToolbarProps) {
   return (
     <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
@@ -68,6 +75,25 @@ export function Toolbar({
         <Crosshair className="size-3.5" />
         Go To
       </Button>
+
+      {canUpdate && (
+        <Button
+          size="sm"
+          variant={updateAvailable ? "secondary" : "ghost"}
+          className="relative ml-auto h-7 px-2"
+          onClick={onShowUpdate}
+          title={
+            updateAvailable
+              ? "A newer version is available"
+              : "Check for updates"
+          }
+        >
+          <Download className="size-3.5" />
+          {updateAvailable && (
+            <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-[#217346]" />
+          )}
+        </Button>
+      )}
     </div>
   );
 }

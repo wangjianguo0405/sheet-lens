@@ -10,10 +10,12 @@ import { SearchPanel } from "@/components/SearchPanel";
 import { SheetList } from "@/components/SheetList";
 import { StatusBar } from "@/components/StatusBar";
 import { Toolbar } from "@/components/Toolbar";
+import { UpdateDialog } from "@/components/UpdateDialog";
 import { Welcome } from "@/components/Welcome";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ORIGIN, selectionRef, type Selection } from "@/lib/selection";
 import { toggleShapeDebug } from "@/lib/debugPanels";
+import { checkForUpdate, updateStatus, type UpdateStatus } from "@/lib/update";
 import { DEFAULT_ZOOM } from "@/lib/zoom";
 import {
   closeWorkbook,
@@ -59,6 +61,10 @@ export default function App() {
   /** Where the drag started, so the width follows the pointer's delta. */
   const sheetListDrag = useRef<{ x: number; width: number } | null>(null);
   const [draggingSheetList, setDraggingSheetList] = useState(false);
+  /** Only a portable build reports `portable`, and only then is it offered. */
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
 
   const active = useMemo(
     () => tabs.find((tab) => tab.info.path === activePath) ?? null,
@@ -197,6 +203,28 @@ export default function App() {
     };
   }, [openPaths]);
 
+  // A silent check at startup, so a waiting release earns a dot on the toolbar.
+  // Nothing is shown when there is none, when the build cannot replace itself,
+  // or when the check fails — being offline is not worth interrupting anyone.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await updateStatus();
+        if (cancelled) return;
+        setUpdate(status);
+        if (!status.portable) return;
+        const found = await checkForUpdate();
+        if (!cancelled) setUpdateAvailable(found !== null);
+      } catch {
+        /* nothing to report */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.ctrlKey && !event.metaKey) {
@@ -293,6 +321,9 @@ export default function App() {
           searchOpen={searchOpen}
           sidebarOpen={sheetListOpen}
           hasWorkbook={active !== null}
+          canUpdate={update?.portable ?? false}
+          updateAvailable={updateAvailable}
+          onShowUpdate={() => setUpdateOpen(true)}
         />
 
         <FileTabs
@@ -399,6 +430,13 @@ export default function App() {
           sheets={active?.info.sheets.map((sheet) => sheet.name) ?? []}
           currentSheet={active?.sheet ?? ""}
           onGo={handleGo}
+        />
+
+        <UpdateDialog
+          open={updateOpen}
+          onOpenChange={setUpdateOpen}
+          status={update}
+          onAvailableChange={setUpdateAvailable}
         />
       </div>
     </TooltipProvider>

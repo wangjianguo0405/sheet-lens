@@ -2,6 +2,7 @@ mod drawing;
 mod excel;
 mod layout;
 mod numfmt;
+mod update;
 
 use std::collections::HashMap;
 use std::io::{BufReader, Read};
@@ -220,9 +221,14 @@ fn base64(bytes: &[u8]) -> String {    const ALPHABET: &[u8; 64] =
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // An update that was interrupted leaves files named for exactly this; a
+    // healthy install has none, and nothing else in the folder is touched.
+    update::sweep_leftovers();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::new(Store::default()))
         .invoke_handler(tauri::generate_handler![
             open_workbook,
@@ -233,7 +239,11 @@ pub fn run() {
             filter_rows,
             axis_values,
             read_media,
-            close_workbook
+            close_workbook,
+            update::update_status,
+            update::update_check,
+            update::update_install,
+            update::update_restart
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
