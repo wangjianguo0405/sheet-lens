@@ -45,7 +45,7 @@ function looksLikeWorkbook(path: string): boolean {
 }
 
 export default function App() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -216,7 +216,7 @@ export default function App() {
         if (cancelled) return;
         setUpdate(status);
         if (!status.portable) return;
-        const found = await checkForUpdate();
+        const found = await checkForUpdate(i18n.language);
         if (!cancelled) setUpdateAvailable(found !== null);
       } catch {
         /* nothing to report */

@@ -113,14 +113,17 @@ jobs:
             return $text
           }
 
-          # The release page carries every language; the app shows one. It has no
-          # language setting yet and its interface is English, so English is what
-          # it is handed — revisit when the app can choose for itself.
+          # The release page carries every language, and so does the manifest:
+          # the app shows the notes for the locale it is running in, which it
+          # reads from `notesLocales`. `notes` stays English on its own, for any
+          # other updater client — that is the only field they know about.
           $notes = Get-VersionNotes "CHANGELOG.md" $version
+          $notesZhCN = Get-VersionNotes "CHANGELOG.zh-CN.md" $version
+          $notesJa = Get-VersionNotes "CHANGELOG.ja.md" $version
           $releaseBody = @(
             "## English", $notes,
-            "", "## 简体中文", (Get-VersionNotes "CHANGELOG.zh-CN.md" $version),
-            "", "## 日本語", (Get-VersionNotes "CHANGELOG.ja.md" $version)
+            "", "## 简体中文", $notesZhCN,
+            "", "## 日本語", $notesJa
           ) -join "`n"
           $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
           Set-Content -Path $notesFile -Value $releaseBody -Encoding utf8NoBOM
@@ -162,6 +165,12 @@ jobs:
           $latest = [ordered]@{
             version   = $version
             notes     = $notes
+            # Keyed by the app's own locale codes, which is what it asks for.
+            notesLocales = [ordered]@{
+              en      = $notes
+              "zh-CN" = $notesZhCN
+              ja      = $notesJa
+            }
             pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{

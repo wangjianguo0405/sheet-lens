@@ -42,7 +42,7 @@ export function UpdateDialog({
   status,
   onAvailableChange,
 }: UpdateDialogProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [release, setRelease] = useState<Release | null>(null);
   const [phase, setPhase] = useState<Phase>("checking");
   const [error, setError] = useState<string | null>(null);
@@ -57,14 +57,14 @@ export function UpdateDialog({
   const check = useCallback(() => {
     setPhase("checking");
     setError(null);
-    return checkForUpdate()
+    return checkForUpdate(i18n.language)
       .then((found) => {
         setRelease(found);
         onAvailableChange(found !== null);
       })
       .catch((reason: unknown) => setError(String(reason)))
       .finally(() => setPhase("ready"));
-  }, [onAvailableChange]);
+  }, [onAvailableChange, i18n.language]);
 
   // Re-checked on every open rather than reusing the startup result: the
   // releases page is the thing being asked about, and it may have moved on.
