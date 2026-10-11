@@ -15,18 +15,30 @@ name: Release windows portable
 on:
   push:
     tags: ["v*"]
-  # For the diagnose job below: a tag push is the only thing that publishes, and
-  # burning a nine-minute build to ask why publishing fails is no way to work.
+  # The manual route exists for two reasons: the diagnose job answers "why can
+  # CI not publish?" without waiting out a build, and `publish: true` builds and
+  # releases whatever main currently holds.
+  #
+  #   gh workflow run release.yml --ref main -f publish=true
+  #
+  # A manual publish takes its version from tauri.conf.json exactly as a tag push
+  # does, so it creates the same release either way.
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Build and publish this commit, rather than only diagnosing"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
-  # `gh workflow run release.yml` runs just this. It changes nothing unless the
-  # thing it is testing starts working, and then only leaves a draft release
-  # named to be obviously disposable.
+  # `gh workflow run release.yml` with no inputs runs just this. It changes
+  # nothing unless the thing it is testing starts working, and then only leaves
+  # a draft release named to be obviously disposable.
   diagnose:
+    if: github.event_name == 'workflow_dispatch' && !inputs.publish
     runs-on: windows-latest
     steps:
       # Without a checkout `gh release create` gives up before it makes the call
@@ -53,8 +65,8 @@ jobs:
           exit 0
 
   portable:
-    # Only a tag publishes; a manual run is for the diagnose job alone.
-    if: github.event_name == 'push'
+    # A tag publishes on its own; a manual run only when it was asked to.
+    if: github.event_name == 'push' || inputs.publish
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
