@@ -1,0 +1,11 @@
+# The minisign keypair for portable updates.
+#
+# The public half is `plugins.updater.pubkey` in src-tauri/tauri.conf.json; the
+# private half signs every release. Losing the private half ends updates for
+# every copy already installed, and leaking it lets anyone sign one that they
+# will install.
+#
+# Everything here is ignored by default, so a blanket `git add` cannot pick the
+# key up. Do not narrow this to individual file names.
+*
+!.gitignore
