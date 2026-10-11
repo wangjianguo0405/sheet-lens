@@ -20,9 +20,14 @@ export function updateStatus(): Promise<UpdateStatus> {
   return invoke<UpdateStatus>("update_status");
 }
 
-/** Returns the newer release, or null when this build is already the latest. */
-export function checkForUpdate(): Promise<Release | null> {
-  return invoke<Release | null>("update_check");
+/**
+ * Returns the newer release, or null when this build is already the latest.
+ *
+ * `locale` picks which of the release's translated notes to read; the manifest
+ * also carries English, which is what comes back for anything else.
+ */
+export function checkForUpdate(locale: string): Promise<Release | null> {
+  return invoke<Release | null>("update_check", { locale });
 }
 
 /**

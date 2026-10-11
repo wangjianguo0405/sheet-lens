@@ -49,6 +49,24 @@ pub struct Release {
     pub notes: Option<String>,
 }
 
+/// The manifest's notes for `locale`, falling back to the English ones.
+///
+/// `notes` is English, and stays that way: it is the field every other updater
+/// client reads. The release also carries a `notesLocales` map beside it, which
+/// the plugin does not model — so it reaches us untouched in `raw_json`, and
+/// nothing here has to fetch or parse the manifest a second time.
+fn localised_notes(
+    raw: &serde_json::Value,
+    english: Option<&str>,
+    locale: &str,
+) -> Option<String> {
+    raw.get("notesLocales")
+        .and_then(|locales| locales.get(locale))
+        .and_then(serde_json::Value::as_str)
+        .or(english)
+        .map(str::to_owned)
+}
+
 /// Broadcast while the archive downloads, so the window can draw a bar. Only
 /// sent when the server announced a length — without one there is no
 /// percentage to draw, and the window falls back to its own wording.
@@ -320,7 +338,10 @@ pub fn update_status(app: AppHandle) -> Status {
 }
 
 #[tauri::command]
-pub async fn update_check(app: AppHandle) -> Result<Option<Release>, String> {
+pub async fn update_check(
+    app: AppHandle,
+    locale: String,
+) -> Result<Option<Release>, String> {
     let updater = app
         .updater()
         .map_err(|error| format!("Could not start the updater: {error}"))?;
@@ -330,7 +351,7 @@ pub async fn update_check(app: AppHandle) -> Result<Option<Release>, String> {
         .map_err(|error| format!("Could not check for updates: {error}"))?;
     Ok(found.map(|update| Release {
         version: update.version.clone(),
-        notes: update.body.clone(),
+        notes: localised_notes(&update.raw_json, update.body.as_deref(), &locale),
     }))
 }
 
@@ -393,7 +414,7 @@ pub fn update_restart(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_executable, PAYLOAD_EXECUTABLE, PAYLOAD_MANIFEST};
+    use super::{extract_executable, localised_notes, PAYLOAD_EXECUTABLE, PAYLOAD_MANIFEST};
     use std::io::{Cursor, Write};
 
     fn archive(manifest: serde_json::Value, executable: &[u8]) -> Vec<u8> {
@@ -466,5 +487,40 @@ mod tests {
     fn rejects_an_archive_that_is_not_a_zip() {
         let error = extract_executable(b"not a zip at all", "0.2.0").unwrap_err();
         assert!(error.contains("not a readable archive"), "{error}");
+    }
+
+    /// The `latest.json` a release with translated notes produces.
+    fn translated_manifest() -> serde_json::Value {
+        serde_json::json!({
+            "version": "0.2.0",
+            "notes": "English",
+            "notesLocales": { "en": "English", "zh-CN": "中文", "ja": "日本語" },
+            "platforms": { "windows-x86_64": { "signature": "s", "url": "https://x/y.zip" } },
+        })
+    }
+
+    #[test]
+    fn reads_the_notes_in_the_language_the_window_asked_for() {
+        let notes = localised_notes(&translated_manifest(), Some("English"), "ja");
+        assert_eq!(notes.as_deref(), Some("日本語"));
+    }
+
+    #[test]
+    fn falls_back_to_the_english_notes_for_a_language_the_release_lacks() {
+        let notes = localised_notes(&translated_manifest(), Some("English"), "fr");
+        assert_eq!(notes.as_deref(), Some("English"));
+    }
+
+    #[test]
+    fn falls_back_to_the_english_notes_when_the_manifest_carries_no_map() {
+        let raw = serde_json::json!({ "version": "0.1.1", "notes": "English" });
+        let notes = localised_notes(&raw, Some("English"), "ja");
+        assert_eq!(notes.as_deref(), Some("English"));
+    }
+
+    #[test]
+    fn a_release_with_no_notes_at_all_stays_that_way() {
+        let raw = serde_json::json!({ "version": "0.1.1" });
+        assert_eq!(localised_notes(&raw, None, "ja"), None);
     }
 }
