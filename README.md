@@ -12,10 +12,8 @@ widths, row heights, merges, borders, fills, fonts, the print area, and the
 shapes and pictures floating above the cells — and reproduces Excel's rendering
 in CSS.
 
-It was built against Japanese design documents (画面定義書 / 機能定義書), so CJK
-fonts, phonetic runs and the layout conventions those documents use are the case
-it is tuned for. `xlsx`, `xlsm`, `xls`, `xlsb` and `ods` all open; the older
-formats have no zip to read, so they fall back to plain defaults.
+`xlsx`, `xlsm`, `xls`, `xlsb` and `ods` all open; the older formats have no zip to
+read, so they fall back to plain defaults.
 
 ## What it does
 
