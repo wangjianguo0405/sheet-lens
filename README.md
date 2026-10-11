@@ -1,5 +1,7 @@
 # SheetLens
 
+**English** | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+
 A fast, local-first Excel viewer. Open a workbook and see what Excel shows —
 without waiting for Excel.
 
