@@ -1,0 +1,106 @@
+{
+  "app": {
+    "name": "SheetLens",
+    "resizeSheetList": "シート一覧の幅を変更",
+    "dragToResize": "ドラッグでサイズ変更",
+    "dismiss": "閉じる",
+    "noSheets": "このブックには読み取り可能なシートがありません。",
+    "extent": "{{rows}} 行 × {{cols}} 列"
+  },
+  "toolbar": {
+    "open": "開く",
+    "search": "検索",
+    "goTo": "ジャンプ",
+    "showSheetList": "シート一覧を表示",
+    "hideSheetList": "シート一覧を非表示",
+    "checkUpdates": "更新を確認",
+    "updateAvailable": "新しいバージョンが利用可能です",
+    "language": "言語"
+  },
+  "language": {
+    "en": "English",
+    "zh-CN": "简体中文",
+    "ja": "日本語"
+  },
+  "welcome": {
+    "tagline": "高速・ローカル優先の Excel ビューアー。ブックを開くか、ウィンドウ上にファイルをドラッグしてください。",
+    "open": "ブックを開く",
+    "kbdOpen": "開く",
+    "kbdSearch": "検索",
+    "kbdGoTo": "ジャンプ"
+  },
+  "dialog": {
+    "close": "閉じる"
+  },
+  "tabs": {
+    "close": "{{name}} を閉じる"
+  },
+  "sheets": {
+    "filter": "シートを絞り込む",
+    "clearFilter": "絞り込みを解除",
+    "count_other": "{{count}} シート",
+    "none": "一致するシートはありません。"
+  },
+  "formulaBar": {
+    "expand": "展開",
+    "collapse": "折りたたむ"
+  },
+  "search": {
+    "title": "検索",
+    "close": "検索を閉じる",
+    "placeholder": "シート内を検索…",
+    "thisSheet": "このシート",
+    "workbook": "ブック全体",
+    "wholeCell": "セル全体",
+    "results_other": "{{count}}{{plus}} 件",
+    "typeToSearch": "入力して検索"
+  },
+  "filter": {
+    "column": "列を絞り込む",
+    "edit": "絞り込みを編集",
+    "searchValues": "値を検索…",
+    "blank": "(空白)",
+    "noMatch": "一致する値はありません。",
+    "selected": "{{count}} 件を選択",
+    "allValues": "すべての値",
+    "clear": "クリア",
+    "apply": "適用"
+  },
+  "goTo": {
+    "title": "セルへジャンプ",
+    "description": "参照でセルへジャンプします。シート名を前に付けるとシートも切り替わります（例: <code>{{ref}}</code>）。",
+    "invalid": "G408 や Sheet1!G408 のような参照を入力してください。",
+    "noSheet": "「{{name}}」という名前のシートはありません。",
+    "go": "移動"
+  },
+  "status": {
+    "noFile": "ファイルなし",
+    "zoomOut": "縮小",
+    "zoom": "ズーム",
+    "zoomIn": "拡大",
+    "resetZoom": "ズームを 100% に戻す",
+    "kind": {
+      "text": "文字列",
+      "number": "数値",
+      "bool": "真偽値",
+      "date": "日付",
+      "error": "エラー"
+    }
+  },
+  "grid": {
+    "resizeColumn": "列 {{column}} の幅を変更",
+    "resizeColumnHint": "ドラッグで幅を変更、ダブルクリックで自動調整",
+    "resizeRow": "行 {{row}} の高さを変更"
+  },
+  "update": {
+    "title": "ソフトウェア更新",
+    "checking": "更新を確認しています…",
+    "available": "バージョン <b>{{version}}</b> が利用可能です。",
+    "latest": "最新バージョンです。",
+    "installing": "更新をダウンロードして検証しています…",
+    "progress": "更新のダウンロード進行状況",
+    "restarting": "更新を適用するため再起動しています…",
+    "install": "更新して再起動",
+    "checkAgain": "再確認"
+  }
+}

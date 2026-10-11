@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { ListFilter } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { FilterButton } from "@/components/FilterButton";
 import { ShapeLayer, type ShapeDebugFacts } from "@/components/ShapeLayer";
@@ -549,6 +550,7 @@ export function Grid({
   onZoom,
   bar,
 }: GridProps) {
+  const { t } = useTranslation();
   const cache = useRef(new Map<string, Cell[][]>());
   const pending = useRef(new Set<string>());
   const frame = useRef(0);
@@ -1782,8 +1784,8 @@ export function Grid({
           <span
             role="separator"
             aria-orientation="vertical"
-            aria-label={`Resize column ${columnLabel(c)}`}
-            title="Drag to resize, double-click to fit"
+            aria-label={t("grid.resizeColumn", { column: columnLabel(c) })}
+            title={t("grid.resizeColumnHint")}
             onPointerDown={(event) => startResize("col", c, event)}
             onClick={(event) => event.stopPropagation()}
             // A generous hit area, but nothing painted: Excel signals the
@@ -1796,7 +1798,7 @@ export function Grid({
       );
     }
     return out;
-  }, [range, litColumn, cols, onSelect]);
+  }, [range, litColumn, cols, onSelect, t]);
 
   const rowHeaders = useMemo(() => {
     const out: ReactNode[] = [];
@@ -1832,8 +1834,8 @@ export function Grid({
           <span
             role="separator"
             aria-orientation="horizontal"
-            aria-label={`Resize row ${sheetRow + 1}`}
-            title="Drag to resize"
+            aria-label={t("grid.resizeRow", { row: sheetRow + 1 })}
+            title={t("app.dragToResize")}
             onPointerDown={(event) => startResize("row", sheetRow, event)}
             onClick={(event) => event.stopPropagation()}
             className="absolute bottom-0 left-0 w-full cursor-row-resize"
@@ -1843,7 +1845,7 @@ export function Grid({
       );
     }
     return out;
-  }, [range, litRow, rows, sheetRowOf, onSelect]);
+  }, [range, litRow, rows, sheetRowOf, onSelect, t]);
 
   /**
    * A switch has to fetch the incoming sheet's layout before it can draw at
