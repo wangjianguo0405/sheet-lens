@@ -7,6 +7,16 @@ both the release notes on GitHub and the notes the app shows when it offers the
 update — so write it for whoever is being asked to install it, not for whoever
 wrote the code.
 
+## [0.3.2] - 2026-10-12
+
+Two things that went wrong on a long sheet.
+
+- Borders no longer stop partway down a heavily formatted sheet. The parser
+  gave up on reading styles past a certain point, and what it dropped read as
+  missing borders to the right of the table
+- The row numbers stay out of the corner where the row and column headers meet
+  while the sheet is scrolled
+
 ## [0.3.1] - 2026-10-12
 
 Updating replaces more of the folder now. It used to swap only `SheetLens.exe`,
