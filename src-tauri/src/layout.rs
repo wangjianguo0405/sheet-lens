@@ -58,7 +58,6 @@ const STOCK_FONT_PT: f64 = 11.0;
 const MAX_EXPANDED_COLUMNS: u32 = 4096;
 /// Guards against a pathological file turning into unbounded memory.
 const MAX_MERGES: usize = 20_000;
-const MAX_STYLED_CELLS: usize = 200_000;
 /// Excel's own sheet limits, so a bogus dimension cannot blow up the grid.
 const MAX_SHEET_ROWS: u32 = 1_048_576;
 const MAX_SHEET_COLS: u32 = 16_384;
@@ -201,15 +200,6 @@ impl CellStyle {
             && self.border.is_none()
     }
 }
-
-/// Packs a cell address into one number. Sending `"12:34"`-style strings for
-/// tens of thousands of cells is most of what made the layout payload 4.6 MB.
-fn pack(row: u32, col: u32) -> u32 {
-    row * COL_STRIDE + col
-}
-
-/// Excel's own column ceiling, so the packing cannot collide.
-const COL_STRIDE: u32 = 16_384;
 
 /// A merged block, anchored at its top-left cell.
 #[derive(Serialize, Clone, Debug)]
@@ -1315,6 +1305,28 @@ fn read_alignment(element: &BytesStart, slot: &mut Align) {
     }
 }
 
+/// Turns one row's styled cells into runs and files them.
+///
+/// Sorted and merged exactly as the whole-sheet pass this replaced did: adjacent
+/// columns sharing a style become one run, and the sort is what keeps the runs
+/// ordered when a file writes its cells out of order. Only that row is held, so
+/// nothing here scales with the sheet.
+fn collect_runs(layout: &mut SheetLayout, row: u32, cells: &mut Vec<(u32, u32)>) {
+    if cells.is_empty() {
+        return;
+    }
+    cells.sort_unstable();
+    let mut runs: Vec<[u32; 3]> = Vec::with_capacity(cells.len());
+    for &(col, style) in cells.iter() {
+        match runs.last_mut() {
+            Some(last) if last[2] == style && last[1] + 1 == col => last[1] = col,
+            _ => runs.push([col, col, style]),
+        }
+    }
+    layout.cell_runs.insert(row, runs);
+    cells.clear();
+}
+
 fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, String> {
     let mut xml = XmlReader::from_reader(reader);
     let mut layout = SheetLayout::empty();
@@ -1327,8 +1339,14 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
     let mut extent_cols: u32 = 0;
     // Distinct styles seen so far, so each is stored once.
     let mut style_ids: HashMap<CellStyle, u32> = HashMap::new();
-    let mut styled_cells: HashMap<u32, u32> = HashMap::new();
-    let mut cell_count: usize = 0;
+    // Runs are built one row at a time as the sheet streams past, so nothing is
+    // held for the sheet as a whole and the buffer never holds more than the row
+    // being read. The whole-sheet map this replaces could promise neither, which
+    // is why it needed a cap — and the cap silently dropped the style of every
+    // cell past it, which on a document that fills its sheet means the borders
+    // from that row down.
+    let mut pending_row: u32 = u32::MAX;
+    let mut pending: Vec<(u32, u32)> = Vec::new();
     // Cells only carry a size when their font differs from this.
     let default_font_px = styles
         .fonts
@@ -1400,6 +1418,8 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         }
                     }
                     b"row" => {
+                        // Whatever is pending belongs to the row that just ended.
+                        collect_runs(&mut layout, pending_row, &mut pending);
                         let Some(row) =
                             attr(&element, b"r").and_then(|v| v.parse::<u32>().ok())
                         else {
@@ -1428,10 +1448,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                     b"c" => {
                         // Cell display values come from calamine; this pass only
                         // recovers the style, and only when it says something.
-                        if cell_count >= MAX_STYLED_CELLS {
-                            continue;
-                        }
-                        cell_count += 1;
                         let Some((row, col)) =
                             attr(&element, b"r").and_then(|r| parse_cell(&r))
                         else {
@@ -1445,8 +1461,15 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         let Some(style) = styles.cell_style(index, default_font_px) else {
                             continue;
                         };
-                        let index = intern(&mut layout.styles, &mut style_ids, style);
-                        styled_cells.insert(pack(row, col), index);
+                        // Rows arrive in order, but a file is free to write its
+                        // cells out of order or spread a row over several
+                        // elements, so the buffer follows the cell's own row
+                        // rather than where the cell appeared.
+                        if row != pending_row {
+                            collect_runs(&mut layout, pending_row, &mut pending);
+                            pending_row = row;
+                        }
+                        pending.push((col, intern(&mut layout.styles, &mut style_ids, style)));
                         extent_rows = extent_rows.max(row + 1);
                         extent_cols = extent_cols.max(col + 1);
                     }
@@ -1521,25 +1544,8 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
     layout.rows = extent_rows.min(MAX_SHEET_ROWS);
     layout.cols = extent_cols.min(MAX_SHEET_COLS);
 
-    // Collapse styled cells into per-row runs.
-    let mut by_row: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
-    for (key, style) in styled_cells {
-        by_row
-            .entry(key / COL_STRIDE)
-            .or_default()
-            .push((key % COL_STRIDE, style));
-    }
-    for (row, mut cells) in by_row {
-        cells.sort_unstable();
-        let mut runs: Vec<[u32; 3]> = Vec::with_capacity(cells.len());
-        for (col, style) in cells {
-            match runs.last_mut() {
-                Some(last) if last[2] == style && last[1] + 1 == col => last[1] = col,
-                _ => runs.push([col, col, style]),
-            }
-        }
-        layout.cell_runs.insert(row, runs);
-    }
+    // The last row is ended by the end of the sheet rather than by a `<row>`.
+    collect_runs(&mut layout, pending_row, &mut pending);
 
     // The workbook's first font entry is the "Normal" style, so it is what
     // every unstyled cell inherits.
@@ -2046,6 +2052,32 @@ mod tests {
         assert_eq!(list[0].color, None);
         assert_eq!(list[1].color.as_deref(), Some("#FF0000"));
         assert_eq!(list[2].color, None);
+    }
+
+    /// The style pass has to reach the end of the sheet.
+    ///
+    /// It used to stop at a ceiling on the number of styled cells it would keep,
+    /// and every cell past that fell back to its row's default style. On a
+    /// document that fills its sheet that is invisible through most of the
+    /// table — the row default carries the same borders — and shows only where
+    /// the row default has none, which is past the table's right edge. The rows
+    /// recorded have to reach the sheet's own extent, not some fraction of it.
+    #[test]
+    #[ignore = "reads a workbook from the developer's machine"]
+    fn every_row_of_a_long_sheet_keeps_its_own_style() {
+        let Ok(path) = std::env::var("SHEETLENS_XLSX") else {
+            return;
+        };
+        let sheet =
+            std::env::var("SHEETLENS_SHEET").unwrap_or_else(|_| "機能定義書".to_string());
+        let layout = read_cached(&mut Cache::default(), &path, &sheet).expect("layout");
+
+        let deepest = layout.cell_runs.keys().max().map(|row| row + 1).unwrap_or(0);
+        assert_eq!(
+            deepest, layout.rows,
+            "{sheet}: styles stop at row {deepest} of {}",
+            layout.rows
+        );
     }
 
     /// Dumps the coloured-run table a workbook yields, and — the part that
