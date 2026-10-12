@@ -592,17 +592,20 @@ export function CanvasGrid({
   );
 
   const cols = useMemo(
-    () => buildMetrics(colCount, (index) => colOverrides.get(index) ?? baseColW),
-    [colCount, colOverrides, baseColW],
+    () =>
+      buildMetrics(colCount, (index) =>
+        index < sheetColsGuess ? (colOverrides.get(index) ?? baseColW) : baseColW,
+      ),
+    [colCount, sheetColsGuess, colOverrides, baseColW],
   );
 
   const rows = useMemo(
     () =>
-      buildMetrics(
-        rowCount,
-        (display) => rowOverrides.get(sheetRowOf(display)) ?? baseRowH,
-      ),
-    [rowView, rowCount, rowOverrides, baseRowH, sheetRowOf],
+      buildMetrics(rowCount, (display) => {
+        const row = sheetRowOf(display);
+        return row < sheetRowsGuess ? (rowOverrides.get(row) ?? baseRowH) : baseRowH;
+      }),
+    [rowView, rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf],
   );
 
   const minRowH = Math.max(MIN_ROW_H, Math.ceil(fontSize * LINE_HEIGHT));
@@ -672,22 +675,20 @@ export function CanvasGrid({
    */
   const printColX = useCallback(
     (col: number) =>
-      col >= 0 && col <= sheetColsGuess
-        ? cols.offsets[col]
-        : cols.total + (col - sheetColsGuess) * baseColW,
-    [cols, sheetColsGuess, baseColW],
+      col >= 0 && col < colCount ? cols.offsets[col] : cols.total + (col - colCount) * baseColW,
+    [cols, colCount, baseColW],
   );
 
   const printRowY = useCallback(
     (row: number) => {
       const display = displayOfRow(row);
-      if (display >= 0 && display < displayRowCount) return rows.offsets[display];
+      if (display >= 0 && display < rowCount) return rows.offsets[display];
       // A filtered view has no room to extrapolate in; the end of the rows on
       // screen is as far as the mark can honestly reach.
       if (rowView) return rows.total;
-      return rows.total + (row - sheetRowsGuess) * baseRowH;
+      return rows.total + (row - rowCount) * baseRowH;
     },
-    [displayOfRow, displayRowCount, rows, rowView, sheetRowsGuess, baseRowH],
+    [displayOfRow, rowCount, rows, rowView, baseRowH],
   );
 
   /**
@@ -721,13 +722,21 @@ export function CanvasGrid({
   const styleAt = useCallback(
     (row: number, col: number): CellStyle | null => {
       if (!layout) return null;
+      // The blank area past the sheet is drawn plain, whatever the file says
+      // about the rows and columns reaching into it. A column's own style is
+      // written for all 1,048,576 rows of that column and a row's for all 16,384
+      // columns, so a table's rules and fills ran on past the end of its data
+      // and the sheet read as though it carried on for ever — a ladder of blue
+      // rules and a shaded band out in what should be empty. Only the sheet's own
+      // extent takes the file's formatting.
+      if (row >= sheetRowsGuess || col >= sheetColsGuess) return null;
       const index =
         styleOfRow(layout.cellRuns, row, col) ??
         layout.rowStyles[row] ??
         styleOfColumn(layout.colStyles, col);
       return index === undefined ? null : (layout.styles[index] ?? null);
     },
-    [layout],
+    [layout, sheetRowsGuess, sheetColsGuess],
   );
 
   const mergeAt = useCallback(
