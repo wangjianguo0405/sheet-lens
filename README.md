@@ -9,8 +9,8 @@ Built with Tauri 2, Rust ([calamine](https://github.com/tafia/calamine) for cell
 values) and React 19 + Tailwind. The grid is its own renderer rather than a
 spreadsheet library: it reads the workbook's XML directly for layout — column
 widths, row heights, merges, borders, fills, fonts, the print area, and the
-shapes and pictures floating above the cells — and reproduces Excel's rendering
-in CSS.
+shapes and pictures floating above the cells — and paints Excel's rendering onto
+a canvas.
 
 `xlsx`, `xlsm`, `xls`, `xlsb` and `ods` all open; the older formats have no zip to
 read, so they fall back to plain defaults.
@@ -18,8 +18,9 @@ read, so they fall back to plain defaults.
 ## What it does
 
 - Sheets, search, go-to, column filters and a formula bar
-- Cell, row/column and rectangular-block selection, with Ctrl+C in Excel's own
-  format: tabs between columns, newlines between rows
+- Cell, row/column and rectangular-block selection, by dragging or with Shift
+  and the arrows; Ctrl+A takes the region around the cursor, then the whole sheet
+- Ctrl+C in Excel's own format: tabs between columns, newlines between rows
 - Ctrl+wheel zoom, on Excel's zoom steps, with its bottom-right control
 - Shapes and pictures above the cells: callouts, connectors, braces, gradients —
   drawn from ECMA-376's preset geometry table rather than reverse-engineered
