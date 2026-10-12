@@ -487,16 +487,42 @@ function printRect(
 ): { x0: number; y0: number; x1: number; y1: number } | null {
   const area = view.printArea;
   if (!area) return null;
-  const first = view.displayOfRow(area.row);
-  if (first < 0) return null;
-  const last = view.displayOfRow(area.row + area.rows - 1);
+
+  /**
+   * The page's top and bottom edges, counted in the rows that are on screen.
+   *
+   * Not `displayOfRow(area.row + area.rows - 1)`: a page's last row is very often
+   * one a filter has hidden — the total under a filtered table is the usual case
+   * — and a row that is not on screen has no display index, so that lookup
+   * answers -1 and `y1` came out equal to `y0`. A cut-out with no height is a
+   * silent no-op, and the grey flood it exists to carve out of stayed put: a
+   * sheet filtered anywhere near its last row came up grey corner to corner. The
+   * rows on screen are in sheet order, so where a page's edges fall in that order
+   * is a bisection.
+   */
+  const displays = view.rows.offsets.length - 1;
+  const upTo = (sheetRow: number): number => {
+    let lo = 0;
+    let hi = displays;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (view.sheetRowOf(mid) <= sheetRow) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const first = upTo(area.row - 1);
+  const last = upTo(area.row + area.rows - 1);
+  // Every row of the page hidden leaves no edge to draw a boundary at, and
+  // saying so leaves the sheet unshaded rather than all grey.
+  if (last <= first) return null;
+
   /**
    * Clamped, because a page is allowed to run past the last row and column the
    * sheet formats — that is how a document gives a page room to breathe, and
    * `$A$1:$BC$53` on a 52-row sheet is exactly that. Reading `offsets[53]` off
-   * the end of the array gave `undefined`, `y1` came out NaN, and a NaN height
-   * turns the page cut-out in `paintBase` into a silent no-op: the flood of
-   * OUTSIDE_PRINT stayed, and the whole sheet came up grey.
+   * the end of the array gave `undefined` and a NaN height, which is the same
+   * silent no-op by another route.
    */
   const rowAt = (display: number) =>
     view.rows.offsets[Math.min(view.rows.offsets.length - 1, Math.max(0, display))];
@@ -506,7 +532,7 @@ function printRect(
     x0: ox + colAt(area.col),
     x1: ox + colAt(area.col + area.cols),
     y0: oy + rowAt(first),
-    y1: last >= 0 ? oy + rowAt(last + 1) : oy + rowAt(first),
+    y1: oy + rowAt(last),
   };
 }
 
