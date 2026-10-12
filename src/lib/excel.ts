@@ -75,6 +75,14 @@ export interface MergeRect {
   cols: number;
 }
 
+/** A rectangle of cells, as the backend reports one back. */
+export interface Block {
+  row: number;
+  col: number;
+  rows: number;
+  cols: number;
+}
+
 /**
  * One coloured run of a cell's rich text.
  *
@@ -271,6 +279,19 @@ export function getCells(
   cols: number,
 ): Promise<Cell[][]> {
   return invoke<Cell[][]>("get_cells", { path, sheet, row, col, rows, cols });
+}
+
+/**
+ * Excel's current region around a cell: the block that can be reached from it
+ * without crossing a wholly blank row or column.
+ */
+export function currentRegion(
+  path: string,
+  sheet: string,
+  row: number,
+  col: number,
+): Promise<Block> {
+  return invoke<Block>("current_region", { path, sheet, row, col });
 }
 
 export function searchWorkbook(

@@ -29,22 +29,27 @@ export type Selection =
     };
 
 /**
- * A block starting at A1 with its anchor sitting on its own top-left corner.
+ * A block with its anchor and its active cell both on its own top-left corner.
  *
- * That is what Ctrl+A produces, and it is the one block whose anchor is not a
- * corner the active cell walked to: Excel leaves the active cell on A1 however
- * large the block it has just selected, so `rangeBetween`, which puts the active
- * cell at the far end, cannot express it.
+ * That is what Ctrl+A produces, and it is the one block whose ends were not
+ * walked to: Excel leaves the active cell at the block's corner however large
+ * the region it has just selected, so `rangeBetween`, which always puts the
+ * active cell at the far end, cannot express it.
  */
-export function rangeOver(rows: number, cols: number): Selection {
+export function rangeOver(
+  row: number,
+  col: number,
+  rows: number,
+  cols: number,
+): Selection {
   return {
     kind: "range",
-    row: 0,
-    col: 0,
+    row,
+    col,
     rows,
     cols,
-    anchor: { row: 0, col: 0 },
-    active: { row: 0, col: 0 },
+    anchor: { row, col },
+    active: { row, col },
   };
 }
 
