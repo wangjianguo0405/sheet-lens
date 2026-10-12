@@ -214,23 +214,6 @@ const PERF_SAMPLES = 60;
 const ANTS_MS = 60;
 const ANTS_STEP = 2;
 
-/**
- * The blank rows and columns the scroller can move through past the sheet's own
- * extent — Excel's sheets are 1,048,576 rows and 16,384 columns, and a grid that
- * stopped dead at the last cell would feel broken beside it.
- *
- * It is grown and trimmed as the view moves rather than laid out once at the
- * sheet's real size: a million rows of offsets is 8 MB of array rebuilt on every
- * sheet switch, and there is nothing to see in the empty millionth row. The
- * floor is what makes the first wheel past the data do anything at all on a
- * sheet that fits its window; the slack is how much may stand empty before it is
- * trimmed back, so that a scroll back up is not a state update per frame.
- */
-const VOID_MIN_ROWS = 64;
-const VOID_MIN_COLS = 16;
-const VOID_SLACK_ROWS = 512;
-const VOID_SLACK_COLS = 64;
-
 function record(samples: number[], value: number): void {
   samples.push(value);
   if (samples.length > PERF_SAMPLES) samples.shift();
@@ -413,14 +396,6 @@ export function CanvasGrid({
   const [showGrid, setShowGrid] = useState(true);
   const [filters, setFilters] = useState<Map<number, string[]>>(() => new Map());
   const [visibleRows, setVisibleRows] = useState<number[] | null>(null);
-  /**
-   * How much blank area the scroller holds past the sheet's own extent, in rows
-   * and columns. Excel lets a sheet be scrolled well past its data, and this is
-   * as much of that as the view is about to want — grown as it goes, given back
-   * when the view comes away from it.
-   */
-  const [voidRows, setVoidRows] = useState(VOID_MIN_ROWS);
-  const [voidCols, setVoidCols] = useState(VOID_MIN_COLS);
   /** Bumped when a block lands, so the paint pass knows to run again. */
   const [version, setVersion] = useState(0);
   /** The hover readout, and the cell it belongs to so a move within it is free. */
@@ -569,22 +544,9 @@ export function CanvasGrid({
     return { rows: displayRows, index };
   }, [displayRows]);
 
-  /** How many rows the view shows — a filtered view shows fewer. */
-  const displayRowCount = rowView ? rowView.rows.length : sheetRowsGuess;
-  /** How many the scroller holds in all: the sheet's own rows, then the blank area. */
-  const rowCount = displayRowCount + voidRows;
-  const colCount = sheetColsGuess + voidCols;
-
-  /**
-   * A display row's place on the sheet. Past the rows this view has, the rest are
-   * the blank ones the scroller moves through, numbered on from the sheet's own
-   * extent — in a filtered view they have no place among its rows, which is
-   * where they would be hidden anyway.
-   */
   const sheetRowOf = useCallback(
-    (display: number): number =>
-      rowView ? (rowView.rows[display] ?? sheetRowsGuess + display - displayRowCount) : display,
-    [rowView, sheetRowsGuess, displayRowCount],
+    (display: number): number => (rowView ? (rowView.rows[display] ?? -1) : display),
+    [rowView],
   );
   const displayOfRow = useCallback(
     (sheetRow: number): number => (rowView ? (rowView.index.get(sheetRow) ?? -1) : sheetRow),
@@ -592,86 +554,29 @@ export function CanvasGrid({
   );
 
   const cols = useMemo(
-    () =>
-      buildMetrics(colCount, (index) =>
-        index < sheetColsGuess ? (colOverrides.get(index) ?? baseColW) : baseColW,
-      ),
-    [colCount, sheetColsGuess, colOverrides, baseColW],
+    () => buildMetrics(sheetColsGuess, (index) => colOverrides.get(index) ?? baseColW),
+    [sheetColsGuess, colOverrides, baseColW],
   );
 
   const rows = useMemo(
     () =>
-      buildMetrics(rowCount, (display) => {
-        const row = sheetRowOf(display);
-        return row < sheetRowsGuess ? (rowOverrides.get(row) ?? baseRowH) : baseRowH;
-      }),
-    [rowView, rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf],
+      buildMetrics(
+        rowView ? rowView.rows.length : sheetRowsGuess,
+        (display) => rowOverrides.get(sheetRowOf(display)) ?? baseRowH,
+      ),
+    [rowView, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf],
   );
 
   const minRowH = Math.max(MIN_ROW_H, Math.ceil(fontSize * LINE_HEIGHT));
 
-  /** Where the sheet's own extent ends, in sheet pixels: the blank area follows it. */
-  const usedRowsTotal = rows.offsets[displayRowCount] ?? rows.total;
-  const usedColsTotal = cols.offsets[sheetColsGuess] ?? cols.total;
-
-  /**
-   * Tops the blank area up past the view, and gives back what the view has left
-   * behind.
-   *
-   * Run on every scroll, so the scroller never runs out from under the pointer,
-   * and again when the sheet or the window changes shape, since a sheet that fits
-   * its window has nowhere to scroll in the first place. The trim is what keeps
-   * the offsets array — as long as the sheet plus that area — from growing for
-   * the rest of the session, and the slack is what keeps the way back up from
-   * being a state update per frame.
-   */
-  const resizeVoid = useCallback(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const z = zoomRef.current;
-    const scroll = scrollRef.current;
-    const width = el.clientWidth / z;
-    const height = el.clientHeight / z;
-    // The view's own edges in sheet space, worked out as `buildView` does: the
-    // gutters scroll with the content, so they come off here.
-    const top = Math.max(0, scroll.top - COL_HEADER_H);
-    const left = Math.max(0, scroll.left - ROW_HEADER_W);
-    // A screen of blank space past the view is what the next wheel will want.
-    const rowsNeeded = Math.ceil(Math.max(0, top + height + height - usedRowsTotal) / baseRowH);
-    const colsNeeded = Math.ceil(Math.max(0, left + width + width - usedColsTotal) / baseColW);
-    setVoidRows((current) => {
-      const want = Math.max(VOID_MIN_ROWS, rowsNeeded);
-      if (current < want) return want;
-      return current - want > VOID_SLACK_ROWS ? want : current;
-    });
-    setVoidCols((current) => {
-      const want = Math.max(VOID_MIN_COLS, colsNeeded);
-      if (current < want) return want;
-      return current - want > VOID_SLACK_COLS ? want : current;
-    });
-  }, [usedRowsTotal, usedColsTotal, baseRowH, baseColW]);
-  const resizeVoidRef = useRef(resizeVoid);
-  resizeVoidRef.current = resizeVoid;
-
-  useEffect(() => {
-    resizeVoid();
-  }, [resizeVoid, zoom, layoutSheet]);
+  /** How many rows the view shows — a filtered view shows fewer. */
+  const displayRowCount = rowView ? rowView.rows.length : sheetRowsGuess;
 
   /** A column's left edge, for placing the shapes that float above the cells. */
-  /**
-   * A column's left edge, for placing the shapes that float above the cells.
-   *
-   * A shape whose anchor column is past the sheet's extent — one this pass could
-   * not place, since a one-cell anchor is only an offset the parser has to turn
-   * back into a cell — is put at the sheet's own right edge rather than at the
-   * scroller's, which now runs on into the blank area. Reading the scroller's
-   * total put those shapes out in that blank area instead: the left of the
-   * drawing, drawn again to the right of the sheet.
-   */
   const shapeColX = useCallback(
     (col: number) =>
-      col >= 0 && col <= sheetColsGuess ? cols.offsets[col] : usedColsTotal,
-    [cols, sheetColsGuess, usedColsTotal],
+      col >= 0 && col <= sheetColsGuess ? cols.offsets[col] : cols.total,
+    [cols, sheetColsGuess],
   );
 
   /**
@@ -685,22 +590,22 @@ export function CanvasGrid({
    */
   const printColX = useCallback(
     (col: number) =>
-      col >= 0 && col < colCount
+      col >= 0 && col <= sheetColsGuess
         ? cols.offsets[col]
-        : usedColsTotal + (col - sheetColsGuess) * baseColW,
-    [cols, colCount, sheetColsGuess, usedColsTotal, baseColW],
+        : cols.total + (col - sheetColsGuess) * baseColW,
+    [cols, sheetColsGuess, baseColW],
   );
 
   const printRowY = useCallback(
     (row: number) => {
       const display = displayOfRow(row);
-      if (display >= 0 && display < rowCount) return rows.offsets[display];
+      if (display >= 0 && display < displayRowCount) return rows.offsets[display];
       // A filtered view has no room to extrapolate in; the end of the rows on
       // screen is as far as the mark can honestly reach.
-      if (rowView) return usedRowsTotal;
-      return usedRowsTotal + (row - sheetRowsGuess) * baseRowH;
+      if (rowView) return rows.total;
+      return rows.total + (row - sheetRowsGuess) * baseRowH;
     },
-    [displayOfRow, rowCount, rows, rowView, sheetRowsGuess, usedRowsTotal, baseRowH],
+    [displayOfRow, displayRowCount, rows, rowView, sheetRowsGuess, baseRowH],
   );
 
   /**
@@ -715,10 +620,9 @@ export function CanvasGrid({
         const display = displayOfRow(probe);
         if (display >= 0 && display < displayRowCount) return rows.offsets[display];
       }
-      // The sheet's own bottom edge, not the scroller's: see `shapeColX`.
-      return usedRowsTotal;
+      return rows.total;
     },
-    [displayOfRow, displayRowCount, rows, sheetRowsGuess, usedRowsTotal],
+    [displayOfRow, displayRowCount, rows, sheetRowsGuess],
   );
 
   const cellAt = useCallback(
@@ -735,21 +639,13 @@ export function CanvasGrid({
   const styleAt = useCallback(
     (row: number, col: number): CellStyle | null => {
       if (!layout) return null;
-      // The blank area past the sheet is drawn plain, whatever the file says
-      // about the rows and columns reaching into it. A column's own style is
-      // written for all 1,048,576 rows of that column and a row's for all 16,384
-      // columns, so a table's rules and fills ran on past the end of its data
-      // and the sheet read as though it carried on for ever — a ladder of blue
-      // rules and a shaded band out in what should be empty. Only the sheet's own
-      // extent takes the file's formatting.
-      if (row >= sheetRowsGuess || col >= sheetColsGuess) return null;
       const index =
         styleOfRow(layout.cellRuns, row, col) ??
         layout.rowStyles[row] ??
         styleOfColumn(layout.colStyles, col);
       return index === undefined ? null : (layout.styles[index] ?? null);
     },
-    [layout, sheetRowsGuess, sheetColsGuess],
+    [layout],
   );
 
   const mergeAt = useCallback(
@@ -791,11 +687,6 @@ export function CanvasGrid({
     async (dir: "up" | "down" | "left" | "right", extend: boolean) => {
       const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
       const sheetCols = Math.max(sheet.cols, layout?.cols ?? 0);
-      // Where the blank area past the sheet ends. Excel answers "nothing ahead"
-      // with the sheet's own last row or column, and this is that same edge —
-      // as far out as the scroller has been made to reach.
-      const moveRows = sheetRows + voidRows;
-      const moveCols = sheetCols + voidCols;
       const from = selectionAnchor(selection);
       const vertical = dir === "up" || dir === "down";
       let to: { row: number; col: number } | null = null;
@@ -805,8 +696,8 @@ export function CanvasGrid({
         // The backend is gone, and the sheet's own edge is still the answer
         // Excel would give from a cell with nothing after it.
       }
-      const row = to?.row ?? (vertical ? (dir === "up" ? 0 : moveRows - 1) : from.row);
-      const col = to?.col ?? (vertical ? from.col : dir === "left" ? 0 : moveCols - 1);
+      const row = to?.row ?? (vertical ? (dir === "up" ? 0 : sheetRows - 1) : from.row);
+      const col = to?.col ?? (vertical ? from.col : dir === "left" ? 0 : sheetCols - 1);
 
       // A run of whole rows or columns moves along the one axis it has; the
       // direction across it has nothing there for it to select. Shift grows the
@@ -819,7 +710,7 @@ export function CanvasGrid({
         }
         const step = Math.max(
           -selection.row,
-          Math.min(moveRows - selection.row - selection.rows, row - selection.row),
+          Math.min(sheetRows - selection.row - selection.rows, row - selection.row),
         );
         onSelect(rowsBetween(selection.anchor + step, selection.active + step));
         return;
@@ -832,7 +723,7 @@ export function CanvasGrid({
         }
         const step = Math.max(
           -selection.col,
-          Math.min(moveCols - selection.col - selection.cols, col - selection.col),
+          Math.min(sheetCols - selection.col - selection.cols, col - selection.col),
         );
         onSelect(colsBetween(selection.anchor + step, selection.active + step));
         return;
@@ -840,7 +731,7 @@ export function CanvasGrid({
       if (extend) onSelect(rangeBetween(selection.kind === "range" ? selection.anchor : from, { row, col }));
       else select(row, col);
     },
-    [selection, path, sheet.name, sheet.rows, sheet.cols, voidRows, voidCols, layout, onSelect, select],
+    [selection, path, sheet.name, sheet.rows, sheet.cols, layout, onSelect, select],
   );
 
   const applyFilters = useCallback(
@@ -937,8 +828,6 @@ export function CanvasGrid({
         canvas.style.height = `${el.clientHeight}px`;
       }
       paintRef.current("both");
-      // A wider window is more of the blank area to want than it had before.
-      resizeVoidRef.current();
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -1071,9 +960,6 @@ export function CanvasGrid({
     const bySheet = views.get(path) ?? new Map<string, SheetView>();
     bySheet.set(sheet.name, view);
     views.set(path, bySheet);
-    // The blank area is what makes a scroll past the data possible at all, so
-    // every scroll asks for whatever the next one will need.
-    resizeVoidRef.current();
     schedule("both");
   }, [schedule, views, path, sheet.name]);
 
@@ -1244,6 +1130,7 @@ export function CanvasGrid({
 
     const sheetRows = Math.max(sheet.rows, layout.rows);
     const sheetCols = Math.max(sheet.cols, layout.cols);
+    const displayRowCount = rowView ? rowView.rows.length : sheetRows;
 
     const top = Math.max(0, scroll.top - COL_HEADER_H);
     const left = Math.max(0, scroll.left - ROW_HEADER_W);
@@ -1252,11 +1139,12 @@ export function CanvasGrid({
 
     const range = {
       rowStart: Math.max(0, indexAt(rows.offsets, top) - OVERSCAN_ROWS),
-      // The window runs over everything the scroller holds, blank area included:
-      // its cells are empty and unstyled, but the grid goes on being drawn there.
-      rowEnd: Math.min(rowCount, indexAt(rows.offsets, top + height) + 1 + OVERSCAN_ROWS),
+      rowEnd: Math.min(
+        displayRowCount,
+        indexAt(rows.offsets, top + height) + 1 + OVERSCAN_ROWS,
+      ),
       colStart: Math.max(0, indexAt(cols.offsets, left) - OVERSCAN_COLS),
-      colEnd: Math.min(colCount, indexAt(cols.offsets, left + width) + 1 + OVERSCAN_COLS),
+      colEnd: Math.min(sheetCols, indexAt(cols.offsets, left + width) + 1 + OVERSCAN_COLS),
     };
 
     // Which merged regions and Center-Across runs are on screen — both depend
@@ -1342,8 +1230,6 @@ export function CanvasGrid({
       rows,
       sheetRows,
       sheetCols,
-      /** Columns with an offset — the sheet's own, then the blank area's. */
-      scrollCols: colCount,
       ...range,
       width: size.width,
       height: size.height,
@@ -1382,8 +1268,6 @@ export function CanvasGrid({
     rowView,
     cols,
     rows,
-    rowCount,
-    colCount,
     merges,
     sheetRowOf,
     displayOfRow,
@@ -1557,12 +1441,12 @@ export function CanvasGrid({
       if (py < gutterH) {
         const x = (clientX - rect.left + el.scrollLeft) / z - ROW_HEADER_W;
         if (x < 0 || x >= cols.total) return null;
-        return { kind: "colHeader", col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
+        return { kind: "colHeader", col: Math.min(sheetColsGuess - 1, indexAt(cols.offsets, x)) };
       }
       if (px < gutterW) {
         const y = (clientY - rect.top + el.scrollTop) / z - COL_HEADER_H;
         if (y < 0 || y >= rows.total) return null;
-        const display = Math.min(rowCount - 1, indexAt(rows.offsets, y));
+        const display = Math.min(displayRowCount - 1, indexAt(rows.offsets, y));
         const row = sheetRowOf(display);
         return row < 0 ? null : { kind: "rowHeader", row };
       }
@@ -1570,11 +1454,11 @@ export function CanvasGrid({
       const x = (clientX - rect.left + el.scrollLeft) / z - ROW_HEADER_W;
       const y = (clientY - rect.top + el.scrollTop) / z - COL_HEADER_H;
       if (x < 0 || y < 0 || x >= cols.total || y >= rows.total) return null;
-      const row = sheetRowOf(Math.min(rowCount - 1, indexAt(rows.offsets, y)));
+      const row = sheetRowOf(Math.min(displayRowCount - 1, indexAt(rows.offsets, y)));
       if (row < 0) return null;
-      return { kind: "cell", row, col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
+      return { kind: "cell", row, col: Math.min(sheetColsGuess - 1, indexAt(cols.offsets, x)) };
     },
-    [cols, rows, colCount, rowCount, sheetRowOf],
+    [cols, rows, sheetColsGuess, sheetRowOf, displayRowCount],
   );
 
   /**
@@ -1809,8 +1693,8 @@ export function CanvasGrid({
       return;
     }
 
-    const clampRow = (r: number) => Math.min(sheetRows + voidRows - 1, Math.max(0, r));
-    const clampCol = (c: number) => Math.min(sheetCols + voidCols - 1, Math.max(0, c));
+    const clampRow = (r: number) => Math.min(sheetRows - 1, Math.max(0, r));
+    const clampCol = (c: number) => Math.min(sheetCols - 1, Math.max(0, c));
     const el = viewportRef.current;
     const z = zoomRef.current;
     const visible = el ? Math.floor((el.clientHeight / z - COL_HEADER_H) / baseRowH) : 20;
@@ -1872,7 +1756,7 @@ export function CanvasGrid({
       const slide = (next: number) => {
         const step = Math.max(
           -selection.row,
-          Math.min(sheetRows + voidRows - selection.row - selection.rows, next - selection.row),
+          Math.min(sheetRows - selection.row - selection.rows, next - selection.row),
         );
         onSelect(rowsBetween(selection.anchor + step, selection.active + step));
       };
@@ -1911,7 +1795,7 @@ export function CanvasGrid({
       const slide = (next: number) => {
         const step = Math.max(
           -selection.col,
-          Math.min(sheetCols + voidCols - selection.col - selection.cols, next - selection.col),
+          Math.min(sheetCols - selection.col - selection.cols, next - selection.col),
         );
         onSelect(colsBetween(selection.anchor + step, selection.active + step));
       };
@@ -2346,13 +2230,8 @@ export function CanvasGrid({
                 shapes={layout.drawings}
                 colX={shapeColX}
                 rowY={shapeRowY}
-                // The layer is clipped to the sheet's own extent, not to the
-                // scroller. An `<svg>` hides what falls outside it, which is what
-                // keeps a picture wider than the sheet's last column — or a shape
-                // whose cell the parser could only approximate — from spilling
-                // out into the blank area the scroller now runs on into.
-                width={usedColsTotal}
-                height={usedRowsTotal}
+                width={cols.total}
+                height={rows.total}
                 path={path}
                 // Null unless the readout is on, so the layer's `memo` still
                 // holds in normal use — the facts change with the selection.
