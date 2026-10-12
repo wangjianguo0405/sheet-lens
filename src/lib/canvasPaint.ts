@@ -274,9 +274,13 @@ function ring(
  * The dashed rule around a copied range, crawling the way Excel's does.
  *
  * Dashed rather than solid because the selection's own rule is drawn in the same
- * ink and the two can be on screen at once; a marquee that stood still would
- * read as one more border. The stroke state is the only thing here that has to
- * be undone, so it is saved and restored rather than reset by hand.
+ * ink and the two can be on screen at once. A marquee that stood still would
+ * read as one more border, and a dasher drawn straight over a solid line reads
+ * as a solid one — the range just copied is usually the selection as well, so
+ * the gaps are painted out with the casing first. That is also what keeps the
+ * ants legible over a filled or shaded cell. The stroke state is the only thing
+ * here that has to be undone, so it is saved and restored rather than reset by
+ * hand.
  */
 function marquee(
   ctx: CanvasRenderingContext2D,
@@ -285,15 +289,18 @@ function marquee(
   w: number,
   h: number,
   phase: number,
+  casing: string,
 ): void {
   if (w <= 0 || h <= 0) return;
   ctx.save();
-  ctx.strokeStyle = ACCENT_INK;
   ctx.lineWidth = 1;
-  ctx.setLineDash([4, 3]);
-  ctx.lineDashOffset = -phase;
   // Half a pixel in, so a 1px stroke lands on a pixel rather than straddling
   // two of them — the same reason the rules above are filled one pixel thick.
+  ctx.strokeStyle = casing;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.strokeStyle = ACCENT_INK;
+  ctx.setLineDash([4, 3]);
+  ctx.lineDashOffset = -phase;
   ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
   ctx.restore();
 }
@@ -990,6 +997,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
         view.cols.offsets[right + 1] - view.cols.offsets[view.copied.col],
         view.rows.offsets[bottom + 1] - view.rows.offsets[top],
         view.ants,
+        view.theme.background,
       );
     }
   }
