@@ -277,6 +277,16 @@ function ring(
   fill(ctx, x + w - 1, y, 1, h, color);
 }
 
+/** Whether two rectangles share a cell. */
+function overlapsRect(a: MergeRect, b: MergeRect): boolean {
+  return (
+    a.row < b.row + b.rows &&
+    b.row < a.row + a.rows &&
+    a.col < b.col + b.cols &&
+    b.col < a.col + a.cols
+  );
+}
+
 /**
  * The dashed rule around a copied range, crawling the way Excel's does.
  *
@@ -993,15 +1003,32 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
   // What Ctrl+C took, if it was taken here. Drawn over the selection's own
   // rule, so a copied block that is also selected keeps both.
   if (view.copied) {
-    const top = view.displayOfRow(view.copied.row);
-    const bottom = view.displayOfRow(view.copied.row + view.copied.rows - 1);
+    // A merged cell is one cell to the grid and a block to Excel, whose marquee
+    // is drawn around the whole of it — so the copied rectangle is grown over any
+    // merged region it reaches into before it is outlined. Merged regions never
+    // overlap one another, so one pass is enough. The range ring above needs none
+    // of this: it is drawn from the region itself.
+    let rect = view.copied;
+    for (const merge of view.merges) {
+      if (!overlapsRect(rect, merge)) continue;
+      const row = Math.min(rect.row, merge.row);
+      const col = Math.min(rect.col, merge.col);
+      rect = {
+        row,
+        col,
+        rows: Math.max(rect.row + rect.rows, merge.row + merge.rows) - row,
+        cols: Math.max(rect.col + rect.cols, merge.col + merge.cols) - col,
+      };
+    }
+    const top = view.displayOfRow(rect.row);
+    const bottom = view.displayOfRow(rect.row + rect.rows - 1);
     if (top >= 0 && bottom >= 0) {
-      const right = Math.min(view.scrollCols - 1, view.copied.col + view.copied.cols - 1);
+      const right = Math.min(view.scrollCols - 1, rect.col + rect.cols - 1);
       marquee(
         ctx,
-        ox + view.cols.offsets[view.copied.col],
+        ox + view.cols.offsets[rect.col],
         oy + view.rows.offsets[top],
-        view.cols.offsets[right + 1] - view.cols.offsets[view.copied.col],
+        view.cols.offsets[right + 1] - view.cols.offsets[rect.col],
         view.rows.offsets[bottom + 1] - view.rows.offsets[top],
         view.ants,
         view.theme.background,
