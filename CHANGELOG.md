@@ -7,6 +7,16 @@ both the release notes on GitHub and the notes the app shows when it offers the
 update — so write it for whoever is being asked to install it, not for whoever
 wrote the code.
 
+## [0.3.1] - 2026-10-12
+
+Updating replaces more of the folder now. It used to swap only `SheetLens.exe`,
+leaving the README and the changelog beside it describing whatever version
+happened to be unpacked there first.
+
+- An update rewrites the README, the changelog and the licence in the folder too
+- The README now describes the grid as it is — drawn on a canvas since 0.3.0,
+  not rendered in CSS
+
 ## [0.3.0] - 2026-10-12
 
 The grid is painted onto a canvas instead of being built out of an element per
