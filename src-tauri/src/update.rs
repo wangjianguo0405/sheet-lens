@@ -157,6 +157,52 @@ fn extract_executable(archive: &[u8], announced_version: &str) -> Result<Vec<u8>
     Ok(executable)
 }
 
+/// Whether an archive entry is one of the folder's documents rather than its
+/// payload: the three READMEs, the three changelogs, and the licence.
+fn is_document(name: &str) -> bool {
+    name == "LICENSE"
+        || (name.ends_with(".md") && (name.starts_with("README") || name.starts_with("CHANGELOG")))
+}
+
+/// The documents an archive carries, as they would land in the install folder.
+///
+/// The archive holds them so the folder explains itself without a network, which
+/// was only true of the copy someone first unpacked: an update replaced the
+/// executable and left every document beside it describing whichever version was
+/// installed first, however many releases later.
+fn documents_in(archive: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let Ok(mut zip) = zip::ZipArchive::new(Cursor::new(archive)) else {
+        return Vec::new();
+    };
+    let mut documents = Vec::new();
+    for index in 0..zip.len() {
+        let Ok(mut entry) = zip.by_index(index) else {
+            continue;
+        };
+        let name = entry.name().to_string();
+        if !is_document(&name) {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        if entry.read_to_end(&mut bytes).is_ok() {
+            documents.push((name, bytes));
+        }
+    }
+    documents
+}
+
+/// Rewrites the documents beside the executable from an archive whose signature
+/// has already been checked.
+///
+/// Best effort, and deliberately so: the update is the executable, and a folder
+/// someone made read-only — or a document they edited by hand — is not a reason
+/// to refuse a build that verified.
+fn refresh_documents(archive: &[u8], dir: &Path) {
+    for (name, bytes) in documents_in(archive) {
+        let _ = std::fs::write(dir.join(name), bytes);
+    }
+}
+
 /// Windows PowerShell lives in a versioned directory that Rust's executable
 /// search never visits — it probes `System32` itself and stops — so a machine
 /// whose `PATH` lost that entry reports "program not found" while PowerShell is
@@ -404,6 +450,9 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
         .map_err(|error| format!("Could not download the update: {error}"))?;
 
     let executable = extract_executable(&archive, &update.version)?;
+    // The folder's own copies of the notes go stale the moment the executable is
+    // swapped, and they are the only thing in it a person reads.
+    refresh_documents(&archive, &dir);
     stage_and_launch(&dir, &executable, &exe_name)
 }
 
@@ -414,7 +463,10 @@ pub fn update_restart(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_executable, localised_notes, PAYLOAD_EXECUTABLE, PAYLOAD_MANIFEST};
+    use super::{
+        documents_in, extract_executable, is_document, localised_notes, PAYLOAD_EXECUTABLE,
+        PAYLOAD_MANIFEST,
+    };
     use std::io::{Cursor, Write};
 
     fn archive(manifest: serde_json::Value, executable: &[u8]) -> Vec<u8> {
@@ -430,6 +482,73 @@ mod tests {
 
     fn manifest(version: &str, arch: &str) -> serde_json::Value {
         serde_json::json!({ "schema": 1, "version": version, "arch": arch })
+    }
+
+    /// An archive shaped like the workflow's: the payload and its manifest, and
+    /// the documents the folder is meant to explain itself with.
+    fn release_archive(stamp: &str) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file(PAYLOAD_MANIFEST, options).unwrap();
+        zip.write_all(&serde_json::to_vec(&manifest("0.3.0", super::arch_label())).unwrap())
+            .unwrap();
+        zip.start_file(PAYLOAD_EXECUTABLE, options).unwrap();
+        zip.write_all(b"MZpayload").unwrap();
+        for name in [
+            "README.md",
+            "README.ja.md",
+            "README.zh-CN.md",
+            "CHANGELOG.md",
+            "CHANGELOG.ja.md",
+            "CHANGELOG.zh-CN.md",
+            "LICENSE",
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(stamp.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn an_archive_carries_the_folders_documents_beside_its_payload() {
+        let documents = documents_in(&release_archive("0.3.0"));
+        let names: Vec<&str> = documents.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "README.md",
+                "README.ja.md",
+                "README.zh-CN.md",
+                "CHANGELOG.md",
+                "CHANGELOG.ja.md",
+                "CHANGELOG.zh-CN.md",
+                "LICENSE",
+            ]
+        );
+        // Contents carried through rather than merely found.
+        for (name, bytes) in &documents {
+            assert_eq!(bytes, b"0.3.0", "{name}");
+        }
+    }
+
+    #[test]
+    fn the_payload_and_its_manifest_are_not_documents() {
+        // The payload has its own extraction, which the signature check reads
+        // through, and the manifest describes the archive rather than landing
+        // in the folder. Neither should be written out as if it were a file to
+        // read.
+        assert!(!is_document(PAYLOAD_EXECUTABLE));
+        assert!(!is_document(PAYLOAD_MANIFEST));
+        assert!(!is_document("apply-update.ps1"));
+        assert!(!is_document("portable.sheetlens"));
+        // A markdown file that is neither a readme nor a changelog is not ours
+        // to overwrite either.
+        assert!(!is_document("notes.md"));
+
+        assert!(is_document("README.md"));
+        assert!(is_document("CHANGELOG.zh-CN.md"));
+        assert!(is_document("LICENSE"));
     }
 
     #[test]
