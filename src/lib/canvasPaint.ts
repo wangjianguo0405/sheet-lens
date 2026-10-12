@@ -76,13 +76,6 @@ export interface GridView {
   rows: Metrics;
   sheetRows: number;
   sheetCols: number;
-  /**
-   * Every column the scroller holds — the sheet's own, then the blank area the
-   * grid keeps past them so it can be scrolled beyond its data. A selection or a
-   * copy out in that area still has to be outlined, and that outline wants a
-   * column that exists.
-   */
-  scrollCols: number;
   /** The overscanned window: display rows, and sheet columns. */
   rowStart: number;
   rowEnd: number;
@@ -1011,7 +1004,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
   if (view.selection.kind === "range") {
     const top = view.displayOfRow(view.selection.row);
     const bottom = view.displayOfRow(view.selection.row + view.selection.rows - 1);
-    const right = Math.min(view.scrollCols - 1, view.selection.col + view.selection.cols - 1);
+    const right = Math.min(view.sheetCols - 1, view.selection.col + view.selection.cols - 1);
     if (top >= 0 && bottom >= 0) {
       const x = ox + view.cols.offsets[view.selection.col];
       const y = oy + view.rows.offsets[top];
@@ -1049,7 +1042,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
     const top = view.displayOfRow(rect.row);
     const bottom = view.displayOfRow(rect.row + rect.rows - 1);
     if (top >= 0 && bottom >= 0) {
-      const right = Math.min(view.scrollCols - 1, rect.col + rect.cols - 1);
+      const right = Math.min(view.sheetCols - 1, rect.col + rect.cols - 1);
       marquee(
         ctx,
         ox + view.cols.offsets[rect.col],
