@@ -7,23 +7,34 @@ both the release notes on GitHub and the notes the app shows when it offers the
 update — so write it for whoever is being asked to install it, not for whoever
 wrote the code.
 
+Within a section the entries are grouped: **Added** for what a sheet could not
+do before, **Improved** for what it now does differently, and **Fixed** for what
+it used to get wrong. A release with nothing to say under one of them leaves
+that group out.
+
 ## [0.3.3] - 2026-10-12
 
 Ctrl and the arrows now move the cursor the way Excel's do, and a copy says so.
+
+### Added
 
 - Ctrl+arrow jumps to the edge of the data — the far end of a run of filled
   cells, or the next filled cell past a blank one — and Ctrl+Shift+arrow extends
   the selection there
 - Ctrl+C draws the dashed rule Excel draws around what was copied, and it crawls
-  until Escape takes it away
+  until Escape takes it away from wherever the focus happens to be
+
+### Fixed
+
 - Switching away from a sheet and back no longer moves the view: each sheet
   keeps the position it was left at
-- Escape after a copy answers wherever the focus is, and a copy no longer leaves
-  the keyboard pointing at nothing
+- A copy no longer leaves the keyboard pointing at nothing
 
 ## [0.3.2] - 2026-10-12
 
 Two things that went wrong on a long sheet.
+
+### Fixed
 
 - Borders no longer stop partway down a heavily formatted sheet. The parser
   gave up on reading styles past a certain point, and what it dropped read as
@@ -37,7 +48,12 @@ Updating replaces more of the folder now. It used to swap only `SheetLens.exe`,
 leaving the README and the changelog beside it describing whatever version
 happened to be unpacked there first.
 
+### Improved
+
 - An update rewrites the README, the changelog and the licence in the folder too
+
+### Fixed
+
 - The README now describes the grid as it is — drawn on a canvas since 0.3.0,
   not rendered in CSS
 
@@ -47,12 +63,17 @@ The grid is painted onto a canvas instead of being built out of an element per
 cell, which is what used to make a long sheet slow to scroll and slow to click
 in. The rest of this release is the keyboard catching up with it.
 
-- Large sheets are responsive again: scrolling, selecting and clicking no longer
-  stall the way they did
+### Added
+
 - Shift with the arrow keys, Page Up/Down or Home/End extends the selection, and
   Ctrl+A selects the data around the cursor — the whole sheet on a second press
 - Dragging along the row or column headers selects a run of them, `3:7` or `C:E`
 - Ctrl+Home and Ctrl+End jump to the two corners, Ctrl+Page Up/Down change sheet
+
+### Improved
+
+- Large sheets are responsive again: scrolling, selecting and clicking no longer
+  stall the way they did
 - A new icon
 
 ## [0.2.0] - 2026-10-11
@@ -61,11 +82,15 @@ The interface now comes in English, Chinese and Japanese, and opens in your
 system language. The button at the right of the toolbar switches it, and what
 you pick is remembered.
 
+### Added
+
 - Simplified Chinese and Japanese throughout
 - A language switcher in the toolbar
 - The notes shown when an update is available are in that language too
 
 ## [0.1.1] - 2026-10-11
+
+### Improved
 
 - The update dialog now shows how far the download has got, instead of a line
   that only said "downloading".
@@ -75,6 +100,8 @@ you pick is remembered.
 First release: a portable Windows build of SheetLens that can update itself in
 place. Unpack it anywhere and run `SheetLens.exe`; it keeps itself current from
 the releases on this repository.
+
+### Added
 
 - Opens `.xlsx`, `.xlsm`, `.xls`, `.xlsb` and `.ods`
 - Sheets, search, go-to, column filters and a formula bar
