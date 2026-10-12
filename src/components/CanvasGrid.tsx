@@ -658,10 +658,20 @@ export function CanvasGrid({
   }, [resizeVoid, zoom, layoutSheet]);
 
   /** A column's left edge, for placing the shapes that float above the cells. */
+  /**
+   * A column's left edge, for placing the shapes that float above the cells.
+   *
+   * A shape whose anchor column is past the sheet's extent — one this pass could
+   * not place, since a one-cell anchor is only an offset the parser has to turn
+   * back into a cell — is put at the sheet's own right edge rather than at the
+   * scroller's, which now runs on into the blank area. Reading the scroller's
+   * total put those shapes out in that blank area instead: the left of the
+   * drawing, drawn again to the right of the sheet.
+   */
   const shapeColX = useCallback(
     (col: number) =>
-      col >= 0 && col <= sheetColsGuess ? cols.offsets[col] : cols.total,
-    [cols, sheetColsGuess],
+      col >= 0 && col <= sheetColsGuess ? cols.offsets[col] : usedColsTotal,
+    [cols, sheetColsGuess, usedColsTotal],
   );
 
   /**
@@ -675,8 +685,10 @@ export function CanvasGrid({
    */
   const printColX = useCallback(
     (col: number) =>
-      col >= 0 && col < colCount ? cols.offsets[col] : cols.total + (col - colCount) * baseColW,
-    [cols, colCount, baseColW],
+      col >= 0 && col < colCount
+        ? cols.offsets[col]
+        : usedColsTotal + (col - sheetColsGuess) * baseColW,
+    [cols, colCount, sheetColsGuess, usedColsTotal, baseColW],
   );
 
   const printRowY = useCallback(
@@ -685,10 +697,10 @@ export function CanvasGrid({
       if (display >= 0 && display < rowCount) return rows.offsets[display];
       // A filtered view has no room to extrapolate in; the end of the rows on
       // screen is as far as the mark can honestly reach.
-      if (rowView) return rows.total;
-      return rows.total + (row - rowCount) * baseRowH;
+      if (rowView) return usedRowsTotal;
+      return usedRowsTotal + (row - sheetRowsGuess) * baseRowH;
     },
-    [displayOfRow, rowCount, rows, rowView, baseRowH],
+    [displayOfRow, rowCount, rows, rowView, sheetRowsGuess, usedRowsTotal, baseRowH],
   );
 
   /**
@@ -703,9 +715,10 @@ export function CanvasGrid({
         const display = displayOfRow(probe);
         if (display >= 0 && display < displayRowCount) return rows.offsets[display];
       }
-      return rows.total;
+      // The sheet's own bottom edge, not the scroller's: see `shapeColX`.
+      return usedRowsTotal;
     },
-    [displayOfRow, displayRowCount, rows, sheetRowsGuess],
+    [displayOfRow, displayRowCount, rows, sheetRowsGuess, usedRowsTotal],
   );
 
   const cellAt = useCallback(
