@@ -195,6 +195,26 @@ fn current_region(
     book.current_region(&sheet, row, col)
 }
 
+/// Where Ctrl+arrow lands: the edge of the run of filled cells in that
+/// direction, or the nearest filled cell when the one it starts from is blank.
+/// A null reply is nothing ahead at all, which the grid reads as the sheet's own
+/// edge — the stored range stops at the last cell the file mentions.
+#[tauri::command]
+fn edge_cell(
+    path: String,
+    sheet: String,
+    row: u32,
+    col: u32,
+    dir: String,
+    store: State<'_, Shared>,
+) -> Result<Option<excel::CellPos>, String> {
+    let books = store.0.lock().unwrap();
+    let book = books
+        .get(&path)
+        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    book.edge_cell(&sheet, row, col, &dir)
+}
+
 #[tauri::command]
 fn close_workbook(path: String, store: State<'_, Shared>) {
     store.0.lock().unwrap().remove(&path);
@@ -254,6 +274,7 @@ pub fn run() {
             filter_rows,
             axis_values,
             current_region,
+            edge_cell,
             read_media,
             close_workbook,
             update::update_status,

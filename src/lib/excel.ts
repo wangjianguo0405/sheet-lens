@@ -294,6 +294,28 @@ export function currentRegion(
   return invoke<Block>("current_region", { path, sheet, row, col });
 }
 
+/** One cell on the sheet, in zero-based coordinates. */
+export interface CellPos {
+  row: number;
+  col: number;
+}
+
+/**
+ * Where Ctrl+arrow lands: the far end of the run of filled cells in that
+ * direction, or the nearest filled cell when the one it starts from is blank.
+ * `null` is nothing ahead at all — the grid answers that with the sheet's own
+ * edge, which the backend has no view of.
+ */
+export function edgeCell(
+  path: string,
+  sheet: string,
+  row: number,
+  col: number,
+  dir: "up" | "down" | "left" | "right",
+): Promise<CellPos | null> {
+  return invoke<CellPos | null>("edge_cell", { path, sheet, row, col, dir });
+}
+
 export function searchWorkbook(
   path: string,
   query: string,
