@@ -3,7 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 
-import { CanvasGrid } from "@/components/CanvasGrid";
+import { CanvasGrid, type SheetViews } from "@/components/CanvasGrid";
 import { FileTabs } from "@/components/FileTabs";
 import { FormulaBar } from "@/components/FormulaBar";
 import { GoToDialog } from "@/components/GoToDialog";
@@ -80,6 +80,20 @@ export default function App() {
   const [homeOpen, setHomeOpen] = useState(false);
   /** The workbook to put back when that tab is closed. */
   const lastFileRef = useRef<string | null>(null);
+  /**
+   * Bumped when the cursor is placed somewhere the grid has to show, rather
+   * than somewhere the user is walking to. Switching sheets is not that: the
+   * grid puts the view back where each sheet was left, which is a position the
+   * cursor does not get to overrule.
+   */
+  const [reveal, setReveal] = useState(0);
+  /**
+   * Where each sheet of each open workbook was left scrolled. It is the tabs
+   * that own this — a clue about a workbook nobody has open is not worth
+   * keeping — so `closeTab` drops the whole entry, the way the tab's cursors go
+   * with it.
+   */
+  const views = useRef<SheetViews>(new Map());
 
   const active = useMemo(
     () => tabs.find((tab) => tab.info.path === activePath) ?? null,
@@ -166,6 +180,7 @@ export default function App() {
   const closeTab = useCallback(
     (path: string) => {
       void closeWorkbook(path).catch(() => {});
+      views.current.delete(path);
       const remaining = tabs.filter((tab) => tab.info.path !== path);
       setTabs(remaining);
       if (activePath === path) setActivePath(remaining.at(-1)?.info.path ?? null);
@@ -230,6 +245,7 @@ export default function App() {
     (hit: SearchHit) => {
       updateActive({ sheet: hit.sheet });
       putCursor(hit.sheet, { kind: "cell", row: hit.row, col: hit.col });
+      setReveal((n) => n + 1);
     },
     [updateActive, putCursor],
   );
@@ -238,6 +254,7 @@ export default function App() {
     (sheet: string, row: number, col: number) => {
       updateActive({ sheet });
       putCursor(sheet, { kind: "cell", row, col });
+      setReveal((n) => n + 1);
     },
     [updateActive, putCursor],
   );
@@ -465,11 +482,13 @@ export default function App() {
                 <CanvasGrid
                   path={active.info.path}
                   sheet={activeSheet}
+                  views={views.current}
                   selection={selection}
                   onSelect={handleSelect}
                   onDetail={setDetail}
                   onExtent={handleExtent}
                   onSheetStep={handleSheetStep}
+                  reveal={reveal}
                   zoom={zoom}
                   onZoom={setZoom}
                   bar={

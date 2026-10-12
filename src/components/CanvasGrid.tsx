@@ -93,16 +93,39 @@ type DragAnchor =
   | { kind: "row"; row: number; dragged: boolean }
   | { kind: "column"; col: number; dragged: boolean };
 
+/** Where a sheet's view sits, in sheet-space pixels at 100% zoom. */
+export interface SheetView {
+  top: number;
+  left: number;
+}
+
+/** Those positions, by workbook path and then by sheet name. */
+export type SheetViews = Map<string, Map<string, SheetView>>;
+
 interface GridProps {
   path: string;
   sheet: SheetInfo;
   selection: Selection;
+  /**
+   * Where each sheet of each open workbook was left scrolled, keyed by
+   * workbook and then by sheet. The app owns it rather than the grid, so that
+   * closing a tab forgets its sheets' positions — the same way it forgets
+   * their cursors.
+   */
+  views: SheetViews;
   onSelect: (selection: Selection) => void;
   onDetail?: (cell: Cell | null) => void;
   /** The extent actually on screen, which can exceed calamine's range. */
   onExtent?: (rows: number, cols: number) => void;
   /** Steps to the sheet `delta` along in the workbook, for Ctrl+PageUp/Down. */
   onSheetStep?: (delta: number) => void;
+  /**
+   * Bumped when the caller places the cursor somewhere it has to be *seen* — Go
+   * To, or a search hit. Arriving on a sheet is not one of those: Excel puts
+   * back the view that sheet was left at, off-screen cursor and all, so a jump
+   * is the only thing allowed to drag it.
+   */
+  reveal?: number;
   /** View scale as a percentage, the way Excel names it. */
   zoom: number;
   onZoom: (percent: number) => void;
@@ -244,10 +267,12 @@ export function CanvasGrid({
   path,
   sheet,
   selection,
+  views,
   onSelect,
   onDetail,
   onExtent,
   onSheetStep,
+  reveal,
   zoom,
   onZoom,
   bar,
@@ -332,7 +357,22 @@ export function CanvasGrid({
   selectionRef.current = selection;
   const zoomRef = useRef(zoom / 100);
   zoomRef.current = zoom / 100;
-  const scrollRef = useRef({ top: 0, left: 0 });
+  const scrollRef = useRef<SheetView>({ top: 0, left: 0 });
+  /**
+   * The cursor the view has already been moved to.
+   *
+   * The pass follows a cursor the user moved — an arrow key, a search hit, Go To
+   * — and nothing else. A sheet arriving is not that: its view was just put back
+   * where it was left, and the cursor it carries is the one from last time,
+   * which is off screen only because it was scrolled out of the way. Excel keeps
+   * that state rather than undoing it, so arriving must not count as a move.
+   * The cursor is recorded when the sheet changes, since the pass itself runs
+   * again for everything that lands with the arrival — the layout, the column
+   * metrics — and every one of those runs has to leave the view alone.
+   */
+  const followedRef = useRef<Selection | null>(null);
+  /** The last jump token the pass acted on, so only a new one may drag the view. */
+  const revealRef = useRef(reveal ?? 0);
   const sizeRef = useRef({ width: 0, height: 0 });
   const dprRef = useRef(1);
 
@@ -628,6 +668,9 @@ export function CanvasGrid({
   // --- the sheet's layout, once per switch ---
   useEffect(() => {
     drag.current = null;
+    // The incoming sheet's own cursor is where its view was left, so arriving
+    // with it is not a cursor move for the pass below to carry.
+    followedRef.current = selectionRef.current;
     let cancelled = false;
     sheetLayout(path, sheet.name)
       .then((parsed) => {
@@ -644,24 +687,14 @@ export function CanvasGrid({
         setColOverrides(toOverrides(parsed.colWidthsChars, colPx));
         setRowOverrides(toOverrides(parsed.rowHeightsPx));
 
-        // Aim the viewport at the remembered cursor before anything is
-        // fetched, so the first paint is the right rows rather than A1.
-        const cursor = selectionRef.current;
-        if (cursor.kind === "cell") {
-          const rowMetrics = buildMetrics(
-            parsed.rows,
-            (index) => parsed.rowHeightsPx[String(index)] ?? parsed.defaultRowHeightPx,
-          );
-          const colMetrics = buildMetrics(parsed.cols, (index) =>
-            colPx(parsed.colWidthsChars[String(index)] ?? parsed.defaultColWidthChars),
-          );
-          setScrollTo(
-            rowMetrics.offsets[cursor.row] ?? 0,
-            colMetrics.offsets[cursor.col] ?? 0,
-          );
-        } else {
-          setScrollTo(0, 0);
-        }
+        // Put back the view this sheet was left at, before anything is
+        // fetched, so the first paint is the right block rather than A1's.
+        // Excel keeps a window position per sheet and restores it on the way
+        // in, even where that leaves the active cell off screen; seeding this
+        // from the cursor instead dragged a sheet whose cursor sat far out to
+        // the right until that cell was the first visible column.
+        const view = views.get(path)?.get(sheet.name);
+        setScrollTo(view?.top ?? 0, view?.left ?? 0);
 
         const saved = toFilters(parsed.autoFilter?.applied);
         if (saved.size > 0) {
@@ -683,7 +716,7 @@ export function CanvasGrid({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setScrollTo is stable
-  }, [path, sheet.name]);
+  }, [path, sheet.name, views]);
 
   /** Moves the scroller to a sheet-space offset, through the paint refs. */
   const setScrollTo = useCallback((top: number, left: number) => {
@@ -796,9 +829,13 @@ export function CanvasGrid({
     const node = viewportRef.current;
     if (!node) return;
     const z = zoomRef.current;
-    scrollRef.current = { top: node.scrollTop / z, left: node.scrollLeft / z };
+    const view = { top: node.scrollTop / z, left: node.scrollLeft / z };
+    scrollRef.current = view;
+    const bySheet = views.get(path) ?? new Map<string, SheetView>();
+    bySheet.set(sheet.name, view);
+    views.set(path, bySheet);
     schedule("both");
-  }, [schedule]);
+  }, [schedule, views, path, sheet.name]);
 
   /** Repaint the block layer whenever the data, the layout or the sheet moves. */
   useEffect(() => {
@@ -842,10 +879,19 @@ export function CanvasGrid({
    * Moving the selection with the keyboard, from a search hit or from Go To has
    * to carry the view with it, or the cursor walks off the bottom of a screen
    * that never moves — which is what a selected row or column did too.
+   *
+   * Nothing else moves it. A sheet that arrives has had its view put back where
+   * it was left, and a jump that lands on another sheet is the one kind of
+   * arrival whose cursor *was* asked for.
    */
   useEffect(() => {
     const el = viewportRef.current;
     if (!el || !layoutReady) return;
+    const asked = (reveal ?? 0) !== revealRef.current;
+    revealRef.current = reveal ?? 0;
+    const follow = asked || selection !== followedRef.current;
+    followedRef.current = selection;
+    if (!follow) return;
     const factor = zoom / 100;
 
     // A block follows its active cell rather than its rectangle, which for one
@@ -897,6 +943,7 @@ export function CanvasGrid({
     sheetColsGuess,
     zoom,
     layoutReady,
+    reveal,
   ]);
 
   // --- fetching the cells the viewport needs ---
