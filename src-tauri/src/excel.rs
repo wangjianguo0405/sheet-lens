@@ -56,6 +56,13 @@ pub struct Block {
     pub cols: u32,
 }
 
+/// One cell on the sheet, in zero-based coordinates.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct CellPos {
+    pub row: u32,
+    pub col: u32,
+}
+
 struct Sheet {
     range: Range<Data>,
     /// Top-left cell of the stored range, in absolute sheet coordinates.
@@ -244,6 +251,87 @@ impl Book {
             rows: bottom - top + 1,
             cols: right - left + 1,
         })
+    }
+
+    /// Where Ctrl+arrow lands, in Excel's own rule.
+    ///
+    /// From a filled cell it is the far end of the contiguous run of filled
+    /// cells in that direction; from a blank one it is the nearest filled cell,
+    /// which is the near edge of the run beyond the blank. That is what makes
+    /// the presses walk: the first leaves a block at its bottom, the next takes
+    /// the cursor off the block to the top of the one below it.
+    ///
+    /// `None` means there was nothing ahead at all, which Excel answers with the
+    /// sheet's last row or column — a number only the caller knows, since the
+    /// stored range stops at the last cell the file mentions.
+    pub fn edge_cell(
+        &self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        dir: &str,
+    ) -> Result<Option<CellPos>, String> {
+        let stored = self
+            .sheets
+            .get(sheet)
+            .ok_or_else(|| format!("sheet not found: {sheet}"))?;
+        let (height, width) = stored.range.get_size();
+        let (origin_row, origin_col) = stored.origin;
+        let end_row = origin_row + height as u32;
+        let end_col = origin_col + width as u32;
+
+        let filled = |r: u32, c: u32| cell_at(stored.range.get_value((r, c))).kind != "empty";
+
+        let (drow, dcol): (i64, i64) = match dir {
+            "up" => (-1, 0),
+            "down" => (1, 0),
+            "left" => (0, -1),
+            "right" => (0, 1),
+            other => return Err(format!("unknown direction: {other}")),
+        };
+        // Outside the stored range every cell is blank, and that is where the
+        // walk stops rather than running on to the sheet's own edge.
+        let step = |n: i64| -> Option<(u32, u32)> {
+            let r = row as i64 + drow * n;
+            let c = col as i64 + dcol * n;
+            let inside = r >= origin_row as i64
+                && r < end_row as i64
+                && c >= origin_col as i64
+                && c < end_col as i64;
+            inside.then_some((r as u32, c as u32))
+        };
+
+        // A filled cell runs to the end of its own run. A blank one — and a
+        // filled one whose neighbour is blank, which is how the next press
+        // leaves a block — takes the nearest filled cell instead, so the walk
+        // from a blank row drops onto the block's near edge rather than flying
+        // over it to the far one.
+        let standing =
+            row >= origin_row && row < end_row && col >= origin_col && col < end_col
+                && filled(row, col);
+        if standing {
+            let mut far = None;
+            let mut n = 1;
+            while let Some((r, c)) = step(n) {
+                if !filled(r, c) {
+                    break;
+                }
+                far = Some((r, c));
+                n += 1;
+            }
+            if let Some((r, c)) = far {
+                return Ok(Some(CellPos { row: r, col: c }));
+            }
+        }
+
+        let mut n = 1;
+        while let Some((r, c)) = step(n) {
+            if filled(r, c) {
+                return Ok(Some(CellPos { row: r, col: c }));
+            }
+            n += 1;
+        }
+        Ok(None)
     }
 
     /// Distinct display values in one column, most common first.
@@ -741,6 +829,62 @@ mod tests {
         // And a hit points at the cell it was found in.
         let hits = book.search(None, &Matcher::new("次", true, true));
         assert_eq!((hits[0].row, hits[0].col), (2, 1));
+    }
+
+    /// A one-column book with a gap in it: A1:A3, a blank A4, then A5:A6.
+    fn gapped_column() -> Book {
+        let range: Range<Data> = Range::from_sparse(
+            [(0u32, 0u32), (1, 0), (2, 0), (4, 0), (5, 0)]
+                .into_iter()
+                .map(|(row, col)| calamine::Cell::new((row, col), Data::String("x".to_owned())))
+                .collect(),
+        );
+        let origin = range.start().unwrap_or((0, 0));
+        let (rows, cols) = range.get_size();
+        Book {
+            info: WorkbookInfo {
+                path: "fixture".to_owned(),
+                file_name: "fixture".to_owned(),
+                sheets: vec![SheetInfo {
+                    name: "Sheet1".to_owned(),
+                    rows: rows as u32,
+                    cols: cols as u32,
+                }],
+            },
+            sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
+            layouts: HashMap::new(),
+            layout_cache: layout::Cache::default(),
+        }
+    }
+
+    #[test]
+    fn ctrl_arrow_is_the_edge_of_the_run_then_the_next_cell_past_a_gap() {
+        let book = gapped_column();
+        let sheet = "Sheet1";
+        let at = |row, col| CellPos { row, col };
+
+        // From inside a run it is the last filled cell before the blank one —
+        // the end of the *run*, which on a sheet whose rows are otherwise full
+        // is the same edge a whole table's bottom makes.
+        assert_eq!(book.edge_cell(sheet, 0, 0, "down"), Ok(Some(at(2, 0))));
+        // From the blank row between the two runs it is the next filled cell,
+        // which is what carries a second press past a gap.
+        assert_eq!(book.edge_cell(sheet, 3, 0, "down"), Ok(Some(at(4, 0))));
+        // Standing *on* the last cell of a run and pressing on leaves the run
+        // for the top of the next one, rather than staying put.
+        assert_eq!(book.edge_cell(sheet, 2, 0, "down"), Ok(Some(at(4, 0))));
+        // Upwards, from the far end of a run it walks back to the run's start.
+        assert_eq!(book.edge_cell(sheet, 2, 0, "up"), Ok(Some(at(0, 0))));
+        // A blank row below the lower run lands on that run's near edge, not on
+        // its far one: the cursor is blank, so the nearest filled cell wins.
+        assert_eq!(book.edge_cell(sheet, 6, 0, "up"), Ok(Some(at(5, 0))));
+        // Nothing ahead at all is None: the caller answers that with the sheet's
+        // own edge, which is the row count rather than anything stored here.
+        assert_eq!(book.edge_cell(sheet, 5, 0, "down"), Ok(None));
+        assert_eq!(book.edge_cell(sheet, 0, 0, "up"), Ok(None));
+        // A column that holds nothing has nothing to land on, either way.
+        assert_eq!(book.edge_cell(sheet, 0, 4, "down"), Ok(None));
+        assert_eq!(book.edge_cell(sheet, 0, 4, "right"), Ok(None));
     }
 
     #[test]

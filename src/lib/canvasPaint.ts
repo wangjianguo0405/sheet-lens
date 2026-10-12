@@ -108,6 +108,14 @@ export interface GridView {
   workbookFontSizePx: number;
   showGrid: boolean;
   selection: Selection;
+  /**
+   * What Ctrl+C took on this sheet, or null when the clipboard holds nothing
+   * from it. Drawn as a dashed rule, which is the only sign a copy happened at
+   * all: Excel's copy shows nothing else.
+   */
+  copied: MergeRect | null;
+  /** How far the marquee's dashes have crawled, in pixels. */
+  ants: number;
   merges: MergeRect[];
   mergeView: { shown: MergeRect[]; covered: Set<number> };
   centerRuns: { shown: (MergeRect & { text: string | null })[]; covered: Set<number> };
@@ -260,6 +268,34 @@ function ring(
   fill(ctx, x, y + h - 1, w, 1, color);
   fill(ctx, x, y, 1, h, color);
   fill(ctx, x + w - 1, y, 1, h, color);
+}
+
+/**
+ * The dashed rule around a copied range, crawling the way Excel's does.
+ *
+ * Dashed rather than solid because the selection's own rule is drawn in the same
+ * ink and the two can be on screen at once; a marquee that stood still would
+ * read as one more border. The stroke state is the only thing here that has to
+ * be undone, so it is saved and restored rather than reset by hand.
+ */
+function marquee(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  phase: number,
+): void {
+  if (w <= 0 || h <= 0) return;
+  ctx.save();
+  ctx.strokeStyle = ACCENT_INK;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.lineDashOffset = -phase;
+  // Half a pixel in, so a 1px stroke lands on a pixel rather than straddling
+  // two of them — the same reason the rules above are filled one pixel thick.
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.restore();
 }
 
 /** The text colour a cell's kind asks for, when the style states none. */
@@ -936,6 +972,24 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
         view.cols.offsets[right + 1] - view.cols.offsets[view.selection.col],
         view.rows.offsets[bottom + 1] - view.rows.offsets[top],
         ACCENT_INK,
+      );
+    }
+  }
+
+  // What Ctrl+C took, if it was taken here. Drawn over the selection's own
+  // rule, so a copied block that is also selected keeps both.
+  if (view.copied) {
+    const top = view.displayOfRow(view.copied.row);
+    const bottom = view.displayOfRow(view.copied.row + view.copied.rows - 1);
+    if (top >= 0 && bottom >= 0) {
+      const right = Math.min(view.sheetCols - 1, view.copied.col + view.copied.cols - 1);
+      marquee(
+        ctx,
+        ox + view.cols.offsets[view.copied.col],
+        oy + view.rows.offsets[top],
+        view.cols.offsets[right + 1] - view.cols.offsets[view.copied.col],
+        view.rows.offsets[bottom + 1] - view.rows.offsets[top],
+        view.ants,
       );
     }
   }

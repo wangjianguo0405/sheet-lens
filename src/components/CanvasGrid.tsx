@@ -28,6 +28,7 @@ import { shapeDebugEnabled, subscribeShapeDebug } from "@/lib/debugPanels";
 import {
   axisValues,
   currentRegion,
+  edgeCell,
   filteredRows,
   getCells,
   sheetLayout,
@@ -204,6 +205,14 @@ interface PaintTimings {
 }
 
 const PERF_SAMPLES = 60;
+
+/**
+ * The copy marquee's crawl: one dash-width every so often, which is about the
+ * speed Excel's own ants move at. Slow enough that the overlay pass is not
+ * repainted for nothing, quick enough to read as movement rather than a dash.
+ */
+const ANTS_MS = 60;
+const ANTS_STEP = 2;
 
 function record(samples: number[], value: number): void {
   samples.push(value);
@@ -392,6 +401,17 @@ export function CanvasGrid({
   /** The hover readout, and the cell it belongs to so a move within it is free. */
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const hoverKey = useRef<string | null>(null);
+  /**
+   * What Ctrl+C took, and which sheet it came from.
+   *
+   * Excel's copy is otherwise silent — no dialog, no flash — so this marquee is
+   * the only sign it worked, and it stays until Escape or the next copy, on the
+   * sheet it came from rather than on whichever sheet is showing.
+   */
+  const copiedRef = useRef<{ path: string; sheet: string; rect: MergeRect } | null>(null);
+  /** How far the marquee's dashes have crawled, walked by the timer below. */
+  const antsRef = useRef(0);
+  const antsTimer = useRef(0);
 
   const layoutReady = layout !== null && layoutSheet === sheet.name;
 
@@ -653,6 +673,67 @@ export function CanvasGrid({
     [mergeAt, onSelect],
   );
 
+  /**
+   * Ctrl+arrow: Excel's jump to the edge of the data.
+   *
+   * The backend says where the run in that direction ends; nothing ahead at all
+   * is answered with the sheet's own edge, which is what Excel's Ctrl+End means
+   * by the last cell too. A block keeps its anchor under Shift and collapses to
+   * the cell it lands on without it, and a run of whole rows or columns — which
+   * has only the one axis it runs along — slides along that axis, measured from
+   * the cell the run's own edge sits on.
+   */
+  const jumpToEdge = useCallback(
+    async (dir: "up" | "down" | "left" | "right", extend: boolean) => {
+      const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
+      const sheetCols = Math.max(sheet.cols, layout?.cols ?? 0);
+      const from = selectionAnchor(selection);
+      const vertical = dir === "up" || dir === "down";
+      let to: { row: number; col: number } | null = null;
+      try {
+        to = await edgeCell(path, sheet.name, from.row, from.col, dir);
+      } catch {
+        // The backend is gone, and the sheet's own edge is still the answer
+        // Excel would give from a cell with nothing after it.
+      }
+      const row = to?.row ?? (vertical ? (dir === "up" ? 0 : sheetRows - 1) : from.row);
+      const col = to?.col ?? (vertical ? from.col : dir === "left" ? 0 : sheetCols - 1);
+
+      // A run of whole rows or columns moves along the one axis it has; the
+      // direction across it has nothing there for it to select. Shift grows the
+      // run to the edge rather than moving it, as it does by one on its own.
+      if (selection.kind === "row") {
+        if (!vertical) return;
+        if (extend) {
+          onSelect(rowsBetween(selection.anchor, row));
+          return;
+        }
+        const step = Math.max(
+          -selection.row,
+          Math.min(sheetRows - selection.row - selection.rows, row - selection.row),
+        );
+        onSelect(rowsBetween(selection.anchor + step, selection.active + step));
+        return;
+      }
+      if (selection.kind === "column") {
+        if (vertical) return;
+        if (extend) {
+          onSelect(colsBetween(selection.anchor, col));
+          return;
+        }
+        const step = Math.max(
+          -selection.col,
+          Math.min(sheetCols - selection.col - selection.cols, col - selection.col),
+        );
+        onSelect(colsBetween(selection.anchor + step, selection.active + step));
+        return;
+      }
+      if (extend) onSelect(rangeBetween(selection.kind === "range" ? selection.anchor : from, { row, col }));
+      else select(row, col);
+    },
+    [selection, path, sheet.name, sheet.rows, sheet.cols, layout, onSelect, select],
+  );
+
   const applyFilters = useCallback(
     async (next: Map<number, string[]>, target: AutoFilter | null) => {
       setFilters(next);
@@ -821,8 +902,33 @@ export function CanvasGrid({
     () => () => {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
+      window.clearInterval(antsTimer.current);
     },
     [],
+  );
+
+  /**
+   * Marks what Ctrl+C just took, and keeps its marquee crawling until it is
+   * taken away again.
+   *
+   * The crawl is what makes it read as a copy rather than as one more border,
+   * so the timer starts and stops with the marquee instead of running for the
+   * life of the grid.
+   */
+  const markCopied = useCallback(
+    (next: { path: string; sheet: string; rect: MergeRect } | null) => {
+      copiedRef.current = next;
+      window.clearInterval(antsTimer.current);
+      antsTimer.current = 0;
+      if (next) {
+        antsTimer.current = window.setInterval(() => {
+          antsRef.current += ANTS_STEP;
+          schedule("overlay");
+        }, ANTS_MS);
+      }
+      schedule("overlay");
+    },
+    [schedule],
   );
 
   const handleScroll = useCallback(() => {
@@ -1120,6 +1226,10 @@ export function CanvasGrid({
       workbookFontSizePx: fontSize,
       showGrid,
       selection: selectionRef.current,
+      copied: copiedRef.current?.path === path && copiedRef.current?.sheet === sheet.name
+        ? copiedRef.current.rect
+        : null,
+      ants: antsRef.current,
       merges,
       mergeView: { shown: shownMerges, covered: coveredMerges },
       centerRuns: { shown: shownRuns, covered: coveredRuns },
@@ -1510,17 +1620,18 @@ export function CanvasGrid({
   const copySelection = useCallback(async () => {
     const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
     const sheetCols = Math.max(sheet.cols, layout?.cols ?? 0);
+    let text: string;
+    let rect: MergeRect;
     try {
       if (selection.kind === "cell") {
-        await copyText(cellAt(selection.row, selection.col)?.text ?? "");
-        return;
-      }
-      if (selection.kind === "row") {
-        const values = await axisValues(path, sheet.name, { row: selection.row }, 0, sheetCols - 1);
-        await copyText(values.join("\t"));
-        return;
-      }
-      if (selection.kind === "range") {
+        text = cellAt(selection.row, selection.col)?.text ?? "";
+        rect = { row: selection.row, col: selection.col, rows: 1, cols: 1 };
+      } else if (selection.kind === "row") {
+        text = (await axisValues(path, sheet.name, { row: selection.row }, 0, sheetCols - 1)).join(
+          "\t",
+        );
+        rect = { row: selection.row, col: 0, rows: selection.rows, cols: sheetCols };
+      } else if (selection.kind === "range") {
         const block = await getCells(
           path,
           sheet.name,
@@ -1529,17 +1640,29 @@ export function CanvasGrid({
           selection.rows,
           selection.cols,
         );
-        await copyText(
-          block.map((line) => line.map((cell) => cell?.text ?? "").join("\t")).join("\n"),
+        text = block
+          .map((line) => line.map((cell) => cell?.text ?? "").join("\t"))
+          .join("\n");
+        rect = {
+          row: selection.row,
+          col: selection.col,
+          rows: selection.rows,
+          cols: selection.cols,
+        };
+      } else {
+        text = (await axisValues(path, sheet.name, { col: selection.col }, 0, sheetRows - 1)).join(
+          "\n",
         );
-        return;
+        rect = { row: 0, col: selection.col, rows: sheetRows, cols: selection.cols };
       }
-      const values = await axisValues(path, sheet.name, { col: selection.col }, 0, sheetRows - 1);
-      await copyText(values.join("\n"));
     } catch {
       // Nothing sensible to do if the backend is gone; leave the clipboard be.
+      return;
     }
-  }, [selection, cellAt, path, sheet.name, sheet.rows, sheet.cols, layout]);
+    // The marquee only follows a copy that took, so it never claims a write
+    // that the clipboard refused.
+    if (await copyText(text)) markCopied({ path, sheet: sheet.name, rect });
+  }, [selection, cellAt, path, sheet.name, sheet.rows, sheet.cols, layout, markCopied]);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
@@ -1547,6 +1670,12 @@ export function CanvasGrid({
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
       event.preventDefault();
       void copySelection();
+      return;
+    }
+    // Escape takes the marquee away, which is the other half of what it means:
+    // a copy that is over looks different from one that still stands.
+    if (event.key === "Escape") {
+      markCopied(null);
       return;
     }
 
@@ -1578,6 +1707,24 @@ export function CanvasGrid({
         case "PageDown":
           onSheetStep?.(1);
           break;
+        // Excel's jump to the edge of the data, which the whole-row and
+        // whole-column branches below never see — they answer this branch's
+        // arrows as an ordinary one-cell move.
+        case "ArrowUp":
+        case "ArrowDown":
+        case "ArrowLeft":
+        case "ArrowRight": {
+          const dir =
+            event.key === "ArrowUp"
+              ? "up"
+              : event.key === "ArrowDown"
+                ? "down"
+                : event.key === "ArrowLeft"
+                  ? "left"
+                  : "right";
+          void jumpToEdge(dir, event.shiftKey);
+          break;
+        }
         default:
           return;
       }
