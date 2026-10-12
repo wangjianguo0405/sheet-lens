@@ -7,6 +7,20 @@ both the release notes on GitHub and the notes the app shows when it offers the
 update — so write it for whoever is being asked to install it, not for whoever
 wrote the code.
 
+## [0.3.0] - 2026-10-12
+
+The grid is painted onto a canvas instead of being built out of an element per
+cell, which is what used to make a long sheet slow to scroll and slow to click
+in. The rest of this release is the keyboard catching up with it.
+
+- Large sheets are responsive again: scrolling, selecting and clicking no longer
+  stall the way they did
+- Shift with the arrow keys, Page Up/Down or Home/End extends the selection, and
+  Ctrl+A selects the data around the cursor — the whole sheet on a second press
+- Dragging along the row or column headers selects a run of them, `3:7` or `C:E`
+- Ctrl+Home and Ctrl+End jump to the two corners, Ctrl+Page Up/Down change sheet
+- A new icon
+
 ## [0.2.0] - 2026-10-11
 
 The interface now comes in English, Chinese and Japanese, and opens in your
