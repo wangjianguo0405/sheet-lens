@@ -86,6 +86,12 @@ type Hit =
   | { kind: "colHeader"; col: number }
   | null;
 
+/** What a drag-select is anchored on, and whether it has moved off it yet. */
+type DragAnchor =
+  | { kind: "cell"; row: number; col: number; dragged: boolean }
+  | { kind: "row"; row: number; dragged: boolean }
+  | { kind: "column"; col: number; dragged: boolean };
+
 interface GridProps {
   path: string;
   sheet: SheetInfo;
@@ -305,8 +311,14 @@ export function CanvasGrid({
   const cache = useRef(new Map<string, Cell[][]>());
   const pending = useRef(new Set<string>());
   const drag = useRef<ResizeDrag | null>(null);
-  /** A drag-select in progress: its anchor cell, and whether it has moved. */
-  const rangeDrag = useRef<{ row: number; col: number; dragged: boolean } | null>(null);
+  /**
+   * A drag-select in progress, and whether it has moved.
+   *
+   * The anchor is a cell, a whole row or a whole column, because a drag that
+   * starts on a gutter picks rows or columns — dragging one row header down is
+   * how a run like `3:7` is made by mouse, and only that end moves.
+   */
+  const rangeDrag = useRef<DragAnchor | null>(null);
   /** Where the pointer last was, which a drag keeps reading after it leaves. */
   const dragPointer = useRef<{ x: number; y: number } | null>(null);
   /** The frame that carries a drag on past the edge of the viewport. */
@@ -1248,6 +1260,29 @@ export function CanvasGrid({
   );
 
   /**
+   * The selection a drag from `anchor` has reached, or null when it has not
+   * reached anything new — which is what keeps a click that never moved a click
+   * rather than a one-cell block.
+   *
+   * A gutter drag follows the pointer's row or column wherever it goes, the
+   * sheet included: Excel keeps selecting rows after the pointer leaves the
+   * gutter, and only the end it started from stays put.
+   */
+  const dragTo = useCallback((anchor: DragAnchor, hit: Exclude<Hit, null>): Selection | null => {
+    if (anchor.kind === "cell") {
+      if (hit.kind !== "cell") return null;
+      if (hit.row === anchor.row && hit.col === anchor.col) return null;
+      return rangeBetween(anchor, hit);
+    }
+    if (anchor.kind === "row") {
+      const row = hit.kind === "colHeader" ? -1 : hit.row;
+      return row < 0 || row === anchor.row ? null : rowsBetween(anchor.row, row);
+    }
+    const col = hit.kind === "rowHeader" ? -1 : hit.col;
+    return col < 0 || col === anchor.col ? null : colsBetween(anchor.col, col);
+  }, []);
+
+  /**
    * Carries a drag on while the pointer is held past an edge of the viewport.
    *
    * The browser does not scroll a div for you when a drag leaves it, and the
@@ -1293,15 +1328,16 @@ export function CanvasGrid({
           Math.max(left + 1, Math.min(right - 1, point.x)),
           Math.max(top + 1, Math.min(bottom - 1, point.y)),
         );
-        if (hit?.kind === "cell") {
+        const next = hit ? dragTo(anchor, hit) : null;
+        if (next) {
           anchor.dragged = true;
-          onSelect(rangeBetween(anchor, hit));
+          onSelect(next);
         }
       }
     }
 
     autoScroll.current = requestAnimationFrame(runAutoScroll);
-  }, [hitAt, onSelect, schedule]);
+  }, [dragTo, hitAt, onSelect, schedule]);
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (suppressClick.current) {
@@ -1332,10 +1368,17 @@ export function CanvasGrid({
     window.getSelection()?.removeAllRanges();
     if (event.button !== 0) return;
     const hit = hitAt(event.clientX, event.clientY);
-    // A gutter is not a cell: its own click picks the row or column, and a drag
-    // from it must not run a block selection.
-    if (!hit || hit.kind !== "cell") return;
-    rangeDrag.current = { row: hit.row, col: hit.col, dragged: false };
+    if (!hit) return;
+    // An anchor on a gutter picks a run of rows or columns; one on a cell runs a
+    // block selection. Both are armed here and resolved by the closing click if
+    // the pointer never moves off the anchor.
+    if (hit.kind === "rowHeader") {
+      rangeDrag.current = { kind: "row", row: hit.row, dragged: false };
+    } else if (hit.kind === "colHeader") {
+      rangeDrag.current = { kind: "column", col: hit.col, dragged: false };
+    } else {
+      rangeDrag.current = { kind: "cell", row: hit.row, col: hit.col, dragged: false };
+    }
     dragPointer.current = { x: event.clientX, y: event.clientY };
     if (!autoScroll.current) autoScroll.current = requestAnimationFrame(runAutoScroll);
     document.body.style.userSelect = "none";
@@ -1350,10 +1393,11 @@ export function CanvasGrid({
       // auto-scroll pass is the only thing that can still act on it.
       dragPointer.current = { x: event.clientX, y: event.clientY };
       const hit = hitAt(event.clientX, event.clientY);
-      if (!hit || hit.kind !== "cell") return;
-      if (hit.row === anchor.row && hit.col === anchor.col) return;
+      if (!hit) return;
+      const next = dragTo(anchor, hit);
+      if (!next) return;
       anchor.dragged = true;
-      onSelect(rangeBetween(anchor, hit));
+      onSelect(next);
     };
     const onUp = () => {
       suppressClick.current = rangeDrag.current?.dragged ?? false;
@@ -1371,7 +1415,7 @@ export function CanvasGrid({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [hitAt, onSelect]);
+  }, [dragTo, hitAt, onSelect]);
 
   /** Sizes a column to the widest text currently loaded for it. */
   const autofitColumn = (index: number) => {
