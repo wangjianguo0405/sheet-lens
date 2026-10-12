@@ -181,6 +181,21 @@ fn axis_values(
 }
 
 #[tauri::command]
+fn current_region(
+    path: String,
+    sheet: String,
+    row: u32,
+    col: u32,
+    store: State<'_, Shared>,
+) -> Result<excel::Block, String> {
+    let books = store.0.lock().unwrap();
+    let book = books
+        .get(&path)
+        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    book.current_region(&sheet, row, col)
+}
+
+#[tauri::command]
 fn close_workbook(path: String, store: State<'_, Shared>) {
     store.0.lock().unwrap().remove(&path);
 }
@@ -238,6 +253,7 @@ pub fn run() {
             column_values,
             filter_rows,
             axis_values,
+            current_region,
             read_media,
             close_workbook,
             update::update_status,

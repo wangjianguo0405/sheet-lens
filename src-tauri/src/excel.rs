@@ -47,6 +47,15 @@ pub struct ValueCount {
     pub count: u32,
 }
 
+/// A rectangle on the sheet, in zero-based cells.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Block {
+    pub row: u32,
+    pub col: u32,
+    pub rows: u32,
+    pub cols: u32,
+}
+
 struct Sheet {
     range: Range<Data>,
     /// Top-left cell of the stored range, in absolute sheet coordinates.
@@ -174,6 +183,67 @@ impl Book {
             out.push(line);
         }
         Ok(out)
+    }
+
+    /// Excel's current region: the block reachable from a cell without crossing
+    /// a wholly blank row or column.
+    ///
+    /// The two scans it starts from — up and down the anchor's column, then left
+    /// and right along the anchor's row — are only the beginning, because a
+    /// column reached along that row can carry the block further up again. What
+    /// Excel returns is the closure of the two, so the edges are walked to a
+    /// fixed point rather than once each.
+    pub fn current_region(&self, sheet: &str, row: u32, col: u32) -> Result<Block, String> {
+        let stored = self
+            .sheets
+            .get(sheet)
+            .ok_or_else(|| format!("sheet not found: {sheet}"))?;
+        let (height, width) = stored.range.get_size();
+        let (origin_row, origin_col) = stored.origin;
+        let end_row = origin_row + height as u32;
+        let end_col = origin_col + width as u32;
+
+        let filled = |r: u32, c: u32| cell_at(stored.range.get_value((r, c))).kind != "empty";
+
+        // A blank cell is a region of its own, which is what Excel gives for
+        // Ctrl+A out in the empty part of a sheet — and an anchor off the stored
+        // range cannot be walked outwards from at all.
+        if row >= end_row || col >= end_col || !filled(row, col) {
+            return Ok(Block {
+                row,
+                col,
+                rows: 1,
+                cols: 1,
+            });
+        }
+
+        let (mut top, mut bottom) = (row, row);
+        let (mut left, mut right) = (col, col);
+        loop {
+            let before = (top, bottom, left, right);
+            while top > origin_row && (left..=right).any(|c| filled(top - 1, c)) {
+                top -= 1;
+            }
+            while bottom + 1 < end_row && (left..=right).any(|c| filled(bottom + 1, c)) {
+                bottom += 1;
+            }
+            while left > origin_col && (top..=bottom).any(|r| filled(r, left - 1)) {
+                left -= 1;
+            }
+            while right + 1 < end_col && (top..=bottom).any(|r| filled(r, right + 1)) {
+                right += 1;
+            }
+            if (top, bottom, left, right) == before {
+                break;
+            }
+        }
+
+        Ok(Block {
+            row: top,
+            col: left,
+            rows: bottom - top + 1,
+            cols: right - left + 1,
+        })
     }
 
     /// Distinct display values in one column, most common first.
@@ -548,6 +618,56 @@ mod tests {
 
         let logic = book.info.sheets.iter().find(|s| s.name == "ロジック").unwrap();
         assert_eq!((logic.rows, logic.cols), (12001, 4));
+    }
+
+    /// Ctrl+A's first stage. Checked against the invariants rather than one
+    /// document's shape, since the sample is the only workbook a test may open.
+    #[test]
+    fn a_current_region_is_bounded_by_blank_rows_and_columns() {
+        let Some(book) = sample() else { return };
+        for sheet in ["基本情報", "ロジック", "変更履歴"] {
+            for (row, col) in [(0, 0), (2, 1), (17, 3), (500, 0), (11999, 3)] {
+                let region = book.current_region(sheet, row, col).expect("sheet exists");
+                assert!(region.rows >= 1 && region.cols >= 1, "{sheet}");
+                // The cell asked about is inside what came back.
+                assert!(
+                    row >= region.row && row < region.row + region.rows,
+                    "{sheet}: row {row} outside {region:?}"
+                );
+                assert!(
+                    col >= region.col && col < region.col + region.cols,
+                    "{sheet}: col {col} outside {region:?}"
+                );
+
+                // An empty reply means the position is off the stored range,
+                // which is the scan's own boundary rather than a blank cell.
+                let blank = |r: u32, c: u32| -> Option<bool> {
+                    let line = book.cells(sheet, r, c, 1, 1).ok()?.pop()?;
+                    Some(line.into_iter().next()?.kind == "empty")
+                };
+                // A region ends where a wholly blank row or column begins, which
+                // is the whole point of it — an arbitrary rectangle would not.
+                if region.row > 0 {
+                    for c in region.col..region.col + region.cols {
+                        if let Some(empty) = blank(region.row - 1, c) {
+                            assert!(empty, "{sheet}: ({},{c}) above the region is not blank", region.row - 1);
+                        }
+                    }
+                }
+                if region.col > 0 {
+                    for r in region.row..region.row + region.rows {
+                        if let Some(empty) = blank(r, region.col - 1) {
+                            assert!(empty, "{sheet}: ({r},{}) before the region is not blank", region.col - 1);
+                        }
+                    }
+                }
+                for c in region.col..region.col + region.cols {
+                    if let Some(empty) = blank(region.row + region.rows, c) {
+                        assert!(empty, "{sheet}: ({},{c}) below the region is not blank", region.row + region.rows);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

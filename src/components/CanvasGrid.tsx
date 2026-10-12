@@ -27,6 +27,7 @@ import { cellRef } from "@/lib/column";
 import { shapeDebugEnabled, subscribeShapeDebug } from "@/lib/debugPanels";
 import {
   axisValues,
+  currentRegion,
   filteredRows,
   getCells,
   sheetLayout,
@@ -355,20 +356,44 @@ export function CanvasGrid({
   const layoutReady = layout !== null && layoutSheet === sheet.name;
 
   /**
-   * Ctrl+A, in Excel's two stages: the sheet's used range first, then all of it.
-   * Excel's first stage is really the *current region* — the block bordered by
-   * blank rows and columns — but cells arrive here a block at a time, so the
-   * extent the parser reported is what stands in for it.
+   * Ctrl+A, in Excel's two stages: the cell's current region, then the whole
+   * sheet.
+   *
+   * The region is what the first press has to mean — not the sheet's used
+   * extent, which is what it was, and which is the whole sheet whenever the
+   * document fills it. The two are indistinguishable on a sheet that is one
+   * table, which is most of them, but a document with two tables and a blank
+   * row between can tell them apart.
    */
-  const selectAll = useCallback(() => {
+  const selectAll = useCallback(async () => {
     const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
-    const sheetCols = Math.max(sheet.cols, layout?.cols ?? 0);
-    const rowsUsed = Math.min(sheetRows, Math.max(1, layout?.rows ?? sheetRows));
-    const colsUsed = Math.min(sheetCols, Math.max(1, layout?.cols ?? sheetCols));
-    const onUsedRange =
-      selection.kind === "range" && selection.rows === rowsUsed && selection.cols === colsUsed;
-    onSelect(onUsedRange ? rowsBetween(0, sheetRows - 1) : rangeOver(rowsUsed, colsUsed));
-  }, [selection, onSelect, sheet.rows, sheet.cols, layout]);
+    const active = selectionAnchor(selection);
+    let region;
+    try {
+      region = await currentRegion(path, sheet.name, active.row, active.col);
+    } catch {
+      // The backend is gone; everything is a more honest answer than nothing.
+      onSelect(rowsBetween(0, sheetRows - 1));
+      return;
+    }
+    const onRegion =
+      selection.kind === "range" &&
+      selection.row === region.row &&
+      selection.col === region.col &&
+      selection.rows === region.rows &&
+      selection.cols === region.cols;
+    // One cell is what a blank anchor gives — nothing surrounds it, so there is
+    // no region to select. Excel falls back to the whole sheet there, and it has
+    // to: a block of one cell looks exactly like the cell that was already
+    // selected, which would leave the first press appearing to do nothing and
+    // the second one doing everything.
+    const alone = region.rows === 1 && region.cols === 1;
+    onSelect(
+      alone || onRegion
+        ? rowsBetween(0, sheetRows - 1)
+        : rangeOver(region.row, region.col, region.rows, region.cols),
+    );
+  }, [path, sheet.name, selection, onSelect, sheet.rows, layout]);
 
   /**
    * Taken on `window`, not in the viewport's own handler.
@@ -384,7 +409,7 @@ export function CanvasGrid({
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, [contenteditable]")) return;
       event.preventDefault();
-      selectAll();
+      void selectAll();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
