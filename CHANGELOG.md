@@ -7,6 +7,20 @@ both the release notes on GitHub and the notes the app shows when it offers the
 update — so write it for whoever is being asked to install it, not for whoever
 wrote the code.
 
+## [0.3.3] - 2026-10-12
+
+Ctrl and the arrows now move the cursor the way Excel's do, and a copy says so.
+
+- Ctrl+arrow jumps to the edge of the data — the far end of a run of filled
+  cells, or the next filled cell past a blank one — and Ctrl+Shift+arrow extends
+  the selection there
+- Ctrl+C draws the dashed rule Excel draws around what was copied, and it crawls
+  until Escape takes it away
+- Switching away from a sheet and back no longer moves the view: each sheet
+  keeps the position it was left at
+- Escape after a copy answers wherever the focus is, and a copy no longer leaves
+  the keyboard pointing at nothing
+
 ## [0.3.2] - 2026-10-12
 
 Two things that went wrong on a long sheet.
