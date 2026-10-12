@@ -208,6 +208,15 @@ export interface SheetLayout {
   rows: number;
   cols: number;
   /**
+   * The box around the cells that hold something, and the merged regions. It is
+   * narrower than the extent, and it is what the grid draws the file's
+   * formatting inside: a row's style covers its whole row and a column's its
+   * whole column, which would otherwise carry a table's rules and fills on over
+   * the formatted-but-empty cells a document keeps beside its data.
+   */
+  contentRows: number;
+  contentCols: number;
+  /**
    * Column widths in the file's own unit — a multiple of the workbook font's
    * maximum digit width — not in pixels. Only the renderer can measure that
    * font, so the conversion happens there; see `charsToPx`.

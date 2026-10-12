@@ -722,14 +722,14 @@ export function CanvasGrid({
   const styleAt = useCallback(
     (row: number, col: number): CellStyle | null => {
       if (!layout) return null;
-      // The blank area past the sheet is drawn plain, whatever the file says
-      // about the rows and columns reaching into it. A column's own style is
-      // written for all 1,048,576 rows of that column and a row's for all 16,384
-      // columns, so a table's rules and fills ran on past the end of its data
-      // and the sheet read as though it carried on for ever — a ladder of blue
-      // rules and a shaded band out in what should be empty. Only the sheet's own
-      // extent takes the file's formatting.
-      if (row >= sheetRowsGuess || col >= sheetColsGuess) return null;
+      // The file's formatting is drawn inside the box that holds the sheet's
+      // content, and only inside it. A row's own style is written for all 16,384
+      // columns of that row and a column's for all 1,048,576 rows of that column,
+      // so a table's rules and fills otherwise ran on over the
+      // formatted-but-empty cells a document keeps beside its data — a ladder of
+      // borders, and a shaded band, out in what reads as blank sheet. Excel
+      // paints the same box and no more.
+      if (row >= layout.contentRows || col >= layout.contentCols) return null;
       const index =
         styleOfRow(layout.cellRuns, row, col) ??
         layout.rowStyles[row] ??
