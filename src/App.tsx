@@ -296,7 +296,20 @@ export default function App() {
         if (event.key === "Escape") setSearchOpen(false);
         return;
       }
-      switch (event.key.toLowerCase()) {
+      const key = event.key.toLowerCase();
+      // Shift makes a different shortcut rather than the same one louder.
+      // Without this, Ctrl+Shift+G answered as Ctrl+G and opened the ordinary
+      // Go To, and every other letter did the same thing. Only Ctrl+Shift+D has
+      // a meaning of its own: the hidden readout, dev builds only, like the
+      // panel itself.
+      if (event.shiftKey) {
+        if (key === "d" && import.meta.env.DEV) {
+          event.preventDefault();
+          toggleShapeDebug();
+        }
+        return;
+      }
+      switch (key) {
         case "o":
           event.preventDefault();
           void handleOpen();
@@ -315,13 +328,6 @@ export default function App() {
           if (!activePath) return;
           event.preventDefault();
           closeTab(activePath);
-          break;
-        case "d":
-          // The hidden readout — the laid-out numbers for shapes with text.
-          // Dev builds only, like the panel itself: see `debugPanels.ts`.
-          if (!import.meta.env.DEV || !event.shiftKey) return;
-          event.preventDefault();
-          toggleShapeDebug();
           break;
         default:
           break;
