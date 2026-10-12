@@ -931,6 +931,26 @@ export function CanvasGrid({
     [schedule],
   );
 
+  /**
+   * Escape takes the marquee away, which is the other half of what a copy means:
+   * one that is over looks different from one that still stands.
+   *
+   * On `window`, like Ctrl+A, and not in the viewport's own handler, because the
+   * grid is not necessarily where the focus is by then: writing the clipboard can
+   * leave it on the body, and clicking a toolbar button does the same. A field
+   * keeps its own Escape — there it belongs to what the user is typing.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable]")) return;
+      markCopied(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [markCopied]);
+
   const handleScroll = useCallback(() => {
     const node = viewportRef.current;
     if (!node) return;
@@ -1670,12 +1690,6 @@ export function CanvasGrid({
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
       event.preventDefault();
       void copySelection();
-      return;
-    }
-    // Escape takes the marquee away, which is the other half of what it means:
-    // a copy that is over looks different from one that still stands.
-    if (event.key === "Escape") {
-      markCopied(null);
       return;
     }
 
