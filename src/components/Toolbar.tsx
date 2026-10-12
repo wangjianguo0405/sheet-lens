@@ -49,6 +49,10 @@ export function Toolbar({
 
   return (
     <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
+      {/* Decorative: the wordmark beside it already names the app, so it repeats
+          nothing for a screen reader. `draggable` off, or the webview starts a
+          native drag of the bitmap when the bar is dragged. */}
+      <img src="/icon.png" alt="" draggable={false} className="mr-1.5 size-5" />
       <span className="mr-2 text-xs font-semibold tracking-wide">SheetLens</span>
 
       <Button
