@@ -961,6 +961,16 @@ function paintGutterLabels(
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
+  // Each strip is clipped to itself, because both passes walk cells that begin
+  // off screen: the first visible row is above the viewport once it is scrolled
+  // at all, and its number is drawn at that row's centre — which is inside the
+  // corner where the two headers meet. A column walked from the left does the
+  // same to the same corner. The clip is what keeps each label on its own strip.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, COL_HEADER_H, ROW_HEADER_W, view.height - COL_HEADER_H);
+  ctx.clip();
+
   for (const { sheetRow, display } of rows) {
     const y = oy + view.rows.offsets[display];
     const h = spanAt(view.rows.offsets, display);
@@ -974,7 +984,12 @@ function paintGutterLabels(
     ctx.fillStyle = lit ? ACCENT_INK : view.theme.mutedForeground;
     ctx.fillText(String(sheetRow + 1), ROW_HEADER_W / 2, y + h / 2);
   }
-  ctx.font = fontString(stack, GUTTER_FONT_PX, false);
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(ROW_HEADER_W, 0, view.width - ROW_HEADER_W, COL_HEADER_H);
+  ctx.clip();
 
   for (let c = view.colStart; c < view.colEnd; c += 1) {
     const x = ox + view.cols.offsets[c];
@@ -989,6 +1004,7 @@ function paintGutterLabels(
     ctx.fillStyle = lit ? ACCENT_INK : view.theme.mutedForeground;
     ctx.fillText(columnLabel(c), x + w / 2, COL_HEADER_H / 2);
   }
+  ctx.restore();
 }
 
 function litRow(selection: Selection, row: number): boolean {
