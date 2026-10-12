@@ -338,18 +338,6 @@ pub struct SheetLayout {
     /// how tables close off their right edge — vanishes from it.
     pub rows: u32,
     pub cols: u32,
-    /// The box around the cells that hold *something* — a `<v>`, or an `<is>`
-    /// for inline text — and the merged regions, which count to Excel even with
-    /// no value in them.
-    ///
-    /// Narrower than the extent above, and it is what the grid draws the file's
-    /// formatting inside: a row's own style is written for all 16,384 columns of
-    /// that row and a column's for all 1,048,576 rows, so a table's rules and
-    /// fills otherwise run on over the formatted-but-empty cells a document
-    /// keeps beside it — a ladder of borders out in what reads as blank sheet.
-    /// Excel paints the same box and no more.
-    pub content_rows: u32,
-    pub content_cols: u32,
     /// Columns arrive in the file's own unit — a multiple of the workbook
     /// font's maximum digit width — and stay in it: only the renderer, which
     /// can measure that font, knows how many pixels one of them is.
@@ -420,8 +408,6 @@ impl SheetLayout {
         Self {
             rows: 0,
             cols: 0,
-            content_rows: 0,
-            content_cols: 0,
             default_col_width_chars: STOCK_COL_WIDTH_CHARS,
             default_row_height_px: points_to_px(STOCK_ROW_HEIGHT_PT),
             font_family: None,
@@ -1351,11 +1337,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
     let mut declared_default_row: Option<f64> = None;
     let mut extent_rows: u32 = 0;
     let mut extent_cols: u32 = 0;
-    // Where the last cell that held something ended, and the cell the walk is
-    // inside of: its children are what say whether it holds anything.
-    let mut content_rows: u32 = 0;
-    let mut content_cols: u32 = 0;
-    let mut cell_at: Option<(u32, u32)> = None;
     // Distinct styles seen so far, so each is stored once.
     let mut style_ids: HashMap<CellStyle, u32> = HashMap::new();
     // Runs are built one row at a time as the sheet streams past, so nothing is
@@ -1472,10 +1453,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         else {
                             continue;
                         };
-                        // Where a cell is, whether or not it turns out to have a
-                        // style: its children decide whether it holds anything,
-                        // and that box is what the grid draws formatting inside.
-                        cell_at = Some((row, col));
                         let Some(index) = attr(&element, b"s")
                             .and_then(|v| v.parse::<usize>().ok())
                         else {
@@ -1496,16 +1473,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         extent_rows = extent_rows.max(row + 1);
                         extent_cols = extent_cols.max(col + 1);
                     }
-                    // A cell's children are its value: a `<v>` for a stored one,
-                    // an `<is>` for text written inline. Either is what makes the
-                    // cell content, and so part of the box the formatting is
-                    // drawn inside.
-                    b"v" | b"is" => {
-                        if let Some((row, col)) = cell_at {
-                            content_rows = content_rows.max(row + 1);
-                            content_cols = content_cols.max(col + 1);
-                        }
-                    }
                     b"mergeCell" => {
                         if layout.merges.len() >= MAX_MERGES {
                             continue;
@@ -1514,10 +1481,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                             if let Some(rect) = parse_range(&reference) {
                                 extent_rows = extent_rows.max(rect.row + rect.rows);
                                 extent_cols = extent_cols.max(rect.col + rect.cols);
-                                // A merge is content to Excel even with nothing
-                                // in it — it is what holds a banner open.
-                                content_rows = content_rows.max(rect.row + rect.rows);
-                                content_cols = content_cols.max(rect.col + rect.cols);
                                 layout.merges.push(rect);
                             }
                         }
@@ -1559,7 +1522,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
             Ok(Event::End(element)) => {
                 match element.local_name().as_ref() {
                     b"filterColumn" => filter_col = None,
-                    b"c" => cell_at = None,
                     _ => {}
                 }
             }
@@ -1581,8 +1543,6 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
 
     layout.rows = extent_rows.min(MAX_SHEET_ROWS);
     layout.cols = extent_cols.min(MAX_SHEET_COLS);
-    layout.content_rows = content_rows.min(MAX_SHEET_ROWS);
-    layout.content_cols = content_cols.min(MAX_SHEET_COLS);
 
     // The last row is ended by the end of the sheet rather than by a `<row>`.
     collect_runs(&mut layout, pending_row, &mut pending);
