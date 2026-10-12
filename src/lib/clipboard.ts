@@ -10,6 +10,12 @@ export async function copyText(text: string): Promise<boolean> {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
+    // The fallback has to move the focus onto its scratch textarea — that is what
+    // makes `execCommand` copy at all — so removing the textarea afterwards
+    // leaves the focus on the body. Everything the app binds to the sheet then
+    // stops answering until something is clicked, which reads as the shortcut
+    // that just ran being the last one that works. Focus goes back where it was.
+    const previous = document.activeElement as HTMLElement | null;
     try {
       const area = document.createElement("textarea");
       area.value = text;
@@ -23,6 +29,8 @@ export async function copyText(text: string): Promise<boolean> {
       return copied;
     } catch {
       return false;
+    } finally {
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
     }
   }
 }
