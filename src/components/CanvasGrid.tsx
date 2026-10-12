@@ -2346,8 +2346,13 @@ export function CanvasGrid({
                 shapes={layout.drawings}
                 colX={shapeColX}
                 rowY={shapeRowY}
-                width={cols.total}
-                height={rows.total}
+                // The layer is clipped to the sheet's own extent, not to the
+                // scroller. An `<svg>` hides what falls outside it, which is what
+                // keeps a picture wider than the sheet's last column — or a shape
+                // whose cell the parser could only approximate — from spilling
+                // out into the blank area the scroller now runs on into.
+                width={usedColsTotal}
+                height={usedRowsTotal}
                 path={path}
                 // Null unless the readout is on, so the layer's `memo` still
                 // holds in normal use — the facts change with the selection.
