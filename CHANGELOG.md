@@ -12,6 +12,25 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.4] - 2026-10-12
+
+A sheet no longer ends where its data does.
+
+### Added
+
+- A sheet can be scrolled past its last cell, into the empty part of it, as
+  Excel's can be. The blank area is made as the view reaches its end and given
+  back as the view leaves it
+
+### Fixed
+
+- A copied merged cell is outlined around the whole merged block, not just
+  around the corner the cursor sits on
+- A sheet whose filter hides its last row no longer comes up grey from corner to
+  corner
+- The update prompt shows a release's notes as they are written, without the
+  markers that group them
+
 ## [0.3.3] - 2026-10-12
 
 Ctrl and the arrows now move the cursor the way Excel's do, and a copy says so.
