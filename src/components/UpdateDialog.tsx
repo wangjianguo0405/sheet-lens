@@ -36,6 +36,36 @@ interface UpdateDialogProps {
  */
 type Phase = "checking" | "ready" | "installing" | "restarting";
 
+/**
+ * A release's notes, which are that version's section of the changelog.
+ *
+ * They arrive grouped under `### Added`, `### Improved` and `### Fixed`, and
+ * those markers are not something to put in front of anyone as punctuation: a
+ * group name gets a line of its own and the rest is shown as it was written.
+ * Nothing else is markup — the notes are prose and bullets.
+ */
+function Notes({ text }: { text: string }) {
+  return (
+    <div className="max-h-40 space-y-0.5 overflow-auto rounded border border-border bg-muted/40 p-2 text-[11px] text-muted-foreground">
+      {text.split("\n").map((line, index) => {
+        const group = /^###\s+(.+)$/.exec(line);
+        if (group) {
+          return (
+            <p key={index} className="pt-1 font-medium text-foreground">
+              {group[1]}
+            </p>
+          );
+        }
+        return (
+          <p key={index} className="whitespace-pre-wrap">
+            {line}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export function UpdateDialog({
   open,
   onOpenChange,
@@ -118,11 +148,7 @@ export function UpdateDialog({
                 components={{ b: <span className="font-medium" /> }}
               />
             </p>
-            {release.notes && (
-              <pre className="max-h-40 overflow-auto rounded border border-border bg-muted/40 p-2 text-[11px] whitespace-pre-wrap text-muted-foreground">
-                {release.notes}
-              </pre>
-            )}
+            {release.notes && <Notes text={release.notes} />}
           </div>
         )}
 
