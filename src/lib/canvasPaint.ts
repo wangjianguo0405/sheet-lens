@@ -878,9 +878,11 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
   const oy = originY(view);
   const rows = shownRows(view);
 
-  // Excel marks one cell with an outline and anything larger with a fill,
-  // never both.
+  // Excel marks one cell with an outline and anything larger with a fill — and
+  // inside a fill it leaves the active cell clear and outlines that one, which
+  // is what makes the corner the arrow keys will leave from visible at all.
   const single = view.selection.kind === "cell";
+  const active = view.selection.kind === "range" ? view.selection.active : null;
   for (const { sheetRow, display } of rows) {
     const y = oy + view.rows.offsets[display];
     const h = spanAt(view.rows.offsets, display);
@@ -891,8 +893,11 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
       if (view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, c))) continue;
       const x = ox + view.cols.offsets[c];
       const w = spanAt(view.cols.offsets, c);
-      if (single) ring(ctx, x, y, w, h, ACCENT_INK);
-      else fill(ctx, x, y, w, h, SELECTION_WASH);
+      if (single || (active && active.row === sheetRow && active.col === c)) {
+        ring(ctx, x, y, w, h, ACCENT_INK);
+      } else {
+        fill(ctx, x, y, w, h, SELECTION_WASH);
+      }
     }
   }
 
@@ -989,6 +994,7 @@ function paintGutterLabels(
 function litRow(selection: Selection, row: number): boolean {
   switch (selection.kind) {
     case "row":
+      return row >= selection.row && row < selection.row + selection.rows;
     case "cell":
       return selection.row === row;
     case "range":
@@ -1001,6 +1007,7 @@ function litRow(selection: Selection, row: number): boolean {
 function litColumn(selection: Selection, col: number): boolean {
   switch (selection.kind) {
     case "column":
+      return col >= selection.col && col < selection.col + selection.cols;
     case "cell":
       return selection.col === col;
     case "range":

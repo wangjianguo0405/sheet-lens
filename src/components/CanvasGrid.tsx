@@ -71,7 +71,10 @@ import {
 } from "@/lib/gridGeometry";
 import { stepZoom } from "@/lib/zoom";
 import {
+  colsBetween,
   rangeBetween,
+  rangeOver,
+  rowsBetween,
   selectionAnchor,
   type Selection,
 } from "@/lib/selection";
@@ -296,6 +299,7 @@ export function CanvasGrid({
    */
   useEffect(() => {
     viewportRef.current?.focus({ preventScroll: true });
+    window.getSelection()?.removeAllRanges();
   }, [path, sheet.name]);
 
   const cache = useRef(new Map<string, Cell[][]>());
@@ -337,6 +341,42 @@ export function CanvasGrid({
   const hoverKey = useRef<string | null>(null);
 
   const layoutReady = layout !== null && layoutSheet === sheet.name;
+
+  /**
+   * Ctrl+A, in Excel's two stages: the sheet's used range first, then all of it.
+   * Excel's first stage is really the *current region* — the block bordered by
+   * blank rows and columns — but cells arrive here a block at a time, so the
+   * extent the parser reported is what stands in for it.
+   */
+  const selectAll = useCallback(() => {
+    const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
+    const sheetCols = Math.max(sheet.cols, layout?.cols ?? 0);
+    const rowsUsed = Math.min(sheetRows, Math.max(1, layout?.rows ?? sheetRows));
+    const colsUsed = Math.min(sheetCols, Math.max(1, layout?.cols ?? sheetCols));
+    const onUsedRange =
+      selection.kind === "range" && selection.rows === rowsUsed && selection.cols === colsUsed;
+    onSelect(onUsedRange ? rowsBetween(0, sheetRows - 1) : rangeOver(rowsUsed, colsUsed));
+  }, [selection, onSelect, sheet.rows, sheet.cols, layout]);
+
+  /**
+   * Taken on `window`, not in the viewport's own handler.
+   *
+   * A press that follows a click on the toolbar or on the start page lands on the
+   * body, where the browser's own select-all highlights the page's DOM, leaves
+   * the sheet unselected, and leaves that highlight behind afterwards. A field
+   * keeps its own Ctrl+A: there it is the user selecting the text they typed.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable]")) return;
+      event.preventDefault();
+      selectAll();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectAll]);
 
   /**
    * Merge rectangles clipped to the cells the parser actually reported. A file
@@ -768,15 +808,34 @@ export function CanvasGrid({
    */
   useEffect(() => {
     const el = viewportRef.current;
-    // A block is placed by dragging, which scrolls on its own.
-    if (!el || !layoutReady || selection.kind === "range") return;
+    if (!el || !layoutReady) return;
     const factor = zoom / 100;
+
+    // A block follows its active cell rather than its rectangle, which for one
+    // growing leftward is the wrong corner; the active cell is the end the
+    // keyboard walks, so an extension carries it into view as it goes.
+    const atRow =
+      selection.kind === "column"
+        ? -1
+        : selection.kind === "range"
+          ? selection.active.row
+          : selection.kind === "row"
+            ? selection.active
+            : selection.row;
+    const atCol =
+      selection.kind === "row"
+        ? -1
+        : selection.kind === "range"
+          ? selection.active.col
+          : selection.kind === "column"
+            ? selection.active
+            : selection.col;
 
     // Scrolling *up* to a cell means matching its offset, not the offset plus
     // the gutter: the gutter scrolls with the content and would leave the cell
     // tucked behind the header.
-    if (selection.kind === "cell" || selection.kind === "row") {
-      const display = displayOfRow(selection.row);
+    if (atRow >= 0) {
+      const display = displayOfRow(atRow);
       if (display >= 0) {
         const top = (rows.offsets[display] ?? 0) * factor;
         const bottom =
@@ -785,10 +844,10 @@ export function CanvasGrid({
         else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
       }
     }
-    if (selection.kind === "cell" || selection.kind === "column") {
-      const left = (cols.offsets[selection.col] ?? 0) * factor;
+    if (atCol >= 0) {
+      const left = (cols.offsets[atCol] ?? 0) * factor;
       const right =
-        (ROW_HEADER_W + (cols.offsets[Math.min(selection.col + 1, sheetColsGuess)] ?? 0)) * factor;
+        (ROW_HEADER_W + (cols.offsets[Math.min(atCol + 1, sheetColsGuess)] ?? 0)) * factor;
       if (left < el.scrollLeft) el.scrollLeft = left;
       else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth;
     }
@@ -1252,8 +1311,8 @@ export function CanvasGrid({
     const hit = hitAt(event.clientX, event.clientY);
     if (!hit) return;
     if (hit.kind === "cell") select(hit.row, hit.col);
-    else if (hit.kind === "rowHeader") onSelect({ kind: "row", row: hit.row });
-    else onSelect({ kind: "column", col: hit.col });
+    else if (hit.kind === "rowHeader") onSelect(rowsBetween(hit.row, hit.row));
+    else onSelect(colsBetween(hit.col, hit.col));
   };
 
   const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1263,6 +1322,14 @@ export function CanvasGrid({
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     suppressClick.current = false;
+    // Every shortcut in the key handler needs the viewport focused, and a press
+    // on the sheet is the moment to take it back. Sheet switches give it focus
+    // already, but a press that landed elsewhere — the search box, a toolbar
+    // button — left Ctrl+A selecting the page's DOM instead of the sheet.
+    viewportRef.current?.focus({ preventScroll: true });
+    // And the page's own select-all leaves its highlight behind; nothing on the
+    // sheet is a text selection, so a press clears it.
+    window.getSelection()?.removeAllRanges();
     if (event.button !== 0) return;
     const hit = hitAt(event.clientX, event.clientY);
     // A gutter is not a cell: its own click picks the row or column, and a drag
@@ -1380,6 +1447,8 @@ export function CanvasGrid({
     // Ahead of the row and column branches, so a whole-row selection answers to
     // them too — those branches return early for anything but an arrow key.
     if (event.ctrlKey || event.metaKey) {
+      // Ctrl+A is not handled here: it belongs to the sheet wherever the focus
+      // happens to be, so it lives on `window` below.
       switch (event.key) {
         case "Home":
           select(0, 0);
@@ -1400,48 +1469,122 @@ export function CanvasGrid({
       return;
     }
 
+    // A run of whole rows keeps its own axis: the arrows slide it, Shift grows
+    // it from the end that was walking, and Home/End collapse it to a cell on
+    // the active row.
+    //
+    // The slide's step has to keep the *whole* run on the sheet. Clamping the
+    // top alone let 27:29 slide onto row 31 of a 30-row sheet.
     if (selection.kind === "row") {
-      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-        onSelect({ kind: "row", row: clampRow(selection.row + (event.key === "ArrowUp" ? -1 : 1)) });
-        event.preventDefault();
+      const slide = (next: number) => {
+        const step = Math.max(
+          -selection.row,
+          Math.min(sheetRows - selection.row - selection.rows, next - selection.row),
+        );
+        onSelect(rowsBetween(selection.anchor + step, selection.active + step));
+      };
+      const grow = (next: number) =>
+        onSelect(rowsBetween(selection.anchor, clampRow(next)));
+      switch (event.key) {
+        case "ArrowUp":
+          if (event.shiftKey) grow(selection.active - 1);
+          else slide(selection.row - 1);
+          break;
+        case "ArrowDown":
+          if (event.shiftKey) grow(selection.active + 1);
+          else slide(selection.row + 1);
+          break;
+        case "PageUp":
+          if (event.shiftKey) grow(selection.active - page);
+          else slide(selection.row - page);
+          break;
+        case "PageDown":
+          if (event.shiftKey) grow(selection.active + page);
+          else slide(selection.row + page);
+          break;
+        case "Home":
+          select(selection.active, 0);
+          break;
+        case "End":
+          select(selection.active, sheetCols - 1);
+          break;
+        default:
+          return;
       }
+      event.preventDefault();
       return;
     }
     if (selection.kind === "column") {
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-        onSelect({
-          kind: "column",
-          col: clampCol(selection.col + (event.key === "ArrowLeft" ? -1 : 1)),
-        });
-        event.preventDefault();
+      const slide = (next: number) => {
+        const step = Math.max(
+          -selection.col,
+          Math.min(sheetCols - selection.col - selection.cols, next - selection.col),
+        );
+        onSelect(colsBetween(selection.anchor + step, selection.active + step));
+      };
+      const grow = (next: number) =>
+        onSelect(colsBetween(selection.anchor, clampCol(next)));
+      switch (event.key) {
+        case "ArrowLeft":
+          if (event.shiftKey) grow(selection.active - 1);
+          else slide(selection.col - 1);
+          break;
+        case "ArrowRight":
+          if (event.shiftKey) grow(selection.active + 1);
+          else slide(selection.col + 1);
+          break;
+        // A column has no vertical page of its own to move by; PageUp and
+        // PageDown scroll, which the wheel already does.
+        case "Home":
+          select(0, selection.active);
+          break;
+        case "End":
+          select(clampRow(sheetRows - 1), selection.active);
+          break;
+        default:
+          return;
       }
+      event.preventDefault();
       return;
     }
 
+    // Shift extends a block rather than collapsing to a cell. The far end walks
+    // from where it already is — `cursor` is a block's active cell, which is
+    // that end — so repeated presses accumulate and a press back retraces.
+    const moveTo = (row: number, col: number) => {
+      const target = { row: clampRow(row), col: clampCol(col) };
+      if (!event.shiftKey) {
+        select(target.row, target.col);
+        return;
+      }
+      const anchor = selection.kind === "range" ? selection.anchor : cursor;
+      onSelect(rangeBetween(anchor, target));
+    };
+
     switch (event.key) {
       case "ArrowUp":
-        select(clampRow(cursor.row - 1), cursor.col);
+        moveTo(cursor.row - 1, cursor.col);
         break;
       case "ArrowDown":
-        select(clampRow(cursor.row + 1), cursor.col);
+        moveTo(cursor.row + 1, cursor.col);
         break;
       case "ArrowLeft":
-        select(cursor.row, clampCol(cursor.col - 1));
+        moveTo(cursor.row, cursor.col - 1);
         break;
       case "ArrowRight":
-        select(cursor.row, clampCol(cursor.col + 1));
+        moveTo(cursor.row, cursor.col + 1);
         break;
       case "PageUp":
-        select(clampRow(cursor.row - page), cursor.col);
+        moveTo(cursor.row - page, cursor.col);
         break;
       case "PageDown":
-        select(clampRow(cursor.row + page), cursor.col);
+        moveTo(cursor.row + page, cursor.col);
         break;
       case "Home":
-        select(cursor.row, 0);
+        moveTo(cursor.row, 0);
         break;
       case "End":
-        select(cursor.row, clampCol(sheetCols - 1));
+        moveTo(cursor.row, sheetCols - 1);
         break;
       default:
         return;
