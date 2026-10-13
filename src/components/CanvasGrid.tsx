@@ -607,11 +607,20 @@ export function CanvasGrid({
 
   const displayRows = useMemo(() => {
     if (!visibleRows) return null;
-    const headerRow = autoFilter?.row ?? -1;
-    if (headerRow < 0) return visibleRows;
+    if (!autoFilter) return visibleRows;
+    // A filter hides rows inside its range and nothing else: the sheet's own
+    // rows above the header stay, and so do the ones below the range, which
+    // are not the table's to hide — a document with a note under its table
+    // keeps the note.
+    const headerRow = autoFilter.row;
     const above = Array.from({ length: headerRow + 1 }, (_, index) => index);
-    return [...above, ...visibleRows.filter((row) => row > headerRow)];
-  }, [visibleRows, autoFilter]);
+    const firstBelow = headerRow + autoFilter.rows;
+    const below = Array.from(
+      { length: Math.max(0, sheetRowsGuess - firstBelow) },
+      (_, index) => firstBelow + index,
+    );
+    return [...above, ...visibleRows.filter((row) => row > headerRow), ...below];
+  }, [visibleRows, autoFilter, sheetRowsGuess]);
 
   const rowView = useMemo(() => {
     if (!displayRows) return null;
