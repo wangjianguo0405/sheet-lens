@@ -12,6 +12,33 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.6] - 2026-10-13
+
+The sheets can be picked from the bottom too, the way Excel keeps them.
+
+### Added
+
+- A strip of sheet tabs along the foot of the sheet area, beside the list on the
+  left. Either can be shown or hidden on its own, and the choice is remembered
+- Each tab carries the colour the workbook gives it, so the sheets are told
+  apart the way they are in Excel
+- The name box takes a reference: type `C16`, or `Sheet1!C16` to go to another
+  sheet with it, and press Enter
+
+### Improved
+
+- While the tabs are showing, the sheet's horizontal scrollbar sits at the end
+  of the strip, and the handle beside it makes it longer or shorter
+- The formula bar's scrollbar is the same one as everywhere else in the app
+- The toolbar has given up its Go To button — the name box and Ctrl+G were two
+  ways to do the same thing already
+
+### Fixed
+
+- Scrolling no longer slows down as it passes the last of the data. The view was
+  asking for the empty cells beyond it a block at a time and waiting on the
+  answer
+
 ## [0.3.5] - 2026-10-13
 
 The empty part of a sheet behaves itself.
