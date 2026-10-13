@@ -505,7 +505,6 @@ export default function App() {
           onToggleSearch={() => setSearchOpen((open) => !open)}
           onToggleSidebar={() => togglePanel("list")}
           onToggleSheetTabs={() => togglePanel("tabs")}
-          onGoTo={() => setGotoOpen(true)}
           searchOpen={searchOpen}
           sidebarOpen={panels.list}
           sheetTabsOpen={panels.tabs}

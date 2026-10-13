@@ -1,5 +1,4 @@
 import {
-  Crosshair,
   Download,
   FolderOpen,
   Languages,
@@ -25,7 +24,6 @@ interface ToolbarProps {
   onToggleSearch: () => void;
   onToggleSidebar: () => void;
   onToggleSheetTabs: () => void;
-  onGoTo: () => void;
   searchOpen: boolean;
   sidebarOpen: boolean;
   sheetTabsOpen: boolean;
@@ -41,7 +39,6 @@ export function Toolbar({
   onToggleSearch,
   onToggleSidebar,
   onToggleSheetTabs,
-  onGoTo,
   searchOpen,
   sidebarOpen,
   sheetTabsOpen,
@@ -110,17 +107,6 @@ export function Toolbar({
       >
         <Search className="size-3.5" />
         {t("toolbar.search")}
-      </Button>
-
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-7 gap-1.5 px-2 text-xs"
-        disabled={!hasWorkbook}
-        onClick={onGoTo}
-      >
-        <Crosshair className="size-3.5" />
-        {t("toolbar.goTo")}
       </Button>
 
       <div className="ml-auto flex items-center gap-1">
