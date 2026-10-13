@@ -1,7 +1,21 @@
 import { Plus, X } from "lucide-react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
+
+/**
+ * Middle-click closes a tab, the gesture every browser puts on one. It listens
+ * for `auxclick` rather than `mousedown` so that a left press still selects the
+ * tab on release, and it takes the whole tab rather than just its × — the name
+ * is the part being aimed at.
+ */
+function middleClose(close: () => void) {
+  return (event: ReactMouseEvent) => {
+    if (event.button !== 1) return;
+    close();
+  };
+}
 
 export interface FileTab {
   path: string;
@@ -56,6 +70,7 @@ export function FileTabs({
                 ? "bg-background text-foreground"
                 : "text-muted-foreground hover:bg-accent/40",
             )}
+            onAuxClick={middleClose(() => onClose(tab.path))}
           >
             <button
               type="button"
@@ -90,6 +105,7 @@ export function FileTabs({
             "group flex shrink-0 items-center gap-1 border-r border-border px-2 py-1 text-xs",
             atHome ? "bg-background text-foreground" : "text-muted-foreground hover:bg-accent/40",
           )}
+          onAuxClick={middleClose(onCloseHome)}
         >
           <button type="button" className="truncate" onClick={onHome}>
             {t("tabs.new")}
