@@ -136,6 +136,32 @@ export function selectionIntersects(
   }
 }
 
+/**
+ * How far a selection reaches, for the status bar's readout.
+ *
+ * A whole row or column runs to the edge of the sheet, which the grid does not
+ * know, so only the axis the user actually walked is reported. A lone cell
+ * spans nothing worth saying.
+ */
+export type SelectionSize =
+  | { kind: "rows"; rows: number }
+  | { kind: "cols"; cols: number }
+  | { kind: "block"; rows: number; cols: number };
+
+export function selectionSize(selection: Selection): SelectionSize | null {
+  switch (selection.kind) {
+    case "cell":
+      return null;
+    case "row":
+      return { kind: "rows", rows: selection.rows };
+    case "column":
+      return { kind: "cols", cols: selection.cols };
+    case "range":
+      if (selection.rows === 1 && selection.cols === 1) return null;
+      return { kind: "block", rows: selection.rows, cols: selection.cols };
+  }
+}
+
 /** The address shown in the name box. */
 export function selectionRef(selection: Selection): string {
   switch (selection.kind) {

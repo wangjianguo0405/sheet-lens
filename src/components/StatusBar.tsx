@@ -2,6 +2,7 @@ import { Minus, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Separator } from "@/components/ui/separator";
+import type { SelectionSize } from "@/lib/selection";
 import {
   DEFAULT_ZOOM,
   MAX_ZOOM,
@@ -18,10 +19,19 @@ interface StatusBarProps {
   kind: string | null;
   value: string | null;
   size: string | null;
+  /** How many rows and columns the selection spans. */
+  span: SelectionSize | null;
   /** View scale as a percentage, the way Excel names it. */
   zoom: number;
   onZoom: (percent: number) => void;
 }
+
+/** Each selection shape, mapped to the phrase that counts it. */
+const SPAN_KEY = {
+  rows: "status.spanRows",
+  cols: "status.spanCols",
+  block: "status.spanBlock",
+} as const;
 
 /** The cell kinds the backend reports, mapped to their translated labels. */
 const KIND_KEY = {
@@ -39,6 +49,7 @@ export function StatusBar({
   kind,
   value,
   size,
+  span,
   zoom,
   onZoom,
 }: StatusBarProps) {
@@ -67,6 +78,11 @@ export function StatusBar({
         <>
           <Separator orientation="vertical" className="h-3" />
           <span className="font-medium text-foreground select-text">{cell}</span>
+          {span && (
+            <span className="whitespace-nowrap tabular-nums">
+              {t(SPAN_KEY[span.kind], span)}
+            </span>
+          )}
           {kind && kind !== "empty" && (
             <span className="rounded-sm bg-muted px-1 py-px text-[10px]">
               {t(KIND_KEY[kind as keyof typeof KIND_KEY], { defaultValue: kind })}

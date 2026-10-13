@@ -84,6 +84,9 @@
     "zoom": "Zoom",
     "zoomIn": "Zoom in",
     "resetZoom": "Reset the zoom to 100%",
+    "spanRows": "{{rows}} rows selected",
+    "spanCols": "{{cols}} cols selected",
+    "spanBlock": "{{rows}} rows × {{cols}} cols selected",
     "kind": {
       "text": "text",
       "number": "number",
