@@ -82,6 +82,9 @@
     "zoom": "ズーム",
     "zoomIn": "拡大",
     "resetZoom": "ズームを 100% に戻す",
+    "spanRows": "{{rows}} 行を選択",
+    "spanCols": "{{cols}} 列を選択",
+    "spanBlock": "{{rows}} 行 × {{cols}} 列を選択",
     "kind": {
       "text": "文字列",
       "number": "数値",

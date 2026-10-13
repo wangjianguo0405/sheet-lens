@@ -14,7 +14,12 @@ import { Toolbar } from "@/components/Toolbar";
 import { UpdateDialog } from "@/components/UpdateDialog";
 import { Welcome } from "@/components/Welcome";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ORIGIN, selectionRef, type Selection } from "@/lib/selection";
+import {
+  ORIGIN,
+  selectionRef,
+  selectionSize,
+  type Selection,
+} from "@/lib/selection";
 import { toggleShapeDebug } from "@/lib/debugPanels";
 import { checkForUpdate, updateStatus, type UpdateStatus } from "@/lib/update";
 import { DEFAULT_ZOOM } from "@/lib/zoom";
@@ -540,6 +545,7 @@ export default function App() {
               : null
           }
           cell={activeSheet ? selectionRef(selection) : null}
+          span={activeSheet ? selectionSize(selection) : null}
           kind={detail?.kind ?? null}
           value={detail?.text ?? null}
           zoom={zoom}

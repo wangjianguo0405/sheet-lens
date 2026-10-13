@@ -82,6 +82,9 @@
     "zoom": "缩放",
     "zoomIn": "放大",
     "resetZoom": "将缩放重置为 100%",
+    "spanRows": "已选 {{rows}} 行",
+    "spanCols": "已选 {{cols}} 列",
+    "spanBlock": "已选 {{rows}} 行 × {{cols}} 列",
     "kind": {
       "text": "文本",
       "number": "数值",
