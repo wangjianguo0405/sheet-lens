@@ -12,6 +12,25 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.5] - 2026-10-13
+
+The empty part of a sheet behaves itself.
+
+### Improved
+
+- Past the end of the data the scrollbar moves the way Excel's does: the range
+  stands still until the view reaches its end, instead of growing outwards from
+  the middle
+
+### Fixed
+
+- A table's rules and shading no longer run on past its data into the blank part
+  of the sheet
+- A sheet's drawings stay inside the sheet instead of being drawn again out to
+  the right of the data
+- The first frame after switching sheets is right first time, without having to
+  scroll it to wake it up
+
 ## [0.3.4] - 2026-10-12
 
 A sheet no longer ends where its data does.
