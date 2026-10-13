@@ -214,6 +214,29 @@ const PERF_SAMPLES = 60;
 const ANTS_MS = 60;
 const ANTS_STEP = 2;
 
+/**
+ * The blank rows and columns the scroller holds past the sheet's own extent.
+ *
+ * Excel's sheets are 1,048,576 rows by 16,384 columns and its view runs on well
+ * past anything the file holds — a grid that stopped dead at the last cell reads
+ * as broken beside it, and there is nowhere to put a note beside the data.
+ *
+ * It is grown as the view reaches the end and given back when the view comes
+ * away from it, rather than laid out once at the sheet's real size: a million
+ * rows of offsets is 8 MB of `Float64Array` rebuilt on every sheet switch, and
+ * there is nothing to see in the empty millionth row. The floor is what makes
+ * the first wheel past the data do anything at all on a sheet that fits its
+ * window.
+ *
+ * A top-up adds half of what the view shows and the giving-back leaves a whole
+ * screen behind — both measured in the sheet's own row height and column width,
+ * since one screen of a narrow-columned sheet is a very different count from one
+ * screen of a wide one. `VOID_MIN_ROWS` / `VOID_MIN_COLS` are the floor, there
+ * so that a sheet shorter than its window can be scrolled at all.
+ */
+const VOID_MIN_ROWS = 64;
+const VOID_MIN_COLS = 16;
+
 function record(samples: number[], value: number): void {
   samples.push(value);
   if (samples.length > PERF_SAMPLES) samples.shift();
@@ -396,6 +419,13 @@ export function CanvasGrid({
   const [showGrid, setShowGrid] = useState(true);
   const [filters, setFilters] = useState<Map<number, string[]>>(() => new Map());
   const [visibleRows, setVisibleRows] = useState<number[] | null>(null);
+  /**
+   * How much blank area the scroller holds past the sheet's own extent, in rows
+   * and columns — as much of Excel's own empty thousands as the view is about
+   * to want, grown as it goes and given back when it comes away.
+   */
+  const [voidRows, setVoidRows] = useState(VOID_MIN_ROWS);
+  const [voidCols, setVoidCols] = useState(VOID_MIN_COLS);
   /** Bumped when a block lands, so the paint pass knows to run again. */
   const [version, setVersion] = useState(0);
   /** The hover readout, and the cell it belongs to so a move within it is free. */
@@ -544,39 +574,181 @@ export function CanvasGrid({
     return { rows: displayRows, index };
   }, [displayRows]);
 
+  /** How many rows the view shows — a filtered view shows fewer. */
+  const displayRowCount = rowView ? rowView.rows.length : sheetRowsGuess;
+
+  /**
+   * A display row's place on the sheet.
+   *
+   * Past the rows this view has, the rest are the blank ones the scroller moves
+   * through, numbered on from the sheet's own extent — a filtered view has no
+   * room to put them among its own rows, and out there is where they would be
+   * hidden anyway. Answering -1 instead left that whole area unpainted.
+   */
   const sheetRowOf = useCallback(
-    (display: number): number => (rowView ? (rowView.rows[display] ?? -1) : display),
-    [rowView],
+    (display: number): number =>
+      rowView ? (rowView.rows[display] ?? sheetRowsGuess + display - displayRowCount) : display,
+    [rowView, sheetRowsGuess, displayRowCount],
   );
   const displayOfRow = useCallback(
     (sheetRow: number): number => (rowView ? (rowView.index.get(sheetRow) ?? -1) : sheetRow),
     [rowView],
   );
 
+  /**
+   * What the scroller holds in all: the sheet's own rows and columns, then the
+   * blank area. Everything that has to reach the far edge of the scroll — the
+   * extent, the hit test — is measured against these rather than the sheet's.
+   */
+  const rowCount = displayRowCount + voidRows;
+  const colCount = sheetColsGuess + voidCols;
+
   const cols = useMemo(
-    () => buildMetrics(sheetColsGuess, (index) => colOverrides.get(index) ?? baseColW),
-    [sheetColsGuess, colOverrides, baseColW],
+    () =>
+      buildMetrics(
+        colCount,
+        // `<col>` describes columns a sheet may hold nothing in, and those runs
+        // reach past the last cell; outside the extent the sheet's own default
+        // width is the honest answer, not the file's.
+        (index) => (index < sheetColsGuess ? (colOverrides.get(index) ?? baseColW) : baseColW),
+      ),
+    [colCount, sheetColsGuess, colOverrides, baseColW],
   );
 
   const rows = useMemo(
     () =>
-      buildMetrics(
-        rowView ? rowView.rows.length : sheetRowsGuess,
-        (display) => rowOverrides.get(sheetRowOf(display)) ?? baseRowH,
-      ),
-    [rowView, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf],
+      buildMetrics(rowCount, (display) => {
+        const row = sheetRowOf(display);
+        return row >= 0 && row < sheetRowsGuess ? (rowOverrides.get(row) ?? baseRowH) : baseRowH;
+      }),
+    [rowView, rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf],
   );
 
   const minRowH = Math.max(MIN_ROW_H, Math.ceil(fontSize * LINE_HEIGHT));
 
-  /** How many rows the view shows — a filtered view shows fewer. */
-  const displayRowCount = rowView ? rowView.rows.length : sheetRowsGuess;
+  /**
+   * Where the sheet's own extent ends, in sheet pixels.
+   *
+   * The blank area is a prefix on top of this and never moves it, so this is
+   * both the boundary the file's formatting stops at and what the shapes and
+   * the print mark are placed against — `cols.total` and `rows.total` now run
+   * on past it, and measuring against those put them out in the empty area.
+   */
+  const usedRowsTotal = rows.offsets[displayRowCount] ?? rows.total;
+  const usedColsTotal = cols.offsets[sheetColsGuess] ?? cols.total;
 
-  /** A column's left edge, for placing the shapes that float above the cells. */
+  /**
+   * Tops the blank area up when the view has run out of it, and gives back what
+   * the view has come away from.
+   *
+   * The top-up waits until the view actually reaches the end of what is held.
+   * Measuring it against the *sheet's* end instead — topping up whenever the
+   * view came within a screen of the data — moved the end of the scrollbar
+   * along with the thumb for the whole length of the sheet: it grew from the
+   * middle outwards and the thumb never approached the right-hand side, which
+   * is not how Excel's reads. So the range stands still while there is still
+   * somewhere to go, and it moves half a screen at a time — which is also how
+   * often either direction costs a state update. A whole screen was tried and
+   * read as a lurch: the thumb fell from the far end to two-thirds of the way
+   * along every time the area was topped up.
+   *
+   * The giving-back is the hysteresis: blank is only released once the view has
+   * come two screens away from what is held, and then down to one.
+   */
+  const resizeVoid = useCallback(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const z = zoomRef.current;
+    const scroll = scrollRef.current;
+    const width = el.clientWidth / z;
+    const height = el.clientHeight / z;
+    // The view's far edges in sheet space, the gutters coming off as they do in
+    // `buildView`: both scroll with the content.
+    const bottom = Math.max(0, scroll.top - COL_HEADER_H) + height;
+    const right = Math.max(0, scroll.left - ROW_HEADER_W) + width;
+
+    /**
+     * `keep` is the blank held in front of the view once the giving-back has
+     * run; a step adds half of what a screen shows, so the blank in front stays
+     * under a screen and the thumb never falls far when it is topped up.
+     */
+    const topUp = (
+      current: number,
+      edge: number,
+      used: number,
+      size: number,
+      keep: number,
+      step: number,
+    ): number => {
+      const held = used + current * size;
+      if (edge >= held) return current + step;
+      if (held - edge > 2 * keep * size) {
+        return Math.max(keep, Math.ceil((edge + keep * size - used) / size));
+      }
+      return current;
+    };
+
+    const screenRows = Math.ceil(height / baseRowH);
+    const screenCols = Math.ceil(width / baseColW);
+    const keepRows = Math.max(VOID_MIN_ROWS, screenRows);
+    const keepCols = Math.max(VOID_MIN_COLS, screenCols);
+    const stepRows = Math.max(1, Math.ceil(screenRows / 2));
+    const stepCols = Math.max(1, Math.ceil(screenCols / 2));
+
+    setVoidRows((current) => topUp(current, bottom, usedRowsTotal, baseRowH, keepRows, stepRows));
+    setVoidCols((current) => topUp(current, right, usedColsTotal, baseColW, keepCols, stepCols));
+  }, [usedRowsTotal, usedColsTotal, baseRowH, baseColW]);
+  const resizeVoidRef = useRef(resizeVoid);
+  resizeVoidRef.current = resizeVoid;
+
+  /**
+   * A sheet arriving — and a filter, and a zoom — moves the used range the
+   * blank area is measured from, and none of those come through a scroll.
+   *
+   * Laid out rather than deferred, so the blank area is the new sheet's before
+   * the frame that arrives with it is painted. Left to a passive effect the
+   * first paint of a switch measured itself against the sheet being left, which
+   * is the "wrong until you scroll it" frame: the paint runs off the metrics
+   * this render produced, so the metrics have to be the new sheet's by then.
+   */
+  useLayoutEffect(() => {
+    resizeVoidRef.current();
+  }, [layoutSheet, zoom, baseColW, baseRowH, rowView, cols, rows]);
+
+  /**
+   * Puts the scroller back on the position it believes it holds.
+   *
+   * The blank area is grown from what the view wants, so it arrives a render
+   * after the sheet does — and a sheet restored to a view deep in the blank
+   * area can find its position clamped before that area exists, leaving the
+   * scroller at one offset and the paint at another. Growing the area fixes the
+   * reach; this puts the position back on it.
+   *
+   * A scroll the user made sets both to the same thing, so this only ever moves
+   * the clamped case.
+   */
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const z = zoomRef.current;
+    const { top, left } = scrollRef.current;
+    if (Math.abs(el.scrollTop - top * z) > 0.5) el.scrollTop = top * z;
+    if (Math.abs(el.scrollLeft - left * z) > 0.5) el.scrollLeft = left * z;
+  }, [cols, rows]);
+
+  /**
+   * A column's left edge, for placing the shapes that float above the cells.
+   *
+   * A shape whose anchor column is past the sheet's extent — one this pass could
+   * not place, since a one-cell anchor is only an offset the parser has to turn
+   * back into a cell — keeps to the sheet's own right edge. Reading the
+   * scroller's total put those shapes out in the blank area instead, which drew
+   * the left of the drawing again to the right of the sheet.
+   */
   const shapeColX = useCallback(
     (col: number) =>
-      col >= 0 && col <= sheetColsGuess ? cols.offsets[col] : cols.total,
-    [cols, sheetColsGuess],
+      col >= 0 && col <= sheetColsGuess ? cols.offsets[col] : usedColsTotal,
+    [cols, sheetColsGuess, usedColsTotal],
   );
 
   /**
@@ -586,14 +758,16 @@ export function CanvasGrid({
    * print area is allowed to reach past the last cell the sheet formats — that
    * is how a page is given room to breathe — and Excel draws its boundary out
    * there all the same. Clamping to the used range pulled the mark up by
-   * however many rows the page ran past the data.
+   * however many rows the page ran past the data. It is measured out from the
+   * used range rather than from `cols.total`, which now runs into the blank
+   * area and would put the mark hundreds of columns too wide.
    */
   const printColX = useCallback(
     (col: number) =>
       col >= 0 && col <= sheetColsGuess
         ? cols.offsets[col]
-        : cols.total + (col - sheetColsGuess) * baseColW,
-    [cols, sheetColsGuess, baseColW],
+        : usedColsTotal + (col - sheetColsGuess) * baseColW,
+    [cols, sheetColsGuess, usedColsTotal, baseColW],
   );
 
   const printRowY = useCallback(
@@ -602,16 +776,17 @@ export function CanvasGrid({
       if (display >= 0 && display < displayRowCount) return rows.offsets[display];
       // A filtered view has no room to extrapolate in; the end of the rows on
       // screen is as far as the mark can honestly reach.
-      if (rowView) return rows.total;
-      return rows.total + (row - sheetRowsGuess) * baseRowH;
+      if (rowView) return usedRowsTotal;
+      return usedRowsTotal + (row - sheetRowsGuess) * baseRowH;
     },
-    [displayOfRow, displayRowCount, rows, rowView, sheetRowsGuess, baseRowH],
+    [displayOfRow, displayRowCount, rows, rowView, sheetRowsGuess, usedRowsTotal, baseRowH],
   );
 
   /**
    * A sheet row's top edge, for the same reason. A row a filter has hidden
    * takes the place of the next visible one, so a shape anchored to it shrinks
-   * rather than disappearing.
+   * rather than disappearing — and a row past the extent keeps to the extent,
+   * which is what `shapeColX` does for columns.
    */
   const shapeRowY = useCallback(
     (row: number) => {
@@ -620,9 +795,9 @@ export function CanvasGrid({
         const display = displayOfRow(probe);
         if (display >= 0 && display < displayRowCount) return rows.offsets[display];
       }
-      return rows.total;
+      return usedRowsTotal;
     },
-    [displayOfRow, displayRowCount, rows, sheetRowsGuess],
+    [displayOfRow, displayRowCount, rows, sheetRowsGuess, usedRowsTotal],
   );
 
   const cellAt = useCallback(
@@ -639,13 +814,21 @@ export function CanvasGrid({
   const styleAt = useCallback(
     (row: number, col: number): CellStyle | null => {
       if (!layout) return null;
+      // Everything past the sheet's own extent is drawn plain, whatever the
+      // file says about the rows and columns reaching into it. A row's style is
+      // written for all 16,384 columns of that row and a column's for all
+      // 1,048,576 rows of that column, so a table whose columns are ruled and
+      // shaded would carry that ladder of rules and its shaded band on past the
+      // end of its data — out into what should be empty. Only the extent takes
+      // the file's formatting.
+      if (row >= sheetRowsGuess || col >= sheetColsGuess) return null;
       const index =
         styleOfRow(layout.cellRuns, row, col) ??
         layout.rowStyles[row] ??
         styleOfColumn(layout.colStyles, col);
       return index === undefined ? null : (layout.styles[index] ?? null);
     },
-    [layout],
+    [layout, sheetRowsGuess, sheetColsGuess],
   );
 
   const mergeAt = useCallback(
@@ -828,6 +1011,8 @@ export function CanvasGrid({
         canvas.style.height = `${el.clientHeight}px`;
       }
       paintRef.current("both");
+      // A wider window is more blank area to want than it had before.
+      resizeVoidRef.current();
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -876,6 +1061,7 @@ export function CanvasGrid({
     el.scrollTop = scrollRef.current.top * zoomRef.current;
     el.scrollLeft = scrollRef.current.left * zoomRef.current;
     paintRef.current("both");
+    resizeVoidRef.current();
   }, [zoom]);
 
   // --- paint scheduling ---
@@ -960,6 +1146,9 @@ export function CanvasGrid({
     const bySheet = views.get(path) ?? new Map<string, SheetView>();
     bySheet.set(sheet.name, view);
     views.set(path, bySheet);
+    // The blank area is what makes a scroll past the data possible at all, so
+    // every scroll asks for as much of it as the next one will want.
+    resizeVoidRef.current();
     schedule("both");
   }, [schedule, views, path, sheet.name]);
 
@@ -1130,7 +1319,6 @@ export function CanvasGrid({
 
     const sheetRows = Math.max(sheet.rows, layout.rows);
     const sheetCols = Math.max(sheet.cols, layout.cols);
-    const displayRowCount = rowView ? rowView.rows.length : sheetRows;
 
     const top = Math.max(0, scroll.top - COL_HEADER_H);
     const left = Math.max(0, scroll.left - ROW_HEADER_W);
@@ -1139,12 +1327,12 @@ export function CanvasGrid({
 
     const range = {
       rowStart: Math.max(0, indexAt(rows.offsets, top) - OVERSCAN_ROWS),
-      rowEnd: Math.min(
-        displayRowCount,
-        indexAt(rows.offsets, top + height) + 1 + OVERSCAN_ROWS,
-      ),
+      // The window runs over everything the scroller holds, blank area
+      // included: its cells are empty and carry no formatting, but the grid
+      // goes on being drawn there.
+      rowEnd: Math.min(rowCount, indexAt(rows.offsets, top + height) + 1 + OVERSCAN_ROWS),
       colStart: Math.max(0, indexAt(cols.offsets, left) - OVERSCAN_COLS),
-      colEnd: Math.min(sheetCols, indexAt(cols.offsets, left + width) + 1 + OVERSCAN_COLS),
+      colEnd: Math.min(colCount, indexAt(cols.offsets, left + width) + 1 + OVERSCAN_COLS),
     };
 
     // Which merged regions and Center-Across runs are on screen — both depend
@@ -1169,6 +1357,11 @@ export function CanvasGrid({
     const styleMemo = new Map<number, CellStyle | null>();
     const styleCalls = { resolved: 0, memo: 0 };
     const styleAtFast = (row: number, col: number): CellStyle | null => {
+      // Nothing out in the blank area has a style to resolve, and saying so
+      // here rather than inside `styleAt` keeps those cells out of the readout's
+      // count as well — the number is meant to say what the pass had to look
+      // up, and a screenful of empty offsets is not work the file asked for.
+      if (row >= sheetRows || col >= sheetCols) return null;
       const key = cellKey(sheetCols, row, col);
       const hit = styleMemo.get(key);
       if (hit !== undefined) {
@@ -1268,6 +1461,8 @@ export function CanvasGrid({
     rowView,
     cols,
     rows,
+    rowCount,
+    colCount,
     merges,
     sheetRowOf,
     displayOfRow,
@@ -1441,12 +1636,12 @@ export function CanvasGrid({
       if (py < gutterH) {
         const x = (clientX - rect.left + el.scrollLeft) / z - ROW_HEADER_W;
         if (x < 0 || x >= cols.total) return null;
-        return { kind: "colHeader", col: Math.min(sheetColsGuess - 1, indexAt(cols.offsets, x)) };
+        return { kind: "colHeader", col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
       }
       if (px < gutterW) {
         const y = (clientY - rect.top + el.scrollTop) / z - COL_HEADER_H;
         if (y < 0 || y >= rows.total) return null;
-        const display = Math.min(displayRowCount - 1, indexAt(rows.offsets, y));
+        const display = Math.min(rowCount - 1, indexAt(rows.offsets, y));
         const row = sheetRowOf(display);
         return row < 0 ? null : { kind: "rowHeader", row };
       }
@@ -1454,11 +1649,11 @@ export function CanvasGrid({
       const x = (clientX - rect.left + el.scrollLeft) / z - ROW_HEADER_W;
       const y = (clientY - rect.top + el.scrollTop) / z - COL_HEADER_H;
       if (x < 0 || y < 0 || x >= cols.total || y >= rows.total) return null;
-      const row = sheetRowOf(Math.min(displayRowCount - 1, indexAt(rows.offsets, y)));
+      const row = sheetRowOf(Math.min(rowCount - 1, indexAt(rows.offsets, y)));
       if (row < 0) return null;
-      return { kind: "cell", row, col: Math.min(sheetColsGuess - 1, indexAt(cols.offsets, x)) };
+      return { kind: "cell", row, col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
     },
-    [cols, rows, sheetColsGuess, sheetRowOf, displayRowCount],
+    [cols, rows, colCount, rowCount, sheetRowOf],
   );
 
   /**
@@ -1693,8 +1888,14 @@ export function CanvasGrid({
       return;
     }
 
-    const clampRow = (r: number) => Math.min(sheetRows - 1, Math.max(0, r));
-    const clampCol = (c: number) => Math.min(sheetCols - 1, Math.max(0, c));
+    // The cursor is free to walk out into the blank area past the data, as it
+    // is in Excel, so it is clamped to what the scroller holds. Ctrl+End and
+    // End still mean the sheet's own last cell, which is what `lastRow` and
+    // `lastCol` are for.
+    const clampRow = (r: number) => Math.min(rowCount - 1, Math.max(0, r));
+    const clampCol = (c: number) => Math.min(colCount - 1, Math.max(0, c));
+    const lastRow = Math.max(0, sheetRows - 1);
+    const lastCol = Math.max(0, sheetCols - 1);
     const el = viewportRef.current;
     const z = zoomRef.current;
     const visible = el ? Math.floor((el.clientHeight / z - COL_HEADER_H) / baseRowH) : 20;
@@ -1713,7 +1914,7 @@ export function CanvasGrid({
           select(0, 0);
           break;
         case "End":
-          select(clampRow(sheetRows - 1), clampCol(sheetCols - 1));
+          select(lastRow, lastCol);
           break;
         case "PageUp":
           onSheetStep?.(-1);
@@ -1756,7 +1957,7 @@ export function CanvasGrid({
       const slide = (next: number) => {
         const step = Math.max(
           -selection.row,
-          Math.min(sheetRows - selection.row - selection.rows, next - selection.row),
+          Math.min(rowCount - selection.row - selection.rows, next - selection.row),
         );
         onSelect(rowsBetween(selection.anchor + step, selection.active + step));
       };
@@ -1783,7 +1984,7 @@ export function CanvasGrid({
           select(selection.active, 0);
           break;
         case "End":
-          select(selection.active, sheetCols - 1);
+          select(selection.active, lastCol);
           break;
         default:
           return;
@@ -1795,7 +1996,7 @@ export function CanvasGrid({
       const slide = (next: number) => {
         const step = Math.max(
           -selection.col,
-          Math.min(sheetCols - selection.col - selection.cols, next - selection.col),
+          Math.min(colCount - selection.col - selection.cols, next - selection.col),
         );
         onSelect(colsBetween(selection.anchor + step, selection.active + step));
       };
@@ -1816,7 +2017,7 @@ export function CanvasGrid({
           select(0, selection.active);
           break;
         case "End":
-          select(clampRow(sheetRows - 1), selection.active);
+          select(lastRow, selection.active);
           break;
         default:
           return;
@@ -1861,7 +2062,7 @@ export function CanvasGrid({
         moveTo(cursor.row, 0);
         break;
       case "End":
-        moveTo(cursor.row, sheetCols - 1);
+        moveTo(cursor.row, lastCol);
         break;
       default:
         return;
@@ -2230,8 +2431,14 @@ export function CanvasGrid({
                 shapes={layout.drawings}
                 colX={shapeColX}
                 rowY={shapeRowY}
-                width={cols.total}
-                height={rows.total}
+                // The layer is clipped to the sheet's own extent, not to the
+                // scroller. An `<svg>` hides what falls outside it, which is
+                // what keeps a picture wider than the sheet's last column — or
+                // a shape whose cell the parser could only approximate — from
+                // spilling out into the blank area the scroller runs on into;
+                // sized from the scroller, every one of them showed again.
+                width={usedColsTotal}
+                height={usedRowsTotal}
                 path={path}
                 // Null unless the readout is on, so the layer's `memo` still
                 // holds in normal use — the facts change with the selection.
