@@ -114,7 +114,7 @@ export function StatusBar({
             step={1}
             value={zoomIndex(zoom)}
             onChange={(event) => onZoom(ZOOM_STOPS[Number(event.target.value)])}
-            className="h-1 w-24 cursor-pointer accent-[#217346]"
+            className="h-1 w-24 cursor-pointer accent-[#107C41]"
           />
           <button
             type="button"
