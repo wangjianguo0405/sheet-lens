@@ -3,6 +3,7 @@
     "name": "SheetLens",
     "resizeSheetList": "Resize the sheet list",
     "resizeSearch": "Resize the search panel",
+    "resizeSheetScrollBar": "Resize the sheet's scrollbar",
     "dragToResize": "Drag to resize",
     "dismiss": "Dismiss",
     "noSheets": "This workbook has no readable sheets.",
@@ -14,6 +15,8 @@
     "goTo": "Go To",
     "showSheetList": "Show the sheet list",
     "hideSheetList": "Hide the sheet list",
+    "showSheetTabs": "Show the sheet tabs",
+    "hideSheetTabs": "Hide the sheet tabs",
     "checkUpdates": "Check for updates",
     "updateAvailable": "A newer version is available",
     "language": "Language"
@@ -41,6 +44,10 @@
   "sheets": {
     "filter": "Filter sheets",
     "clearFilter": "Clear filter",
+    "list": "Sheets",
+    "tabTitle": "{{name}} — {{rows}}×{{cols}}",
+    "scrollLeft": "Scroll the sheet tabs left",
+    "scrollRight": "Scroll the sheet tabs right",
     "count_one": "{{count}} sheet",
     "count_other": "{{count}} sheets",
     "none": "No sheets match."

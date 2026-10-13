@@ -11,6 +11,8 @@ export interface SheetInfo {
   name: string;
   rows: number;
   cols: number;
+  /** The tab's own colour, or null where Excel shows none. */
+  tabColor?: string | null;
 }
 
 export interface WorkbookInfo {

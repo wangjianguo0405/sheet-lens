@@ -495,6 +495,65 @@ impl Cache {
     }
 }
 
+/// How much of a sheet's part is read when looking for its tab colour.
+/// `<sheetPr>` is the first thing after the root element, and a sheet's XML
+/// runs to megabytes.
+const SHEET_HEAD_BYTES: u64 = 8192;
+
+/// Every sheet's tab colour, keyed by sheet name.
+///
+/// Read once at open, before any layout: the tab strip draws all of them at
+/// once, and the colour lives in each sheet's own part rather than in
+/// `workbook.xml`. A workbook whose colour cannot be read simply has none.
+pub fn tab_colors(path: &str) -> HashMap<String, String> {
+    let mut colors = HashMap::new();
+    let Ok(file) = File::open(path) else {
+        return colors;
+    };
+    let Ok(mut zip) = ZipArchive::new(BufReader::new(file)) else {
+        return colors;
+    };
+    let Ok(workbook) = read_entry(&mut zip, "xl/workbook.xml") else {
+        return colors;
+    };
+    let Ok(rels) = read_entry(&mut zip, "xl/_rels/workbook.xml.rels") else {
+        return colors;
+    };
+    let theme = theme_slots(&read_theme(&mut zip));
+
+    for element in scan(&workbook, b"sheet") {
+        let Some(name) = element.get("name") else {
+            continue;
+        };
+        let Ok(part) = sheet_part(&workbook, &rels, name) else {
+            continue;
+        };
+        let Ok(entry) = zip.by_name(&part) else {
+            continue;
+        };
+        let mut head = Vec::new();
+        if entry.take(SHEET_HEAD_BYTES).read_to_end(&mut head).is_err() {
+            continue;
+        }
+        // The byte run is a document cut off mid-element, which `scan` is
+        // already happy with: it keeps what it read and stops.
+        if let Some(color) = tab_color(&String::from_utf8_lossy(&head), &theme) {
+            colors.insert(name.clone(), color);
+        }
+    }
+    colors
+}
+
+/// `<sheetPr><tabColor rgb="FF00B050"/></sheetPr>`, resolved the way a cell's
+/// colour is: `rgb`, `theme` and `indexed` are all three in use.
+fn tab_color(head: &str, theme: &[Option<String>]) -> Option<String> {
+    let mut element = BytesStart::new("color");
+    for (key, value) in scan(head, b"tabColor").first()? {
+        element.push_attribute((key.as_str(), value.as_str()));
+    }
+    color_of(&element, theme)
+}
+
 /// Reads one sheet's layout, reusing the workbook-wide tables in `cache`.
 pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLayout, String> {
     cache.load(path)?;

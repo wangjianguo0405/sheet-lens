@@ -135,6 +135,17 @@ interface GridProps {
    * formula bar → cells, so the bar cannot live above the whole view.
    */
   bar?: ReactNode;
+  /**
+   * Hides the scroller's own horizontal scrollbar, for a caller that draws the
+   * sheet's scrollbar itself — level with the sheet tabs, where Excel has it.
+   * The sheet gets one scrollbar either way, never two.
+   */
+  hideHScroll?: boolean;
+  /**
+   * The element the sheet scrolls within, handed out so a scrollbar drawn
+   * elsewhere is a view of it rather than a second scroller.
+   */
+  onViewport?: (element: HTMLDivElement | null) => void;
 }
 
 interface ResizeDrag {
@@ -308,8 +319,20 @@ export function CanvasGrid({
   zoom,
   onZoom,
   bar,
+  hideHScroll,
+  onViewport,
 }: GridProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  /**
+   * How tall the scroller's own horizontal scrollbar is, and 0 when that bar is
+   * wanted. A bar cannot be hidden one axis at a time — `overflow-x: hidden`
+   * would stop the wheel scrolling the sheet sideways, and a 0-height
+   * `::-webkit-scrollbar` takes the vertical bar with it — so when the caller
+   * draws the sheet's scrollbar itself, the scroller is made exactly that much
+   * taller than the box that clips it and its own bar falls outside. Nothing
+   * else about the element changes: same scrolling, same measurements.
+   */
+  const [hBarHeight, setHBarHeight] = useState(0);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   /** The clipped strip the filter buttons live in, over the cell area. */
@@ -999,6 +1022,9 @@ export function CanvasGrid({
     if (!el) return;
     const measure = () => {
       sizeRef.current = { width: el.clientWidth, height: el.clientHeight };
+      // The bar still occupies its height whatever the clipping above it does,
+      // so this reads the same before and after the scroller is grown.
+      setHBarHeight(hideHScroll ? el.offsetHeight - el.clientHeight : 0);
       const dpr = window.devicePixelRatio || 1;
       dprRef.current = dpr;
       for (const canvas of [baseRef.current, overlayRef.current]) {
@@ -1018,7 +1044,14 @@ export function CanvasGrid({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+    // Hiding the horizontal scrollbar gives the cells that much more height
+    // without changing the scroller's own box, which no observer here sees.
+  }, [hideHScroll]);
+
+  useEffect(() => {
+    onViewport?.(viewportRef.current);
+    return () => onViewport?.(null);
+  }, [onViewport]);
 
   // Fonts land after the first paint on a cold start, and canvas does not
   // reflow the way the DOM did — so the metrics have to be dropped and
@@ -1275,12 +1308,25 @@ export function CanvasGrid({
     (view: GridView) => {
       const firstCol = Math.floor(view.colStart / BLOCK_COLS);
       const lastCol = Math.floor(Math.max(view.colStart, view.colEnd - 1) / BLOCK_COLS);
+      /**
+       * Past the used range there is nothing to fetch.
+       *
+       * Every cell out there is blank and the formatting stops there too, so a
+       * block beyond it is a round trip carrying a block's worth of cells to
+       * learn nothing. That trip is not free even so: its reply renders the
+       * grid again, and it is asked for on exactly the frame the view runs off
+       * the end of the data into the blank area — which is where the scroll
+       * visibly slowed down. The blank area needs no data.
+       */
+      const lastUsedCol = Math.ceil(sheetColsGuess / BLOCK_COLS) - 1;
+      const lastUsedRow = Math.ceil(sheetRowsGuess / BLOCK_ROWS) - 1;
       const needed = new Set<string>();
       for (let display = view.rowStart; display < view.rowEnd; display += 1) {
         const sheetRow = view.sheetRowOf(display);
         if (sheetRow < 0) continue;
         const block = Math.floor(sheetRow / BLOCK_ROWS);
-        for (let bc = firstCol; bc <= lastCol; bc += 1) {
+        if (block > lastUsedRow) continue;
+        for (let bc = firstCol; bc <= lastCol && bc <= lastUsedCol; bc += 1) {
           needed.add(`${sheet.name}#${block}#${bc}`);
         }
       }
@@ -1307,7 +1353,7 @@ export function CanvasGrid({
           .finally(() => pending.current.delete(key));
       }
     },
-    [path, sheet.name],
+    [path, sheet.name, sheetColsGuess, sheetRowsGuess],
   );
 
   const buildView = useCallback((): GridView | null => {
@@ -2333,7 +2379,7 @@ export function CanvasGrid({
 
       {bar}
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={viewportRef}
           tabIndex={0}
@@ -2345,6 +2391,7 @@ export function CanvasGrid({
           onPointerMove={handlePointerMove}
           onPointerLeave={handlePointerLeave}
           onKeyDown={handleKeyDown}
+          style={hBarHeight ? { marginBottom: -hBarHeight } : undefined}
           className="absolute inset-0 overflow-auto outline-none [scrollbar-gutter:stable]"
         >
           <div style={{ width: contentW, height: contentH }} />
