@@ -15,6 +15,8 @@
     "more": "その他",
     "close": "閉じる",
     "missing": "前回開けませんでした。クリックでもう一度：{{path}}",
+    "forget": "{{name}} を一覧から削除",
+    "clearRecent": "最近使ったファイルを消去",
     "showSheetList": "シート一覧を表示",
     "hideSheetList": "シート一覧を非表示",
     "showSheetTabs": "シート見出しを表示",

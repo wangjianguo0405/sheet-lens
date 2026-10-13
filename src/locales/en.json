@@ -15,6 +15,8 @@
     "more": "More",
     "close": "Close",
     "missing": "Could not be opened last time — click to try again: {{path}}",
+    "forget": "Remove {{name}} from the list",
+    "clearRecent": "Clear recent files",
     "showSheetList": "Show the sheet list",
     "hideSheetList": "Hide the sheet list",
     "showSheetTabs": "Show the sheet tabs",

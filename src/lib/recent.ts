@@ -76,6 +76,23 @@ export function markFileMissing(path: string): string[] {
   return [...missing, path];
 }
 
+/** Drops `path` from the list, and anything remembered about it with it. */
+export function forgetFile(path: string): string[] {
+  const next = readRecentFiles().filter((other) => other !== path);
+  writeList(STORAGE_KEY, next);
+  writeList(
+    MISSING_KEY,
+    readMissingFiles().filter((other) => other !== path),
+  );
+  return next;
+}
+
+/** Empties the list. The workbooks stay open; only the offer of them goes. */
+export function forgetAllFiles(): void {
+  writeList(STORAGE_KEY, []);
+  writeList(MISSING_KEY, []);
+}
+
 /** The last segment of a path, which is all a one-line menu entry shows. */
 export function fileName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
