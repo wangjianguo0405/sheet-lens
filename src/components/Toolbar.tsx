@@ -174,7 +174,7 @@ export function Toolbar({
           >
             <Download className="size-3.5" />
             {updateAvailable && (
-              <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-[#217346]" />
+              <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-[#107C41]" />
             )}
           </Button>
         )}

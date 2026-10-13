@@ -584,7 +584,7 @@ export default function App() {
                     aria-label={t("app.resizeSheetList")}
                     title={t("app.dragToResize")}
                     onPointerDown={(event) => startPanelDrag("sheetList", event)}
-                    className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#217346]/40"
+                    className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
                   />
                 </>
               )}
@@ -634,7 +634,7 @@ export default function App() {
                           aria-label={t("app.resizeSheetScrollBar")}
                           title={t("app.dragToResize")}
                           onPointerDown={startSheetBarDrag}
-                          className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#217346]/40 hover:text-foreground"
+                          className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#107C41]/40 hover:text-foreground"
                         >
                           <EllipsisVertical className="size-3" />
                         </div>
@@ -664,7 +664,7 @@ export default function App() {
                     aria-label={t("app.resizeSearch")}
                     title={t("app.dragToResize")}
                     onPointerDown={(event) => startPanelDrag("search", event)}
-                    className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#217346]/40"
+                    className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
                   />
                   <div className="shrink-0" style={{ width: searchWidth }}>
                     <SearchPanel

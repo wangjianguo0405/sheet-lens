@@ -22,6 +22,29 @@ interface SheetTabsProps {
 }
 
 /**
+ * The sheet name, in whichever of black and white survives the tab's colour —
+ * which is what Excel does, and what decides whether 入出力定義's light green
+ * takes black type or 変更履歴's blue takes white. The weights are the usual
+ * luma ones, so a colour lands on the side its brightness says.
+ */
+function readableOn(color: string): string {
+  const channel = (at: number) => parseInt(color.slice(at, at + 2), 16);
+  const luma =
+    0.299 * channel(1) + 0.587 * channel(3) + 0.114 * channel(5);
+  return luma > 128 ? "#000000" : "#ffffff";
+}
+
+/**
+ * The active tab is drawn the way Windows draws a folder tab rather than filled
+ * like the rest: a pale wash of the sheet's colour, brightest at the top, with
+ * Excel's green rule under the name. A sheet with no colour of its own gets the
+ * same shape in plain white, which is what makes an uncoloured strip readable.
+ */
+function activeWash(color: string): string {
+  return `linear-gradient(180deg, color-mix(in srgb, ${color} 2%, #fff), color-mix(in srgb, ${color} 45%, #fff))`;
+}
+
+/**
  * Excel's sheet strip along the bottom of the sheet area: two arrows to walk
  * the tabs, and the tabs themselves. What sits at the right end is the sheet's
  * scrollbar, not this row's — see `SheetScrollBar`.
@@ -182,13 +205,23 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
               className={cn(
                 "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition-colors",
                 isActive
-                  ? "border-b-[#217346] bg-background font-medium text-foreground"
+                  ? "border-b-[#107C41] bg-background font-medium text-foreground"
                   : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
               )}
-              // The sheet's own tab colour, which Excel draws as a strip along
-              // the bottom of the tab whether or not the tab is the current one.
+              // A sheet the workbook gives a tab colour is filled with it, name
+              // and all — Excel paints the whole tab, not a strip along its
+              // foot. The current sheet keeps the raised tab instead, washed
+              // with that same colour, so it still says which sheet it is
+              // without going solid like the others.
               style={
-                sheet.tabColor ? { borderBottomColor: sheet.tabColor } : undefined
+                sheet.tabColor
+                  ? isActive
+                    ? { backgroundImage: activeWash(sheet.tabColor) }
+                    : {
+                        backgroundColor: sheet.tabColor,
+                        color: readableOn(sheet.tabColor),
+                      }
+                  : undefined
               }
             >
               {sheet.name}
