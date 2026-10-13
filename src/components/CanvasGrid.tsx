@@ -451,6 +451,17 @@ export function CanvasGrid({
   const [fontSize, setFontSize] = useState(12);
   const [showGrid, setShowGrid] = useState(true);
   const [filters, setFilters] = useState<Map<number, string[]>>(() => new Map());
+  /**
+   * The cell whose text is open, if any. Double-clicking one lifts its text into
+   * a field over it, because painted text cannot be selected and copied with the
+   * mouse and this can. The field is read-only: there is nowhere for an edit to
+   * go, and offering one that could not be kept would be a lie.
+   */
+  const [editing, setEditing] = useState<{ row: number; col: number } | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  /** What the paint pass reads, since a scroll does not re-render React. */
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
   const [visibleRows, setVisibleRows] = useState<number[] | null>(null);
   /**
    * How much blank area the scroller holds past the sheet's own extent, in rows
@@ -1202,6 +1213,74 @@ export function CanvasGrid({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [markCopied]);
 
+  /**
+   * The field over a cell is moved by the paint pass rather than by React — a
+   * scroll re-renders nothing — so opening or closing one has to ask for a frame
+   * the way a scroll does.
+   */
+  useEffect(() => {
+    schedule("both");
+  }, [editing, schedule]);
+
+  /** It belongs to a cell on a sheet, and goes when that sheet does. */
+  useEffect(() => {
+    setEditing(null);
+  }, [path, sheet.name]);
+
+  /** Focused as it opens, with the caret at the end of the text. */
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!editing || !el) return;
+    el.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [editing]);
+
+  /**
+   * Nothing may change the text. A native listener, because this is the one
+   * event that can still be cancelled while the change is only proposed —
+   * every edit the browser knows how to make arrives as one of these, whatever
+   * it was typed, pasted, dropped or dragged in.
+   */
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!editing || !el) return;
+    const refuse = (event: Event) => event.preventDefault();
+    el.addEventListener("beforeinput", refuse);
+    return () => el.removeEventListener("beforeinput", refuse);
+  }, [editing]);
+
+  /**
+   * And a second lock behind that one, because the first is not the only way in:
+   * `execCommand` — which is what a context menu's Paste uses — makes its edit
+   * without proposing one first, so there is nothing there to refuse. Whatever
+   * arrives by any route is put straight back.
+   */
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!editing || !el) return;
+    const asRead = el.innerHTML;
+    const observer = new MutationObserver(() => {
+      if (el.innerHTML !== asRead) el.innerHTML = asRead;
+    });
+    observer.observe(el, { childList: true, characterData: true, subtree: true });
+    return () => observer.disconnect();
+  }, [editing]);
+
+  /** A press anywhere else puts it away, the way leaving a cell does in Excel. */
+  useEffect(() => {
+    if (!editing) return;
+    const onDown = (event: PointerEvent) => {
+      if (!editorRef.current?.contains(event.target as Node)) setEditing(null);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [editing]);
+
   const handleScroll = useCallback(() => {
     const node = viewportRef.current;
     if (!node) return;
@@ -1628,6 +1707,66 @@ export function CanvasGrid({
           slot.style.width = `${spanAt(view.cols.offsets, col) * view.zoom}px`;
           slot.style.height = `${headerH * view.zoom}px`;
         }
+
+        // The field over an open cell is DOM as well, and goes where its cell
+        // is — over the whole merge when the cell is part of one, in that cell's
+        // own font and fill, so what is read there reads as what was on the
+        // sheet rather than as a box that appeared over it.
+        const field = editorRef.current;
+        if (field) {
+          const at = editingRef.current;
+          if (!at) {
+            field.style.display = "none";
+          } else {
+            const merge = view.mergeAt(at.row, at.col);
+            const row = merge?.row ?? at.row;
+            const col = merge?.col ?? at.col;
+            const style = view.styleAt(at.row, at.col);
+            let w = 0;
+            for (let c = col; c < col + (merge?.cols ?? 1); c += 1) {
+              w += spanAt(view.cols.offsets, c);
+            }
+            let h = 0;
+            for (let r = row; r < row + (merge?.rows ?? 1); r += 1) {
+              h += spanAt(view.rows.offsets, r);
+            }
+            const size = (style?.sizePx ?? view.workbookFontSizePx) * view.zoom;
+            field.style.display = "";
+            field.style.transform =
+              `translate(${(view.cols.offsets[col] - view.scrollLeft) * view.zoom}px, ` +
+              `${(view.rows.offsets[row] - view.scrollTop) * view.zoom}px)`;
+            field.style.width = `${w * view.zoom}px`;
+            field.style.height = `${h * view.zoom}px`;
+            // The cell's own insets, scaled with the view: 3 left and 2 right,
+            // which is Excel's and is not symmetric.
+            field.style.paddingLeft = `${CELL_PAD_LEFT * view.zoom}px`;
+            field.style.paddingRight = `${CELL_PAD_RIGHT * view.zoom}px`;
+            field.style.paddingBottom = "0px";
+            field.style.font =
+              `${style?.bold ? "700 " : ""}${size}px ` +
+              cellFontStack(style?.family ?? null, view.workbookFontFamily);
+            field.style.color = style?.color ?? "";
+            field.style.background = style?.fill ?? "#fff";
+            field.style.textAlign =
+              style?.horizontal === "center" ||
+              style?.horizontal === "centerContinuous"
+                ? "center"
+                : style?.horizontal === "right"
+                  ? "right"
+                  : "left";
+            // Where the cell's own text sat: one line box of it, placed by the
+            // cell's vertical alignment. Without this the text of a bottom- or
+            // middle-aligned cell — which is most of them — would jump to the
+            // top of the field and the cell would look as though it had moved.
+            const lineHeight = size * LINE_HEIGHT;
+            const room = h * view.zoom - lineHeight;
+            const vertical = style?.vertical ?? "bottom";
+            field.style.lineHeight = `${lineHeight}px`;
+            field.style.paddingTop = `${
+              Math.max(0, vertical === "top" ? 0 : vertical === "middle" ? room / 2 : room)
+            }px`;
+          }
+        }
       }
 
       // The shapes and the print mark are DOM too, and the canvas underneath
@@ -1834,7 +1973,15 @@ export function CanvasGrid({
 
   const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const hit = hitAt(event.clientX, event.clientY);
-    if (hit?.kind === "colHeader") autofitColumn(hit.col);
+    if (hit?.kind === "colHeader") {
+      autofitColumn(hit.col);
+      return;
+    }
+    // A cell with text in it opens that text for reading. An empty one has
+    // nothing to offer, so it stays an ordinary double-click.
+    if (hit?.kind === "cell" && (cellAt(hit.row, hit.col)?.text ?? "") !== "") {
+      setEditing({ row: hit.row, col: hit.col });
+    }
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -2393,6 +2540,14 @@ export function CanvasGrid({
   const contentW = (ROW_HEADER_W + cols.total) * zoomRef.current;
   const contentH = (COL_HEADER_H + rows.total) * zoomRef.current;
 
+  /**
+   * The open cell's text, and the workbook's runs for it when it has any — a
+   * rich-text cell draws some of its words in a colour of their own, and a
+   * cell's own colour says nothing about them.
+   */
+  const editingText = editing ? (cellAt(editing.row, editing.col)?.text ?? "") : "";
+  const runs = editingText ? (layout?.richText?.[editingText] ?? null) : null;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {autoFilter && visibleRows && (
@@ -2480,6 +2635,58 @@ export function CanvasGrid({
                 />
               </div>
             ))}
+
+          {/*
+            The cell's text, lifted out of the painting so it can be selected
+            and copied with the mouse, which painted text cannot be. It is a
+            field only in looks: every way of changing it is refused below, so
+            what is read is what the workbook holds. Escape, Enter and a press
+            anywhere else put it back.
+          */}
+          {editing && (
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              spellCheck={false}
+              // Read-only, without `readOnly`: a contenteditable has no such
+              // attribute, and its contents have to stay able to carry the
+              // per-run colours a plain field could not show at all.
+              //
+              // The guard is a native `beforeinput` listener (below), not
+              // React's `onBeforeInput`: React synthesises that one out of
+              // `textInput` and `keypress`, which fire *after* the change has
+              // been made, so preventing it changes nothing. Paste and drop are
+              // stopped here as well, since they are the two that arrive with
+              // their own events.
+              onPaste={(event) => event.preventDefault()}
+              onDrop={(event) => event.preventDefault()}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" || event.key === "Enter") {
+                  event.preventDefault();
+                  setEditing(null);
+                }
+              }}
+              // Put in place by the paint pass, which is the thing that knows
+              // where the cell is; hidden until it has been, or it would show up
+              // at the origin for a frame.
+              style={{ display: "none" }}
+              className="pointer-events-auto absolute top-0 left-0 overflow-auto break-words whitespace-pre-wrap border border-ring outline-none select-text"
+            >
+              {runs ? (
+                runs.map((run, index) => (
+                  <span
+                    key={index}
+                    style={run.color ? { color: run.color } : undefined}
+                  >
+                    {run.text}
+                  </span>
+                ))
+              ) : (
+                <span>{editingText}</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/*
