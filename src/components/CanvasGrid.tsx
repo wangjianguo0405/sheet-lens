@@ -98,6 +98,14 @@ type DragAnchor =
 export interface SheetView {
   top: number;
   left: number;
+  /**
+   * The filter this sheet was left with, by column. Excel holds one per sheet
+   * for as long as the workbook is open, and the column's button goes on
+   * showing it, so it belongs here with the scroll position rather than with
+   * the rows it happens to hide. Absent means nobody has filtered this sheet
+   * yet, which is not the same as having cleared it.
+   */
+  filters?: Map<number, string[]>;
 }
 
 /** Those positions, by workbook path and then by sheet name. */
@@ -940,16 +948,33 @@ export function CanvasGrid({
     [selection, path, sheet.name, sheet.rows, sheet.cols, layout, onSelect, select],
   );
 
+  /**
+   * Files the filter away beside the sheet's scroll position. Without this the
+   * sheet's layout is fetched again on the way back in and the filter is seeded
+   * from the workbook's own `<autoFilter>` — which knows nothing about a
+   * filter applied here, since this is a viewer and never writes one back.
+   */
+  const rememberFilters = useCallback(
+    (next: Map<number, string[]>) => {
+      const bySheet = views.get(path) ?? new Map<string, SheetView>();
+      const view = bySheet.get(sheet.name) ?? { ...scrollRef.current };
+      bySheet.set(sheet.name, { ...view, filters: next });
+      views.set(path, bySheet);
+    },
+    [views, path, sheet.name],
+  );
+
   const applyFilters = useCallback(
     async (next: Map<number, string[]>, target: AutoFilter | null) => {
       setFilters(next);
+      rememberFilters(next);
       try {
         setVisibleRows(await computeVisibleRows(path, sheet.name, target, next));
       } catch {
         setVisibleRows(null);
       }
     },
-    [path, sheet.name],
+    [path, sheet.name, rememberFilters],
   );
 
   // --- the sheet's layout, once per switch ---
@@ -983,7 +1008,12 @@ export function CanvasGrid({
         const view = views.get(path)?.get(sheet.name);
         setScrollTo(view?.top ?? 0, view?.left ?? 0);
 
-        const saved = toFilters(parsed.autoFilter?.applied);
+        // What this sheet was left holding beats what the workbook stores: a
+        // filter applied here is in no file, and an empty Map is a filter the
+        // user cleared rather than one that was never set.
+        const saved =
+          views.get(path)?.get(sheet.name)?.filters ??
+          toFilters(parsed.autoFilter?.applied);
         if (saved.size > 0) {
           setFilters(saved);
           computeVisibleRows(path, sheet.name, parsed.autoFilter, saved)
@@ -1174,9 +1204,15 @@ export function CanvasGrid({
     const node = viewportRef.current;
     if (!node) return;
     const z = zoomRef.current;
-    const view = { top: node.scrollTop / z, left: node.scrollLeft / z };
-    scrollRef.current = view;
     const bySheet = views.get(path) ?? new Map<string, SheetView>();
+    // Spreads whatever the sheet already holds, so scrolling does not drop the
+    // filter filed beside the position.
+    const view = {
+      ...bySheet.get(sheet.name),
+      top: node.scrollTop / z,
+      left: node.scrollLeft / z,
+    };
+    scrollRef.current = view;
     bySheet.set(sheet.name, view);
     views.set(path, bySheet);
     // The blank area is what makes a scroll past the data possible at all, so
@@ -2369,6 +2405,7 @@ export function CanvasGrid({
             className="h-5 px-1.5 text-[11px]"
             onClick={() => {
               setFilters(new Map());
+              rememberFilters(new Map());
               setVisibleRows(null);
             }}
           >
