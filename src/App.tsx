@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { EllipsisVertical } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { CanvasGrid, type SheetViews } from "@/components/CanvasGrid";
@@ -9,6 +10,8 @@ import { FormulaBar } from "@/components/FormulaBar";
 import { GoToDialog } from "@/components/GoToDialog";
 import { SearchPanel } from "@/components/SearchPanel";
 import { SheetList } from "@/components/SheetList";
+import { SheetScrollBar } from "@/components/SheetScrollBar";
+import { SheetTabs } from "@/components/SheetTabs";
 import { StatusBar } from "@/components/StatusBar";
 import { Toolbar } from "@/components/Toolbar";
 import { UpdateDialog } from "@/components/UpdateDialog";
@@ -21,6 +24,11 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { toggleShapeDebug } from "@/lib/debugPanels";
+import {
+  initialSheetPanels,
+  storeSheetPanels,
+  type SheetPanels,
+} from "@/lib/sheetPanels";
 import { checkForUpdate, updateStatus, type UpdateStatus } from "@/lib/update";
 import { DEFAULT_ZOOM } from "@/lib/zoom";
 import {
@@ -48,6 +56,21 @@ const DEFAULT_SEARCH_W = 288;
 const MIN_SEARCH_W = 200;
 const MAX_SEARCH_W = 640;
 
+const MIN_SHEET_BAR_W = 120;
+const MAX_SHEET_BAR_W = 720;
+
+/**
+ * The three things a drag can size: the sheet list, the search panel, and the
+ * sheet's scrollbar at the end of the tab row.
+ */
+type DraggablePanel = "sheetList" | "search" | "sheetBar";
+
+const PANEL_LIMITS: Record<DraggablePanel, [number, number]> = {
+  sheetList: [MIN_SHEET_LIST_W, MAX_SHEET_LIST_W],
+  search: [MIN_SEARCH_W, MAX_SEARCH_W],
+  sheetBar: [MIN_SHEET_BAR_W, MAX_SHEET_BAR_W],
+};
+
 function looksLikeWorkbook(path: string): boolean {
   const lower = path.toLowerCase();
   return EXCEL_EXTENSIONS.some((ext) => lower.endsWith(`.${ext}`));
@@ -65,16 +88,26 @@ export default function App() {
     null,
   );
   const [error, setError] = useState<string | null>(null);
-  const [sheetListOpen, setSheetListOpen] = useState(true);
+  /** Which of the two sheet pickers are showing; they are independent. */
+  const [panels, setPanels] = useState<SheetPanels>(initialSheetPanels);
+  /**
+   * The grid's scroller. The sheet's scrollbar is drawn in the tab row, so it
+   * has to be given the one thing it is a view of.
+   */
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   /** View scale as a percentage, the way Excel names it. */
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [sheetListWidth, setSheetListWidth] = useState(DEFAULT_SHEET_LIST_W);
   const [searchWidth, setSearchWidth] = useState(DEFAULT_SEARCH_W);
+  const [sheetBarWidth, setSheetBarWidth] = useState<number | null>(null);
+  /** The row's own box, so a drag can start from the length it has now. */
+  const sheetBarRef = useRef<HTMLDivElement>(null);
   /**
-   * Which side panel a drag is sizing, so one set of listeners serves both —
-   * the two differ only in which way the pointer's delta counts.
+   * Which side panel a drag is sizing, so one set of listeners serves all of
+   * them — they differ only in which way the pointer's delta counts, how far
+   * they may be dragged, and where the result is stored.
    */
-  const [draggingPanel, setDraggingPanel] = useState<"sheetList" | "search" | null>(null);
+  const [draggingPanel, setDraggingPanel] = useState<DraggablePanel | null>(null);
   /** Where the drag started, so the width follows the pointer's delta. */
   const panelDrag = useRef<{ x: number; width: number } | null>(null);
   /** Only a portable build reports `portable`, and only then is it offered. */
@@ -230,6 +263,20 @@ export default function App() {
   );
 
   /**
+   * Each switch flips only its own half. Taking the whole pair from the render
+   * this handler belongs to would let two presses before the next render
+   * overwrite one another — and the second press would restore what the first
+   * one turned off.
+   */
+  const togglePanel = useCallback((which: keyof SheetPanels) => {
+    setPanels((prev) => ({ ...prev, [which]: !prev[which] }));
+  }, []);
+
+  useEffect(() => {
+    storeSheetPanels(panels);
+  }, [panels]);
+
+  /**
    * Ctrl+PageUp/PageDown steps along the workbook's sheets in tab order, and
    * stops at either end rather than wrapping — which is what Excel does.
    */
@@ -372,27 +419,42 @@ export default function App() {
   );
 
   /**
+   * The sheet's scrollbar is a share of the row until it is dragged, so the drag
+   * starts from whatever that measures now rather than from a number the row has
+   * since outgrown.
+   */
+  const startSheetBarDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const el = sheetBarRef.current;
+    if (!el) return;
+    panelDrag.current = {
+      x: event.clientX,
+      width: Math.round(el.getBoundingClientRect().width),
+    };
+    setDraggingPanel("sheetBar");
+  }, []);
+
+  /**
    * The listeners live on the window, not the handle: a drag leaves the four
    * pixels of it immediately, and pointer capture would keep the cursor from
    * reading as a resize once it is outside.
    */
   useEffect(() => {
     if (!draggingPanel) return;
-    const isLeft = draggingPanel === "sheetList";
-    const clamp = (next: number) =>
-      isLeft
-        ? Math.min(MAX_SHEET_LIST_W, Math.max(MIN_SHEET_LIST_W, next))
-        : Math.min(MAX_SEARCH_W, Math.max(MIN_SEARCH_W, next));
+    const [min, max] = PANEL_LIMITS[draggingPanel];
+    const resize = {
+      sheetList: setSheetListWidth,
+      search: setSearchWidth,
+      sheetBar: setSheetBarWidth,
+    }[draggingPanel];
+    // A panel on the left grows as the pointer moves right; the two on the
+    // right grow as it moves left.
+    const direction = draggingPanel === "sheetList" ? 1 : -1;
 
     const onMove = (event: PointerEvent) => {
       const drag = panelDrag.current;
       if (!drag) return;
-      // The left panel grows as the pointer moves right, the right one as it
-      // moves left.
-      const delta = (event.clientX - drag.x) * (isLeft ? 1 : -1);
-      const next = clamp(drag.width + delta);
-      if (isLeft) setSheetListWidth(next);
-      else setSearchWidth(next);
+      const delta = (event.clientX - drag.x) * direction;
+      resize(Math.min(max, Math.max(min, drag.width + delta)));
     };
     const onUp = () => setDraggingPanel(null);
 
@@ -420,10 +482,12 @@ export default function App() {
         <Toolbar
           onOpen={handleOpen}
           onToggleSearch={() => setSearchOpen((open) => !open)}
-          onToggleSidebar={() => setSheetListOpen((open) => !open)}
+          onToggleSidebar={() => togglePanel("list")}
+          onToggleSheetTabs={() => togglePanel("tabs")}
           onGoTo={() => setGotoOpen(true)}
           searchOpen={searchOpen}
-          sidebarOpen={sheetListOpen}
+          sidebarOpen={panels.list}
+          sheetTabsOpen={panels.tabs}
           hasWorkbook={active !== null}
           canUpdate={update?.portable ?? false}
           updateAvailable={updateAvailable}
@@ -463,7 +527,7 @@ export default function App() {
         <div className="flex min-h-0 flex-1">
           {active && activeSheet ? (
             <>
-              {sheetListOpen && (
+              {panels.list && (
                 <>
                   <div className="shrink-0" style={{ width: sheetListWidth }}>
                     <SheetList
@@ -483,26 +547,69 @@ export default function App() {
                 </>
               )}
 
-              <div className="min-w-0 flex-1">
-                <CanvasGrid
-                  path={active.info.path}
-                  sheet={activeSheet}
-                  views={views.current}
-                  selection={selection}
-                  onSelect={handleSelect}
-                  onDetail={setDetail}
-                  onExtent={handleExtent}
-                  onSheetStep={handleSheetStep}
-                  reveal={reveal}
-                  zoom={zoom}
-                  onZoom={setZoom}
-                  bar={
-                    <FormulaBar
-                      reference={selectionRef(selection)}
-                      value={detail?.text ?? ""}
-                    />
-                  }
-                />
+              {/* The strip is at the foot of the sheet area, as Excel's is, so
+                  it stops where the search panel begins rather than running
+                  under it. */}
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div className="min-h-0 flex-1">
+                  <CanvasGrid
+                    path={active.info.path}
+                    sheet={activeSheet}
+                    views={views.current}
+                    selection={selection}
+                    onSelect={handleSelect}
+                    onDetail={setDetail}
+                    onExtent={handleExtent}
+                    onSheetStep={handleSheetStep}
+                    reveal={reveal}
+                    zoom={zoom}
+                    onZoom={setZoom}
+                    hideHScroll={panels.tabs}
+                    onViewport={setViewport}
+                    bar={
+                      <FormulaBar
+                        reference={selectionRef(selection)}
+                        value={detail?.text ?? ""}
+                      />
+                    }
+                  />
+                </div>
+                {panels.tabs && (
+                  <SheetTabs
+                    sheets={active.info.sheets}
+                    active={active.sheet}
+                    onSelect={handleSheetSelect}
+                    trailing={
+                      <>
+                        {/* Excel's splitter, at the left end of the sheet's
+                            scrollbar: drag it and the scrollbar is longer or
+                            shorter, the tabs taking what is left. Excel draws
+                            it as a column of dots, so it can be found at all. */}
+                        <div
+                          role="separator"
+                          aria-orientation="vertical"
+                          aria-label={t("app.resizeSheetScrollBar")}
+                          title={t("app.dragToResize")}
+                          onPointerDown={startSheetBarDrag}
+                          className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#217346]/40 hover:text-foreground"
+                        >
+                          <EllipsisVertical className="size-3" />
+                        </div>
+                        {/* A share of the row until it is dragged, so the length
+                            is the row's rather than a number chosen here. The
+                            bar is centred in the row; only the engine knows how
+                            tall it is, so `SheetScrollBar` measures that. */}
+                        <div
+                          ref={sheetBarRef}
+                          className={`flex min-w-24 shrink items-center ${sheetBarWidth === null ? "w-1/3" : ""}`}
+                          style={sheetBarWidth === null ? undefined : { width: sheetBarWidth }}
+                        >
+                          <SheetScrollBar viewport={viewport} />
+                        </div>
+                      </>
+                    }
+                  />
+                )}
               </div>
 
               {searchOpen && (

@@ -19,10 +19,14 @@ pub struct Cell {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SheetInfo {
     pub name: String,
     pub rows: u32,
     pub cols: u32,
+    /// The sheet tab's own colour (`<tabColor>`), as `#RRGGBB`. Excel shows it
+    /// as a strip under the tab, and a tab with none has none.
+    pub tab_color: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -85,6 +89,9 @@ pub fn load(path: &str) -> Result<Book, String> {
 
     let mut sheets = HashMap::with_capacity(names.len());
     let mut infos = Vec::with_capacity(names.len());
+    // One pass over the zip for every sheet's tab colour, up front: the tab
+    // strip draws them all at once and a sheet's own layout is read lazily.
+    let tab_colors = layout::tab_colors(path);
 
     for name in names {
         let range = workbook
@@ -96,6 +103,7 @@ pub fn load(path: &str) -> Result<Book, String> {
             name: name.clone(),
             rows: rows as u32,
             cols: cols as u32,
+            tab_color: tab_colors.get(&name).cloned(),
         });
         sheets.insert(name, Sheet { range, origin });
     }
@@ -889,6 +897,7 @@ mod tests {
                     name: "Sheet1".to_owned(),
                     rows: rows as u32,
                     cols: cols as u32,
+                    tab_color: None,
                 }],
             },
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
@@ -947,6 +956,7 @@ mod tests {
                     name: "Sheet1".to_owned(),
                     rows: rows as u32,
                     cols: cols as u32,
+                    tab_color: None,
                 }],
             },
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),

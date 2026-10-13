@@ -3,6 +3,7 @@ import {
   Download,
   FolderOpen,
   Languages,
+  PanelBottom,
   PanelLeft,
   Search,
 } from "lucide-react";
@@ -23,9 +24,11 @@ interface ToolbarProps {
   onOpen: () => void;
   onToggleSearch: () => void;
   onToggleSidebar: () => void;
+  onToggleSheetTabs: () => void;
   onGoTo: () => void;
   searchOpen: boolean;
   sidebarOpen: boolean;
+  sheetTabsOpen: boolean;
   hasWorkbook: boolean;
   /** False for a build that cannot replace itself, which hides the entry. */
   canUpdate: boolean;
@@ -37,9 +40,11 @@ export function Toolbar({
   onOpen,
   onToggleSearch,
   onToggleSidebar,
+  onToggleSheetTabs,
   onGoTo,
   searchOpen,
   sidebarOpen,
+  sheetTabsOpen,
   hasWorkbook,
   canUpdate,
   updateAvailable,
@@ -55,6 +60,9 @@ export function Toolbar({
       <img src="/icon.png" alt="" draggable={false} className="mr-1.5 size-5" />
       <span className="mr-2 text-xs font-semibold tracking-wide">SheetLens</span>
 
+      {/* One button per sheet picker, and each stands on its own: either one
+          may be showing whether or not the other is, so neither appears or
+          disappears as the other is pressed. */}
       <Button
         size="sm"
         variant={sidebarOpen ? "secondary" : "ghost"}
@@ -67,6 +75,20 @@ export function Toolbar({
         }
       >
         <PanelLeft className="size-3.5" />
+      </Button>
+
+      <Button
+        size="sm"
+        variant={sheetTabsOpen ? "secondary" : "ghost"}
+        className="h-7 px-2"
+        disabled={!hasWorkbook}
+        onClick={onToggleSheetTabs}
+        aria-pressed={sheetTabsOpen}
+        title={
+          sheetTabsOpen ? t("toolbar.hideSheetTabs") : t("toolbar.showSheetTabs")
+        }
+      >
+        <PanelBottom className="size-3.5" />
       </Button>
 
       <Button

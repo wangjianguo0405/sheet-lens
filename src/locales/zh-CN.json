@@ -3,6 +3,7 @@
     "name": "SheetLens",
     "resizeSheetList": "调整工作表列表宽度",
     "resizeSearch": "调整搜索面板宽度",
+    "resizeSheetScrollBar": "调整工作表滚动条宽度",
     "dragToResize": "拖动以调整大小",
     "dismiss": "关闭",
     "noSheets": "此工作簿没有可读取的工作表。",
@@ -14,6 +15,8 @@
     "goTo": "定位",
     "showSheetList": "显示工作表列表",
     "hideSheetList": "隐藏工作表列表",
+    "showSheetTabs": "显示工作表标签",
+    "hideSheetTabs": "隐藏工作表标签",
     "checkUpdates": "检查更新",
     "updateAvailable": "有新版本可用",
     "language": "语言"
@@ -41,6 +44,10 @@
   "sheets": {
     "filter": "筛选工作表",
     "clearFilter": "清除筛选",
+    "list": "工作表",
+    "tabTitle": "{{name}} — {{rows}}×{{cols}}",
+    "scrollLeft": "向左滚动工作表标签",
+    "scrollRight": "向右滚动工作表标签",
     "count_other": "{{count}} 个工作表",
     "none": "没有匹配的工作表。"
   },
