@@ -12,6 +12,37 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.7] - 2026-10-13
+
+Recent workbooks are one click away, and the sheet tabs are painted the way
+Excel paints them.
+
+### Added
+
+- A File menu, where Open used to be: open a workbook, open one of the fifty
+  opened lately — ten listed in the menu and the rest under More — or close the
+  one showing
+- A tab is closed by a middle click, the gesture browsers put on one
+- A recent whose file has gone is greyed, with the reason in its tooltip.
+  Clicking it tries again, and opening it puts the entry right
+
+### Improved
+
+- A sheet the workbook gives a tab colour is filled with it, name and all, in
+  white type or black as the colour needs. The current sheet is not filled: it
+  keeps the raised tab, washed in that colour with the rule along its foot
+- The interface's green is the one Excel draws today, `#107C41`, where it had
+  Excel 2013's `#217346`
+- The toolbar gave up its Search button. Ctrl+F opens the search panel, and the
+  button was the second way to do one thing
+- A coloured sheet tab lights up when the pointer is over it, as the plain ones
+  already did
+
+### Fixed
+
+- The More submenu stays inside the window: once it is taller than the space it
+  has, it scrolls, rather than drawing its last entries out of reach
+
 ## [0.3.6] - 2026-10-13
 
 The sheets can be picked from the bottom too, the way Excel keeps them.
