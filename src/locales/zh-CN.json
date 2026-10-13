@@ -77,6 +77,8 @@
     "noMatch": "没有匹配的值。",
     "selected": "已选 {{count}} 项",
     "allValues": "全部值",
+    "showing": "显示 {{total}} 行中的 {{shown}} 行",
+    "clearAll": "清除筛选",
     "clear": "清除",
     "apply": "应用"
   },

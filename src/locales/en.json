@@ -79,6 +79,8 @@
     "noMatch": "No values match.",
     "selected": "{{count}} selected",
     "allValues": "All values",
+    "showing": "Showing {{shown}} of {{total}} rows",
+    "clearAll": "Clear filters",
     "clear": "Clear",
     "apply": "Apply"
   },

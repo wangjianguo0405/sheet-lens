@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { ListFilter } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { FilterButton } from "@/components/FilterButton";
@@ -330,6 +331,7 @@ export function CanvasGrid({
   hideHScroll,
   onViewport,
 }: GridProps) {
+  const { t } = useTranslation();
   const viewportRef = useRef<HTMLDivElement>(null);
   /**
    * How tall the scroller's own horizontal scrollbar is, and 0 when that bar is
@@ -2397,7 +2399,10 @@ export function CanvasGrid({
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-accent/40 px-2 py-1 text-[11px]">
           <ListFilter className="size-3 shrink-0" />
           <span className="tabular-nums">
-            Showing {visibleRows.length} of {autoFilter.rows - 1} rows
+            {t("filter.showing", {
+              shown: visibleRows.length,
+              total: autoFilter.rows - 1,
+            })}
           </span>
           <Button
             size="sm"
@@ -2409,7 +2414,7 @@ export function CanvasGrid({
               setVisibleRows(null);
             }}
           >
-            Clear filters
+            {t("filter.clearAll")}
           </Button>
         </div>
       )}

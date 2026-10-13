@@ -77,6 +77,8 @@
     "noMatch": "一致する値はありません。",
     "selected": "{{count}} 件を選択",
     "allValues": "すべての値",
+    "showing": "{{total}} 行中 {{shown}} 行を表示",
+    "clearAll": "絞り込みを解除",
     "clear": "クリア",
     "apply": "適用"
   },
