@@ -10,7 +10,10 @@
     "extent": "{{rows}} 行 × {{cols}} 列"
   },
   "toolbar": {
+    "file": "ファイル",
     "open": "開く",
+    "more": "その他",
+    "close": "閉じる",
     "showSheetList": "シート一覧を表示",
     "hideSheetList": "シート一覧を非表示",
     "showSheetTabs": "シート見出しを表示",

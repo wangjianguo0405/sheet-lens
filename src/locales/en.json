@@ -10,7 +10,10 @@
     "extent": "{{rows}} rows × {{cols}} cols"
   },
   "toolbar": {
+    "file": "File",
     "open": "Open",
+    "more": "More",
+    "close": "Close",
     "showSheetList": "Show the sheet list",
     "hideSheetList": "Hide the sheet list",
     "showSheetTabs": "Show the sheet tabs",

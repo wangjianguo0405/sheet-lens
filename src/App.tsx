@@ -30,6 +30,7 @@ import {
   storeSheetPanels,
   type SheetPanels,
 } from "@/lib/sheetPanels";
+import { readRecentFiles, rememberFile } from "@/lib/recent";
 import { checkForUpdate, updateStatus, type UpdateStatus } from "@/lib/update";
 import { DEFAULT_ZOOM } from "@/lib/zoom";
 import {
@@ -91,6 +92,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   /** Which of the two sheet pickers are showing; they are independent. */
   const [panels, setPanels] = useState<SheetPanels>(initialSheetPanels);
+  /** The workbook paths the File menu offers, newest first. */
+  const [recentFiles, setRecentFiles] = useState<string[]>(readRecentFiles);
   /**
    * The grid's scroller. The sheet's scrollbar is drawn in the tab row, so it
    * has to be given the one thing it is a view of.
@@ -165,6 +168,7 @@ export default function App() {
         );
         setActivePath(info.path);
         lastFileRef.current = info.path;
+        setRecentFiles(rememberFile(info.path));
         // Opening a workbook closes the start page's tab: it was somewhere to
         // start from, not somewhere to come back to.
         setHomeOpen(false);
@@ -186,6 +190,14 @@ export default function App() {
       setError(String(reason));
     }
   }, [openPaths]);
+
+  /** A path off the File menu's list, which opens exactly as the picker would. */
+  const handleOpenRecent = useCallback(
+    (path: string) => {
+      void openPaths([path]);
+    },
+    [openPaths],
+  );
 
   /**
    * The "+" beside the file tabs. It opens the start page as a tab of its own —
@@ -226,6 +238,15 @@ export default function App() {
     },
     [tabs, activePath],
   );
+
+  /**
+   * File ▸ Close, which is the tab's × for whichever workbook is showing. It is
+   * nothing at all while the start page is, which is why the entry is offered
+   * disabled rather than left to do something surprising.
+   */
+  const handleCloseWorkbook = useCallback(() => {
+    if (activePath !== null) closeTab(activePath);
+  }, [activePath, closeTab]);
 
   const updateActive = useCallback(
     (patch: Partial<Omit<Tab, "info">>) => {
@@ -507,6 +528,9 @@ export default function App() {
           sidebarOpen={panels.list}
           sheetTabsOpen={panels.tabs}
           hasWorkbook={active !== null}
+          recentFiles={recentFiles}
+          onOpenRecent={handleOpenRecent}
+          onCloseWorkbook={handleCloseWorkbook}
           canUpdate={update?.portable ?? false}
           updateAvailable={updateAvailable}
           onShowUpdate={() => setUpdateOpen(true)}
