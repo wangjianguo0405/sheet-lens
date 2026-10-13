@@ -724,6 +724,67 @@ mod tests {
         );
     }
 
+    /// Writes a workbook's real parser output to JSON, for the browser harness.
+    ///
+    /// The grid can be driven outside the Tauri shell — `pnpm dev` serves the
+    /// same UI — but `invoke` has to come from somewhere, and hand-made payloads
+    /// hide exactly the things worth testing: widths, merges, print areas and
+    /// shapes all come off the parser. So this dumps what the parser actually
+    /// returned and the harness answers `open_workbook`/`sheet_layout`/`get_cells`
+    /// out of it.
+    ///
+    /// `SHEETLENS_XLSX` names the workbook and `SHEETLENS_OUT` the JSON file to
+    /// write; `SHEETLENS_SHEETS` restricts it to some of the sheets, since a
+    /// design document can be several hundred thousand cells.
+    #[test]
+    #[ignore]
+    fn dump_web_fixture() {
+        let Ok(path) = std::env::var("SHEETLENS_XLSX") else {
+            return;
+        };
+        let Ok(out) = std::env::var("SHEETLENS_OUT") else {
+            eprintln!("set SHEETLENS_OUT to the file to write");
+            return;
+        };
+        let only: Option<Vec<String>> = std::env::var("SHEETLENS_SHEETS")
+            .ok()
+            .map(|list| list.split(',').map(|s| s.trim().to_owned()).collect());
+
+        let mut book = load(&path).expect("workbook should load");
+        let mut sheets = serde_json::Map::new();
+        for info in book.info.sheets.clone() {
+            if let Some(names) = &only {
+                if !names.iter().any(|n| n == &info.name) {
+                    continue;
+                }
+            }
+            let layout = book.layout(&info.name).expect("layout");
+            let rows = layout.rows.max(info.rows);
+            let cols = layout.cols.max(info.cols);
+            let cells = book.cells(&info.name, 0, 0, rows, cols).expect("cells");
+            // Padded out to the layout's own extent: `cells` stops where
+            // calamine's range does, and everything past it is blank anyway.
+            let mut grid: Vec<Vec<Cell>> = cells;
+            grid.resize(rows as usize, Vec::new());
+            for line in grid.iter_mut() {
+                line.resize(cols as usize, Cell { kind: "empty", text: String::new() });
+            }
+            eprintln!(
+                "{}: {rows}×{cols}, {} shapes",
+                info.name,
+                layout.drawings.len()
+            );
+            sheets.insert(
+                info.name.clone(),
+                serde_json::json!({ "layout": layout, "cells": grid }),
+            );
+        }
+
+        let payload = serde_json::json!({ "info": book.info, "sheets": sheets });
+        std::fs::write(&out, serde_json::to_vec(&payload).expect("json")).expect("write fixture");
+        eprintln!("wrote {out}");
+    }
+
     #[test]
     fn lists_every_sheet_with_its_size() {
         let Some(book) = sample() else { return };
