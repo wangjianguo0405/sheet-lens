@@ -11,7 +11,6 @@
   },
   "toolbar": {
     "open": "打开",
-    "search": "搜索",
     "showSheetList": "显示工作表列表",
     "hideSheetList": "隐藏工作表列表",
     "showSheetTabs": "显示工作表标签",
