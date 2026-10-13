@@ -10,7 +10,10 @@
     "extent": "{{rows}} 行 × {{cols}} 列"
   },
   "toolbar": {
+    "file": "文件",
     "open": "打开",
+    "more": "更多",
+    "close": "关闭",
     "showSheetList": "显示工作表列表",
     "hideSheetList": "隐藏工作表列表",
     "showSheetTabs": "显示工作表标签",

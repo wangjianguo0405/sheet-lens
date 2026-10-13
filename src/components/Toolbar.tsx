@@ -11,12 +11,19 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LOCALES, setLocale, type Locale } from "@/lib/i18n";
+import { fileName, RECENT_SHOWN } from "@/lib/recent";
 
 interface ToolbarProps {
   onOpen: () => void;
@@ -25,6 +32,10 @@ interface ToolbarProps {
   sidebarOpen: boolean;
   sheetTabsOpen: boolean;
   hasWorkbook: boolean;
+  /** Newest first. The File menu shows the first few and puts the rest under More. */
+  recentFiles: string[];
+  onOpenRecent: (path: string) => void;
+  onCloseWorkbook: () => void;
   /** False for a build that cannot replace itself, which hides the entry. */
   canUpdate: boolean;
   updateAvailable: boolean;
@@ -38,11 +49,27 @@ export function Toolbar({
   sidebarOpen,
   sheetTabsOpen,
   hasWorkbook,
+  recentFiles,
+  onOpenRecent,
+  onCloseWorkbook,
   canUpdate,
   updateAvailable,
   onShowUpdate,
 }: ToolbarProps) {
   const { t, i18n } = useTranslation();
+
+  const recent = (paths: string[]) =>
+    paths.map((path) => (
+      <DropdownMenuItem
+        key={path}
+        className="text-xs"
+        onSelect={() => onOpenRecent(path)}
+      >
+        <span className="truncate" title={path}>
+          {fileName(path)}
+        </span>
+      </DropdownMenuItem>
+    ));
 
   return (
     <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
@@ -83,15 +110,54 @@ export function Toolbar({
         <PanelBottom className="size-3.5" />
       </Button>
 
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-7 gap-1.5 px-2 text-xs"
-        onClick={onOpen}
-      >
-        <FolderOpen className="size-3.5" />
-        {t("toolbar.open")}
-      </Button>
+      {/* The File menu. Everything in it is about the workbook as a whole
+          rather than about where the cursor is, which is why none of it lives
+          in the grid's own menus. No icon on the trigger: a folder means "open
+          something", which is only the first of the three things in here. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs">
+            {t("toolbar.file")}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-52">
+          <DropdownMenuItem className="text-xs" onSelect={onOpen}>
+            <FolderOpen className="size-3.5" />
+            {t("toolbar.open")}
+            <DropdownMenuShortcut>Ctrl+O</DropdownMenuShortcut>
+          </DropdownMenuItem>
+
+          {/* Only when there is something to list: an empty stretch between two
+              rules reads as a menu that failed to load. "More" in turn only
+              earns its chevron once its submenu would hold anything. */}
+          {recentFiles.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              {recent(recentFiles.slice(0, RECENT_SHOWN))}
+              {recentFiles.length > RECENT_SHOWN && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="text-xs">
+                    {t("toolbar.more")}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-52">
+                    {recent(recentFiles.slice(RECENT_SHOWN))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
+            </>
+          )}
+
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-xs"
+            disabled={!hasWorkbook}
+            onSelect={onCloseWorkbook}
+          >
+            {t("toolbar.close")}
+            <DropdownMenuShortcut>Ctrl+W</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <div className="ml-auto flex items-center gap-1">
         {canUpdate && (
