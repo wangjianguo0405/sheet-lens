@@ -1391,6 +1391,14 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
     let mut layout = SheetLayout::empty();
     let mut buf = Vec::new();
     let mut filter_col: Option<u32> = None;
+    // `<autoFilter>` is not only the sheet's own: a custom view carries the
+    // filter it was saved with, and an extension block can too. The schema puts
+    // the sheet's own before either of those, but they were each overwriting it
+    // as they went past, so the last one won — a WBS whose filter is `M1:FC66`
+    // got the row a saved view had been looking at instead, and its filter
+    // button landed seven rows down. Counting the nesting is what tells them
+    // apart.
+    let mut borrowed_filters: u32 = 0;
     let mut declared_default_col: Option<f64> = None;
     let mut base_col_width: Option<f64> = None;
     let mut declared_default_row: Option<f64> = None;
@@ -1544,17 +1552,20 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                             }
                         }
                     }
+                    b"customSheetViews" | b"extLst" => borrowed_filters += 1,
                     b"autoFilter" => {
-                        if let Some(rect) =
-                            attr(&element, b"ref").and_then(|r| parse_range(&r))
-                        {
-                            layout.auto_filter = Some(AutoFilter {
-                                row: rect.row,
-                                col: rect.col,
-                                rows: rect.rows,
-                                cols: rect.cols,
-                                applied: HashMap::new(),
-                            });
+                        if borrowed_filters == 0 {
+                            if let Some(rect) =
+                                attr(&element, b"ref").and_then(|r| parse_range(&r))
+                            {
+                                layout.auto_filter = Some(AutoFilter {
+                                    row: rect.row,
+                                    col: rect.col,
+                                    rows: rect.rows,
+                                    cols: rect.cols,
+                                    applied: HashMap::new(),
+                                });
+                            }
                         }
                     }
                     // The sheet only points at its shapes; the part itself is read
@@ -1581,6 +1592,9 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
             Ok(Event::End(element)) => {
                 match element.local_name().as_ref() {
                     b"filterColumn" => filter_col = None,
+                    b"customSheetViews" | b"extLst" => {
+                        borrowed_filters = borrowed_filters.saturating_sub(1)
+                    }
                     _ => {}
                 }
             }
