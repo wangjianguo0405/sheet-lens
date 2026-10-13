@@ -7,16 +7,24 @@
  */
 const STORAGE_KEY = "sheetlens.recentFiles";
 
+/**
+ * The ones that would not open — moved, deleted, or on a share that is not
+ * mounted. They stay in the list rather than being dropped, because a file that
+ * has gone is usually a file that is coming back, and the menu only greys the
+ * entry to say so.
+ */
+const MISSING_KEY = "sheetlens.missingFiles";
+
 /** How many of them the File menu shows inline, before "More". */
 export const RECENT_SHOWN = 10;
 
 /** How many are kept at all, the overflow being what "More" holds. */
 const KEEP = 50;
 
-/** Newest first, and never the same path twice. */
-export function readRecentFiles(): string[] {
+/** A list of paths under `key`, with anything that is not one dropped. */
+function readList(key: string): string[] {
   try {
-    const stored: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
+    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
     if (Array.isArray(stored)) {
       return stored.filter((path): path is string => typeof path === "string");
     }
@@ -26,18 +34,46 @@ export function readRecentFiles(): string[] {
   return [];
 }
 
-/** Puts `path` at the front, and hands back the list the menu should show now. */
+function writeList(key: string, paths: string[]): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(paths));
+  } catch {
+    // As above: the workbook still opens, the list just does not survive.
+  }
+}
+
+/** Newest first, and never the same path twice. */
+export function readRecentFiles(): string[] {
+  return readList(STORAGE_KEY);
+}
+
+/** The paths the menu should grey out. */
+export function readMissingFiles(): string[] {
+  return readList(MISSING_KEY);
+}
+
+/**
+ * Puts `path` at the front, and hands back the list the menu should show now.
+ * It opened, so whatever the list said about it before is no longer true.
+ */
 export function rememberFile(path: string): string[] {
   const next = [path, ...readRecentFiles().filter((other) => other !== path)].slice(
     0,
     KEEP,
   );
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // As above: the workbook still opens, the list just does not grow.
-  }
+  writeList(STORAGE_KEY, next);
+  writeList(
+    MISSING_KEY,
+    readMissingFiles().filter((other) => other !== path),
+  );
   return next;
+}
+
+/** Records that `path` would not open, and hands back the paths to grey out. */
+export function markFileMissing(path: string): string[] {
+  const missing = readMissingFiles();
+  if (!missing.includes(path)) writeList(MISSING_KEY, [...missing, path]);
+  return [...missing, path];
 }
 
 /** The last segment of a path, which is all a one-line menu entry shows. */

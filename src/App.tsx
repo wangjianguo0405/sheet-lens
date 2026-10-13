@@ -30,7 +30,7 @@ import {
   storeSheetPanels,
   type SheetPanels,
 } from "@/lib/sheetPanels";
-import { readRecentFiles, rememberFile } from "@/lib/recent";
+import { markFileMissing, readMissingFiles, readRecentFiles, rememberFile } from "@/lib/recent";
 import { checkForUpdate, updateStatus, type UpdateStatus } from "@/lib/update";
 import { DEFAULT_ZOOM } from "@/lib/zoom";
 import {
@@ -94,6 +94,8 @@ export default function App() {
   const [panels, setPanels] = useState<SheetPanels>(initialSheetPanels);
   /** The workbook paths the File menu offers, newest first. */
   const [recentFiles, setRecentFiles] = useState<string[]>(readRecentFiles);
+  /** Those of them that would not open, which the menu greys out. */
+  const [missingFiles, setMissingFiles] = useState<string[]>(readMissingFiles);
   /**
    * The grid's scroller. The sheet's scrollbar is drawn in the tab row, so it
    * has to be given the one thing it is a view of.
@@ -169,11 +171,15 @@ export default function App() {
         setActivePath(info.path);
         lastFileRef.current = info.path;
         setRecentFiles(rememberFile(info.path));
+        setMissingFiles(readMissingFiles());
         // Opening a workbook closes the start page's tab: it was somewhere to
         // start from, not somewhere to come back to.
         setHomeOpen(false);
       } catch (reason: unknown) {
         setError(`${path} — ${String(reason)}`);
+        // A drag can fail on a file that is not in the menu; marking it is
+        // harmless, since only the ones that are get greyed.
+        setMissingFiles(markFileMissing(path));
       }
     }
   }, []);
@@ -529,6 +535,7 @@ export default function App() {
           sheetTabsOpen={panels.tabs}
           hasWorkbook={active !== null}
           recentFiles={recentFiles}
+          missingFiles={missingFiles}
           onOpenRecent={handleOpenRecent}
           onCloseWorkbook={handleCloseWorkbook}
           canUpdate={update?.portable ?? false}

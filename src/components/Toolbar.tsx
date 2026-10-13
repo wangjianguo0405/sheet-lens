@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LOCALES, setLocale, type Locale } from "@/lib/i18n";
 import { fileName, RECENT_SHOWN } from "@/lib/recent";
+import { cn } from "@/lib/utils";
 
 interface ToolbarProps {
   onOpen: () => void;
@@ -34,6 +35,8 @@ interface ToolbarProps {
   hasWorkbook: boolean;
   /** Newest first. The File menu shows the first few and puts the rest under More. */
   recentFiles: string[];
+  /** Those of them the last attempt to open failed on, which are shown greyed. */
+  missingFiles: string[];
   onOpenRecent: (path: string) => void;
   onCloseWorkbook: () => void;
   /** False for a build that cannot replace itself, which hides the entry. */
@@ -50,6 +53,7 @@ export function Toolbar({
   sheetTabsOpen,
   hasWorkbook,
   recentFiles,
+  missingFiles,
   onOpenRecent,
   onCloseWorkbook,
   canUpdate,
@@ -58,6 +62,7 @@ export function Toolbar({
 }: ToolbarProps) {
   const { t, i18n } = useTranslation();
 
+  const missing = new Set(missingFiles);
   const recent = (paths: string[]) =>
     paths.map((path) => (
       <DropdownMenuItem
@@ -65,7 +70,12 @@ export function Toolbar({
         className="text-xs"
         onSelect={() => onOpenRecent(path)}
       >
-        <span className="truncate" title={path}>
+        <span
+          // Greyed, but not disabled: a file that has gone is often a file that
+          // is coming back, and a click is how it gets another try.
+          className={cn("truncate", missing.has(path) && "text-muted-foreground")}
+          title={missing.has(path) ? t("toolbar.missing", { path }) : path}
+        >
           {fileName(path)}
         </span>
       </DropdownMenuItem>
