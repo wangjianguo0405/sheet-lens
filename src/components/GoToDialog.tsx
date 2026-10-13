@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { parseRef } from "@/lib/column";
+import { parseTarget } from "@/lib/column";
 
 interface GoToDialogProps {
   open: boolean;
@@ -40,24 +40,18 @@ export function GoToDialog({
   }, [open]);
 
   const submit = () => {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-
-    const bang = trimmed.lastIndexOf("!");
-    const sheetPart = bang >= 0 ? trimmed.slice(0, bang).replace(/^'|'$/g, "") : null;
-    const refPart = bang >= 0 ? trimmed.slice(bang + 1) : trimmed;
-
-    const target = parseRef(refPart);
+    if (!value.trim()) return;
+    const target = parseTarget(value);
     if (!target) {
       setError(t("goTo.invalid"));
       return;
     }
 
     let sheet = currentSheet;
-    if (sheetPart) {
-      const match = sheets.find((name) => name === sheetPart);
+    if (target.sheet) {
+      const match = sheets.find((name) => name === target.sheet);
       if (!match) {
-        setError(t("goTo.noSheet", { name: sheetPart }));
+        setError(t("goTo.noSheet", { name: target.sheet }));
         return;
       }
       sheet = match;

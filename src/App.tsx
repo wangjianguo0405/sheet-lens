@@ -24,6 +24,7 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { toggleShapeDebug } from "@/lib/debugPanels";
+import type { Target } from "@/lib/column";
 import {
   initialSheetPanels,
   storeSheetPanels,
@@ -311,6 +312,26 @@ export default function App() {
     [updateActive, putCursor],
   );
 
+  /**
+   * A reference typed into the name box goes where Go To goes. A sheet name that
+   * is not in the workbook is not an error here — there is no dialog to report
+   * it in — so the selection stays where it was and the box goes back to saying
+   * where that is.
+   */
+  const handleNameBoxGo = useCallback(
+    (target: Target) => {
+      if (!active) return;
+      const sheet = target.sheet
+        ? active.info.sheets.find((sheet) => sheet.name === target.sheet)?.name
+        : active.sheet;
+      if (!sheet) return;
+      handleGo(sheet, target.row, target.col);
+      // Back to the grid, or the arrow keys would be typing into the name box.
+      viewport?.focus({ preventScroll: true });
+    },
+    [active, handleGo, viewport],
+  );
+
   const handleExtent = useCallback((rows: number, cols: number) => {
     setExtent({ rows, cols });
   }, []);
@@ -570,6 +591,7 @@ export default function App() {
                       <FormulaBar
                         reference={selectionRef(selection)}
                         value={detail?.text ?? ""}
+                        onGo={handleNameBoxGo}
                       />
                     }
                   />

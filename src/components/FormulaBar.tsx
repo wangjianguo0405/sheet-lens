@@ -3,23 +3,35 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
+import { parseTarget, type Target } from "@/lib/column";
 
 interface FormulaBarProps {
   /** The name box: `A2`, `3:3` or `B:B`. */
   reference: string;
   value: string;
+  /**
+   * A reference typed into the name box, which is the way Excel moves the
+   * selection: `C16`, or `Sheet1!C16` to go to another sheet with it.
+   */
+  onGo?: (target: Target) => void;
 }
 
 /**
  * Excel's formula bar, which doubles as the only place a long value can be
  * read in full — grid cells are clipped at the column edge.
  */
-export function FormulaBar({ reference, value }: FormulaBarProps) {
+export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const valueRef = useRef<HTMLSpanElement>(null);
   /** The value area's own scrollbar, measured rather than styled. */
   const [barWidth, setBarWidth] = useState(0);
+  /**
+   * What is being typed into the name box, or null to show the selection.
+   * Kept apart from `reference` so a half-typed reference is not the selection
+   * and Escape can put back what is.
+   */
+  const [typed, setTyped] = useState<string | null>(null);
 
   // Collapse again whenever the selection moves somewhere else.
   useEffect(() => {
@@ -81,11 +93,39 @@ export function FormulaBar({ reference, value }: FormulaBarProps) {
     >
       <div
         // The name box is a field of its own, and keeps its height so the
-        // reference stays put when the value grows past it.
-        className="flex h-7 w-24 shrink-0 items-center justify-center border-r border-border bg-background px-2 font-mono"
+        // reference stays put when the value grows past it. It is an input
+        // rather than a label because Excel's is: type a reference into it and
+        // the selection goes there.
+        className="flex h-7 w-24 shrink-0 items-center border-r border-border bg-background px-1 font-mono"
         title={reference}
       >
-        <span className="truncate">{reference}</span>
+        <input
+          value={typed ?? reference}
+          aria-label={t("goTo.title")}
+          spellCheck={false}
+          onChange={(event) => setTyped(event.target.value)}
+          onFocus={(event) => {
+            // All of it selected, so typing replaces the reference rather than
+            // appending to it — which is what Excel does when it is clicked.
+            setTyped(reference);
+            event.currentTarget.select();
+          }}
+          onBlur={() => setTyped(null)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              const target = parseTarget(event.currentTarget.value);
+              setTyped(null);
+              // Unreadable or unknown, and the box goes back to saying where
+              // the selection actually is; there is nothing to report.
+              if (target) onGo?.(target);
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              setTyped(null);
+              event.currentTarget.blur();
+            }
+          }}
+          className="w-full min-w-0 bg-transparent text-center text-xs outline-none"
+        />
       </div>
 
       {/*
