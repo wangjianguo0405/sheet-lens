@@ -30,7 +30,14 @@ import {
   storeSheetPanels,
   type SheetPanels,
 } from "@/lib/sheetPanels";
-import { markFileMissing, readMissingFiles, readRecentFiles, rememberFile } from "@/lib/recent";
+import {
+  forgetAllFiles,
+  forgetFile,
+  markFileMissing,
+  readMissingFiles,
+  readRecentFiles,
+  rememberFile,
+} from "@/lib/recent";
 import { checkForUpdate, updateStatus, type UpdateStatus } from "@/lib/update";
 import { DEFAULT_ZOOM } from "@/lib/zoom";
 import {
@@ -204,6 +211,18 @@ export default function App() {
     },
     [openPaths],
   );
+
+  /** Takes one entry out of the File menu's list. Any tab it opened stays. */
+  const handleForgetRecent = useCallback((path: string) => {
+    setRecentFiles(forgetFile(path));
+    setMissingFiles(readMissingFiles());
+  }, []);
+
+  const handleClearRecents = useCallback(() => {
+    forgetAllFiles();
+    setRecentFiles([]);
+    setMissingFiles([]);
+  }, []);
 
   /**
    * The "+" beside the file tabs. It opens the start page as a tab of its own —
@@ -537,6 +556,8 @@ export default function App() {
           recentFiles={recentFiles}
           missingFiles={missingFiles}
           onOpenRecent={handleOpenRecent}
+          onForgetRecent={handleForgetRecent}
+          onClearRecents={handleClearRecents}
           onCloseWorkbook={handleCloseWorkbook}
           canUpdate={update?.portable ?? false}
           updateAvailable={updateAvailable}

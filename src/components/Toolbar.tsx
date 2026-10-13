@@ -4,6 +4,7 @@ import {
   Languages,
   PanelBottom,
   PanelLeft,
+  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -38,6 +39,8 @@ interface ToolbarProps {
   /** Those of them the last attempt to open failed on, which are shown greyed. */
   missingFiles: string[];
   onOpenRecent: (path: string) => void;
+  onForgetRecent: (path: string) => void;
+  onClearRecents: () => void;
   onCloseWorkbook: () => void;
   /** False for a build that cannot replace itself, which hides the entry. */
   canUpdate: boolean;
@@ -55,6 +58,8 @@ export function Toolbar({
   recentFiles,
   missingFiles,
   onOpenRecent,
+  onForgetRecent,
+  onClearRecents,
   onCloseWorkbook,
   canUpdate,
   updateAvailable,
@@ -78,6 +83,25 @@ export function Toolbar({
         >
           {fileName(path)}
         </span>
+        {/* Swallows the pointer so taking an entry out is not also opening it,
+            and so the menu stays up to take out another. */}
+        <button
+          type="button"
+          aria-label={t("toolbar.forget", { name: fileName(path) })}
+          title={t("toolbar.forget", { name: fileName(path) })}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onPointerUp={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onForgetRecent(path);
+          }}
+          className="ml-auto shrink-0 rounded-sm p-0.5 opacity-0 transition-opacity group-hover/dropdown-menu-item:opacity-60 group-data-[highlighted]/dropdown-menu-item:opacity-60 group-focus/dropdown-menu-item:opacity-60 hover:bg-accent hover:text-foreground"
+        >
+          <X className="size-3" />
+        </button>
       </DropdownMenuItem>
     ));
 
@@ -154,6 +178,10 @@ export function Toolbar({
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
               )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-xs" onSelect={onClearRecents}>
+                {t("toolbar.clearRecent")}
+              </DropdownMenuItem>
             </>
           )}
 
