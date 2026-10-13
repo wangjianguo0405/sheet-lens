@@ -160,6 +160,8 @@ interface GridProps {
 interface ResizeDrag {
   kind: "col" | "row";
   index: number;
+  /** The rows the grip acts on: a run when the selection covers it, else one. */
+  rows: number[];
   start: number;
   size: number;
 }
@@ -1966,9 +1968,21 @@ export function CanvasGrid({
     }
     const hit = hitAt(event.clientX, event.clientY);
     if (!hit) return;
-    if (hit.kind === "cell") select(hit.row, hit.col);
-    else if (hit.kind === "rowHeader") onSelect(rowsBetween(hit.row, hit.row));
-    else onSelect(colsBetween(hit.col, hit.col));
+    if (hit.kind === "cell") {
+      select(hit.row, hit.col);
+    } else {
+      // Shift grows the run from the row or column the selection is anchored
+      // on, the way it grows a block from its anchor cell — so a run is made by
+      // picking one end and shift-clicking the other.
+      const from = selectionAnchor(selection);
+      if (hit.kind === "rowHeader") {
+        const anchor = selection.kind === "row" ? selection.anchor : from.row;
+        onSelect(event.shiftKey ? rowsBetween(anchor, hit.row) : rowsBetween(hit.row, hit.row));
+      } else {
+        const anchor = selection.kind === "column" ? selection.anchor : from.col;
+        onSelect(event.shiftKey ? colsBetween(anchor, hit.col) : colsBetween(hit.col, hit.col));
+      }
+    }
   };
 
   const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1978,7 +1992,7 @@ export function CanvasGrid({
     // answers anywhere on its header.
     const target = resizeTargetAt(event.clientX, event.clientY);
     if (target?.kind === "row") {
-      autofitRow(target.index);
+      autofitRows(rowsForResize(target.index));
       return;
     }
     const hit = hitAt(event.clientX, event.clientY);
@@ -2077,52 +2091,65 @@ export function CanvasGrid({
   };
 
   /**
-   * Sizes a row to the tallest its cells come to once wrapped — the same
-   * bargain `autofitColumn` strikes sideways, and drawn from the same loaded
-   * blocks, so a row is fitted to what has been read rather than to a sheet
-   * nobody has paged through. A cell that does not wrap is one line however
-   * long it is, and the row never goes below the workbook's own default.
+   * Sizes each of `indices` to the tallest its cells come to once wrapped — the
+   * same bargain `autofitColumn` strikes sideways, and drawn from the same
+   * loaded blocks, so a row is fitted to what has been read rather than to a
+   * sheet nobody has paged through. A cell that does not wrap is one line
+   * however long it is, and no row goes below the workbook's own default.
    */
-  const autofitRow = (index: number) => {
-    let tallest = baseRowH;
+  const autofitRows = (indices: number[]) => {
+    const wanted = new Set(indices);
+    const tallest = new Map<number, number>(
+      indices.map((row) => [row, baseRowH]),
+    );
     for (const [key, block] of cache.current) {
       const [name, rawRow] = key.split("#");
       if (name !== sheet.name) continue;
       const blockRowStart = Number(rawRow) * BLOCK_ROWS;
-      if (index < blockRowStart || index >= blockRowStart + BLOCK_ROWS) continue;
-      const cells = block[index - blockRowStart];
-      if (!cells) continue;
-      for (let col = 0; col < cells.length; col += 1) {
-        const text = cells[col]?.text;
-        if (!text) continue;
-        const style = styleAt(index, col);
-        const merge = mergeAt(index, col);
-        // A merge is one cell whose text sits in its top-left corner: only that
-        // cell has anything to fit, and the rest of what the merge covers is
-        // read for its own cells rather than for the text above it.
-        if (merge && (merge.row !== index || merge.col !== col)) continue;
-        const sizePx = style?.sizePx ?? fontSize;
-        const font = fontString(
-          cellFontStack(style?.family ?? null, fontFamily),
-          sizePx,
-          style?.bold ?? false,
-        );
-        // And it wraps in the whole of itself, not in its first column, or its
-        // text would be counted as far more lines than it comes to.
-        const first = merge?.col ?? col;
-        const last = merge ? merge.col + merge.cols - 1 : col;
-        let width = 0;
-        for (let c = first; c <= last; c += 1) width += spanAt(cols.offsets, c);
-        const lines = layoutLines(
-          font,
-          text,
-          width - CELL_PAD_LEFT - CELL_PAD_RIGHT,
-          style?.wrap ?? false,
-        );
-        tallest = Math.max(tallest, lines.length * sizePx * LINE_HEIGHT);
+      for (let local = 0; local < block.length; local += 1) {
+        const row = blockRowStart + local;
+        if (!wanted.has(row)) continue;
+        const cells = block[local];
+        if (!cells) continue;
+        for (let col = 0; col < cells.length; col += 1) {
+          const text = cells[col]?.text;
+          if (!text) continue;
+          const style = styleAt(row, col);
+          const merge = mergeAt(row, col);
+          // A merge is one cell whose text sits in its top-left corner: only
+          // that cell has anything to fit, and the rest of what the merge
+          // covers is read for its own cells rather than for the text above it.
+          if (merge && (merge.row !== row || merge.col !== col)) continue;
+          const sizePx = style?.sizePx ?? fontSize;
+          const font = fontString(
+            cellFontStack(style?.family ?? null, fontFamily),
+            sizePx,
+            style?.bold ?? false,
+          );
+          // And it wraps in the whole of itself, not in its first column, or
+          // its text would be counted as far more lines than it comes to.
+          const first = merge?.col ?? col;
+          const last = merge ? merge.col + merge.cols - 1 : col;
+          let width = 0;
+          for (let c = first; c <= last; c += 1) width += spanAt(cols.offsets, c);
+          const lines = layoutLines(
+            font,
+            text,
+            width - CELL_PAD_LEFT - CELL_PAD_RIGHT,
+            style?.wrap ?? false,
+          );
+          tallest.set(
+            row,
+            Math.max(tallest.get(row) ?? baseRowH, lines.length * sizePx * LINE_HEIGHT),
+          );
+        }
       }
     }
-    setRowOverrides((prev) => new Map(prev).set(index, Math.ceil(tallest)));
+    setRowOverrides((prev) => {
+      const map = new Map(prev);
+      for (const [row, height] of tallest) map.set(row, Math.ceil(height));
+      return map;
+    });
   };
 
   /** Ctrl+C: the cell's text, or the whole row/column, tab or newline joined. */
@@ -2377,7 +2404,11 @@ export function CanvasGrid({
         setColOverrides((prev) => new Map(prev).set(active.index, next));
       } else {
         const next = Math.max(minRowH, Math.round(active.size + moved));
-        setRowOverrides((prev) => new Map(prev).set(active.index, next));
+        setRowOverrides((prev) => {
+          const map = new Map(prev);
+          for (const row of active.rows) map.set(row, next);
+          return map;
+        });
       }
     };
     const onUp = () => {
@@ -2433,6 +2464,20 @@ export function CanvasGrid({
     [cols, rows, sheetColsGuess, sheetRowOf, displayRowCount],
   );
 
+  /**
+   * Which rows a grip on one of them acts on. A run the selection already
+   * covers is resized whole — dragging one of its row heights is how Excel
+   * gives several rows the same height — and a row outside it stands alone.
+   */
+  const rowsForResize = (row: number): number[] => {
+    const covers =
+      selection.kind === "row" &&
+      row >= selection.row &&
+      row < selection.row + selection.rows;
+    if (!covers) return [row];
+    return Array.from({ length: selection.rows }, (_, offset) => selection.row + offset);
+  };
+
   const handlePointerDownCapture = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     const target = resizeTargetAt(event.clientX, event.clientY);
@@ -2442,6 +2487,7 @@ export function CanvasGrid({
     drag.current = {
       kind: target.kind,
       index: target.index,
+      rows: target.kind === "row" ? rowsForResize(target.index) : [target.index],
       start: target.kind === "col" ? event.clientX : event.clientY,
       size:
         target.kind === "col"
