@@ -12,7 +12,6 @@
   "toolbar": {
     "open": "Open",
     "search": "Search",
-    "goTo": "Go To",
     "showSheetList": "Show the sheet list",
     "hideSheetList": "Hide the sheet list",
     "showSheetTabs": "Show the sheet tabs",

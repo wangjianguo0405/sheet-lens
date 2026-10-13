@@ -12,7 +12,6 @@
   "toolbar": {
     "open": "開く",
     "search": "検索",
-    "goTo": "ジャンプ",
     "showSheetList": "シート一覧を表示",
     "hideSheetList": "シート一覧を非表示",
     "showSheetTabs": "シート見出しを表示",
