@@ -502,10 +502,8 @@ export default function App() {
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground select-none">
         <Toolbar
           onOpen={handleOpen}
-          onToggleSearch={() => setSearchOpen((open) => !open)}
           onToggleSidebar={() => togglePanel("list")}
           onToggleSheetTabs={() => togglePanel("tabs")}
-          searchOpen={searchOpen}
           sidebarOpen={panels.list}
           sheetTabsOpen={panels.tabs}
           hasWorkbook={active !== null}

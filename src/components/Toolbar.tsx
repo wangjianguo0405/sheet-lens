@@ -4,7 +4,6 @@ import {
   Languages,
   PanelBottom,
   PanelLeft,
-  Search,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -21,10 +20,8 @@ import { LOCALES, setLocale, type Locale } from "@/lib/i18n";
 
 interface ToolbarProps {
   onOpen: () => void;
-  onToggleSearch: () => void;
   onToggleSidebar: () => void;
   onToggleSheetTabs: () => void;
-  searchOpen: boolean;
   sidebarOpen: boolean;
   sheetTabsOpen: boolean;
   hasWorkbook: boolean;
@@ -36,10 +33,8 @@ interface ToolbarProps {
 
 export function Toolbar({
   onOpen,
-  onToggleSearch,
   onToggleSidebar,
   onToggleSheetTabs,
-  searchOpen,
   sidebarOpen,
   sheetTabsOpen,
   hasWorkbook,
@@ -96,17 +91,6 @@ export function Toolbar({
       >
         <FolderOpen className="size-3.5" />
         {t("toolbar.open")}
-      </Button>
-
-      <Button
-        size="sm"
-        variant={searchOpen ? "secondary" : "ghost"}
-        className="h-7 gap-1.5 px-2 text-xs"
-        disabled={!hasWorkbook}
-        onClick={onToggleSearch}
-      >
-        <Search className="size-3.5" />
-        {t("toolbar.search")}
       </Button>
 
       <div className="ml-auto flex items-center gap-1">
