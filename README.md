@@ -18,6 +18,8 @@ read, so they fall back to plain defaults.
 ## What it does
 
 - Sheets, search, go-to, column filters and a formula bar
+- A File menu: open a workbook, open one of the workbooks opened lately, or
+  close the one showing. A tab is closed by a middle click
 - Cell, row/column and rectangular-block selection, by dragging or with Shift
   and the arrows; Ctrl+A takes the region around the cursor, then the whole sheet
 - Ctrl+C in Excel's own format: tabs between columns, newlines between rows
