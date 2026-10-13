@@ -1972,6 +1972,15 @@ export function CanvasGrid({
   };
 
   const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    // A double-click on a boundary fits what it bounds, which is Excel's way
+    // and why the row is tested for first: a row answers only on its edge —
+    // where the pointer was already being read as a resize — while a column
+    // answers anywhere on its header.
+    const target = resizeTargetAt(event.clientX, event.clientY);
+    if (target?.kind === "row") {
+      autofitRow(target.index);
+      return;
+    }
     const hit = hitAt(event.clientX, event.clientY);
     if (hit?.kind === "colHeader") {
       autofitColumn(hit.col);
@@ -1979,8 +1988,13 @@ export function CanvasGrid({
     }
     // A cell with text in it opens that text for reading. An empty one has
     // nothing to offer, so it stays an ordinary double-click.
-    if (hit?.kind === "cell" && (cellAt(hit.row, hit.col)?.text ?? "") !== "") {
-      setEditing({ row: hit.row, col: hit.col });
+    if (hit?.kind === "cell") {
+      // Which for a merged cell means its top-left corner, since that is the
+      // only part of the merge the text is in — the rest of it reads as empty.
+      const merge = mergeAt(hit.row, hit.col);
+      const row = merge?.row ?? hit.row;
+      const col = merge?.col ?? hit.col;
+      if ((cellAt(row, col)?.text ?? "") !== "") setEditing({ row, col });
     }
   };
 
@@ -2060,6 +2074,55 @@ export function CanvasGrid({
       }
     }
     setColOverrides((prev) => new Map(prev).set(index, Math.min(MAX_COL_W, Math.ceil(widest))));
+  };
+
+  /**
+   * Sizes a row to the tallest its cells come to once wrapped — the same
+   * bargain `autofitColumn` strikes sideways, and drawn from the same loaded
+   * blocks, so a row is fitted to what has been read rather than to a sheet
+   * nobody has paged through. A cell that does not wrap is one line however
+   * long it is, and the row never goes below the workbook's own default.
+   */
+  const autofitRow = (index: number) => {
+    let tallest = baseRowH;
+    for (const [key, block] of cache.current) {
+      const [name, rawRow] = key.split("#");
+      if (name !== sheet.name) continue;
+      const blockRowStart = Number(rawRow) * BLOCK_ROWS;
+      if (index < blockRowStart || index >= blockRowStart + BLOCK_ROWS) continue;
+      const cells = block[index - blockRowStart];
+      if (!cells) continue;
+      for (let col = 0; col < cells.length; col += 1) {
+        const text = cells[col]?.text;
+        if (!text) continue;
+        const style = styleAt(index, col);
+        const merge = mergeAt(index, col);
+        // A merge is one cell whose text sits in its top-left corner: only that
+        // cell has anything to fit, and the rest of what the merge covers is
+        // read for its own cells rather than for the text above it.
+        if (merge && (merge.row !== index || merge.col !== col)) continue;
+        const sizePx = style?.sizePx ?? fontSize;
+        const font = fontString(
+          cellFontStack(style?.family ?? null, fontFamily),
+          sizePx,
+          style?.bold ?? false,
+        );
+        // And it wraps in the whole of itself, not in its first column, or its
+        // text would be counted as far more lines than it comes to.
+        const first = merge?.col ?? col;
+        const last = merge ? merge.col + merge.cols - 1 : col;
+        let width = 0;
+        for (let c = first; c <= last; c += 1) width += spanAt(cols.offsets, c);
+        const lines = layoutLines(
+          font,
+          text,
+          width - CELL_PAD_LEFT - CELL_PAD_RIGHT,
+          style?.wrap ?? false,
+        );
+        tallest = Math.max(tallest, lines.length * sizePx * LINE_HEIGHT);
+      }
+    }
+    setRowOverrides((prev) => new Map(prev).set(index, Math.ceil(tallest)));
   };
 
   /** Ctrl+C: the cell's text, or the whole row/column, tab or newline joined. */
