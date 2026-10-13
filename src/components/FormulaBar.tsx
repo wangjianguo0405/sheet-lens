@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -11,22 +11,15 @@ interface FormulaBarProps {
 }
 
 /**
- * The value area's scrollbar, held to one width.
- *
- * Left to itself each engine draws its own — WebView2's is about 17px — and the
- * chevron above it is placed to line up with it, so a few pixels of difference
- * is what made the two look stacked slightly off rather than in a column.
- */
-const VALUE_SCROLLBAR =
-  "[&::-webkit-scrollbar]:w-3.5 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-border";
-
-/**
  * Excel's formula bar, which doubles as the only place a long value can be
  * read in full — grid cells are clipped at the column edge.
  */
 export function FormulaBar({ reference, value }: FormulaBarProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const valueRef = useRef<HTMLSpanElement>(null);
+  /** The value area's own scrollbar, measured rather than styled. */
+  const [barWidth, setBarWidth] = useState(0);
 
   // Collapse again whenever the selection moves somewhere else.
   useEffect(() => {
@@ -34,11 +27,23 @@ export function FormulaBar({ reference, value }: FormulaBarProps) {
   }, [reference]);
 
   /**
+   * The chevron above the value area is placed to line up with the scrollbar
+   * below it, and left to itself each engine draws a different width — so the
+   * strip takes the width the engine actually used, measured off the span.
+   *
+   * Laid out rather than deferred: the two are side by side, and one frame of
+   * the wrong width is one frame of them not lining up.
+   */
+  useLayoutEffect(() => {
+    const el = valueRef.current;
+    if (!el) return;
+    setBarWidth(el.offsetWidth - el.clientWidth);
+  }, [expanded, value]);
+
+  /**
    * The chevron sits in a strip of its own whichever way the bar is laid out, so
    * opening the value area below it leaves the button exactly where it was
-   * rather than shifting it into the middle of a taller row. The strip is as
-   * wide as the scrollbar below it — see `VALUE_SCROLLBAR` — so the two read as
-   * one column along the edge.
+   * rather than shifting it into the middle of a taller row.
    */
   const toggle = value !== "" && (
     <button
@@ -96,7 +101,10 @@ export function FormulaBar({ reference, value }: FormulaBarProps) {
         {expanded && (
           // `self-end` puts the strip against the right edge: a column's cross
           // axis starts at the left, and without it the chevron jumps there.
-          <div className="flex h-7 w-3.5 shrink-0 items-center justify-center self-end">
+          <div
+            style={barWidth ? { width: barWidth } : undefined}
+            className="flex h-7 w-3.5 shrink-0 items-center justify-center self-end"
+          >
             {toggle}
           </div>
         )}
@@ -108,13 +116,11 @@ export function FormulaBar({ reference, value }: FormulaBarProps) {
         */}
         <div className="flex min-w-0 flex-1 items-start">
           <span
+            ref={valueRef}
             className={cn(
               "min-w-0 flex-1 pl-2",
               expanded
-                ? cn(
-                    "max-h-24 overflow-y-auto break-all whitespace-pre-wrap pb-1.5",
-                    VALUE_SCROLLBAR,
-                  )
+                ? "max-h-24 overflow-y-auto break-all whitespace-pre-wrap pb-1.5"
                 : "truncate py-1.5",
             )}
           >
