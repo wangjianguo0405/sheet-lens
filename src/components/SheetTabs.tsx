@@ -203,10 +203,14 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
                 cols: sheet.cols,
               })}
               className={cn(
-                "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition-colors",
+                "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition",
                 isActive
                   ? "border-b-[#107C41] bg-background font-medium text-foreground"
                   : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+                // A tab filled with its own colour has the grey the others take
+                // on hover sitting behind an inline fill that wins, so it
+                // lightens instead — the same "this one is under the pointer".
+                !isActive && sheet.tabColor && "hover:brightness-110",
               )}
               // A sheet the workbook gives a tab colour is filled with it, name
               // and all — Excel paints the whole tab, not a strip along its
