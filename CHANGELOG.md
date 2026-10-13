@@ -12,6 +12,39 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.8] - 2026-10-13
+
+A cell's text can be read and copied without leaving the grid, rows are fitted
+to what is in them, and a filter lands where the workbook says it does.
+
+### Added
+
+- A cell's text opens over the cell when it is double-clicked — selectable and
+  copyable with the mouse, its coloured runs and all, and not changeable
+- A row's height is fitted to what is in it by double-clicking the bottom border
+  of its header
+- The File menu's list of recent workbooks can be emptied of an entry, or
+  cleared whole
+
+### Improved
+
+- A Shift-click on a row or column header extends the run, the way it does on a
+  cell
+- Dragging a row height with several rows selected sets them all, and a
+  double-click on the border fits each of them to its own content
+- A sheet keeps the filter it was left with when you leave it and come back,
+  as Excel does
+
+### Fixed
+
+- The filter button sits on the row the workbook's own filter names. A sheet
+  with saved custom views was read from the last of those instead: a WBS whose
+  filter is `M1:FC66` was taken as some view's `A7:EY121`, seven rows lower
+- A filter hides the rows inside its range and nothing else. What sits under a
+  table used to vanish with it
+- The filter banner's row count and its Clear button are translated like the
+  rest of the interface
+
 ## [0.3.7] - 2026-10-13
 
 Recent workbooks are one click away, and the sheet tabs are painted the way
