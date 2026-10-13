@@ -34,3 +34,29 @@ export function parseRef(input: string): { row: number; col: number } | null {
   if (row < 0) return null;
   return { row, col };
 }
+
+/** A reference as it was typed: a cell, and the sheet it named if it named one. */
+export interface Target {
+  /** The sheet as written, or null for "the one already showing". */
+  sheet: string | null;
+  row: number;
+  col: number;
+}
+
+/**
+ * Reads a typed reference — `G408`, `Sheet1!G408`, `'My Sheet'!G408` — for the
+ * name box and for Go To, which take the same thing.
+ *
+ * The sheet name comes back as it was written and no further: matching it
+ * against the workbook is the caller's, since only the caller knows whether a
+ * name that is not there is an error to report or nothing to do.
+ */
+export function parseTarget(input: string): Target | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const bang = trimmed.lastIndexOf("!");
+  const sheet = bang >= 0 ? trimmed.slice(0, bang).replace(/^'|'$/g, "").trim() : "";
+  const cell = parseRef(bang >= 0 ? trimmed.slice(bang + 1) : trimmed);
+  if (!cell) return null;
+  return { sheet: sheet || null, row: cell.row, col: cell.col };
+}
