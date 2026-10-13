@@ -14,6 +14,7 @@
     "open": "打开",
     "more": "更多",
     "close": "关闭",
+    "missing": "上次没能打开，点一下再试：{{path}}",
     "showSheetList": "显示工作表列表",
     "hideSheetList": "隐藏工作表列表",
     "showSheetTabs": "显示工作表标签",

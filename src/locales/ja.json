@@ -14,6 +14,7 @@
     "open": "開く",
     "more": "その他",
     "close": "閉じる",
+    "missing": "前回開けませんでした。クリックでもう一度：{{path}}",
     "showSheetList": "シート一覧を表示",
     "hideSheetList": "シート一覧を非表示",
     "showSheetTabs": "シート見出しを表示",
