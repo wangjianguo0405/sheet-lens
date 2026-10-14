@@ -96,6 +96,22 @@ import {
 } from "@/lib/selection";
 import { markKey, type Marks } from "@/lib/marks";
 
+/** A separator no path and no sheet name can hold, so a key can be split on it. */
+const SEP = "\u0000";
+
+/**
+ * Names one sheet of one workbook.
+ *
+ * These documents share every sheet name — `機能定義書`, `入出力定義`,
+ * `画面レイアウト` — so anything that remembers something about a sheet has to
+ * say which workbook's. A name alone is what let a second file read the first
+ * one's cells.
+ */
+const sheetIdentity = (path: string, sheet: string) => `${path}${SEP}${sheet}`;
+
+/** The key one block of cells is held under, and the prefix that claims a sheet's. */
+const blockPrefix = (path: string, sheet: string) => `${sheetIdentity(path, sheet)}${SEP}`;
+
 /** Where a pointer landed: a cell, or one of the two gutter strips. */
 type Hit =
   | { kind: "cell"; row: number; col: number }
@@ -492,6 +508,7 @@ export function CanvasGrid({
   const [colOverrides, setColOverrides] = useState<Map<number, number>>(() => new Map());
   const [rowOverrides, setRowOverrides] = useState<Map<number, number>>(() => new Map());
   const [layout, setLayout] = useState<SheetLayout | null>(null);
+  /** Which workbook's sheet the layout in state belongs to — see `sheetIdentity`. */
   const [layoutSheet, setLayoutSheet] = useState<string | null>(null);
   const [fontFamily, setFontFamily] = useState<string | null>(null);
   const [fontSize, setFontSize] = useState(12);
@@ -533,7 +550,7 @@ export function CanvasGrid({
   const antsRef = useRef(0);
   const antsTimer = useRef(0);
 
-  const layoutReady = layout !== null && layoutSheet === sheet.name;
+  const layoutReady = layout !== null && layoutSheet === sheetIdentity(path, sheet.name);
 
   /**
    * Ctrl+A, in Excel's two stages: the cell's current region, then the whole
@@ -926,11 +943,11 @@ export function CanvasGrid({
     (row: number, col: number): Cell | null => {
       const br = Math.floor(row / BLOCK_ROWS);
       const bc = Math.floor(col / BLOCK_COLS);
-      const block = cache.current.get(`${sheet.name}#${br}#${bc}`);
+      const block = cache.current.get(`${blockPrefix(path, sheet.name)}${br}${SEP}${bc}`);
       if (!block) return null;
       return block[row - br * BLOCK_ROWS]?.[col - bc * BLOCK_COLS] ?? null;
     },
-    [sheet.name],
+    [path, sheet.name],
   );
 
   const styleAt = useCallback(
@@ -1082,7 +1099,7 @@ export function CanvasGrid({
       .then((parsed) => {
         if (cancelled) return;
         setLayout(parsed);
-        setLayoutSheet(sheet.name);
+        setLayoutSheet(sheetIdentity(path, sheet.name));
         const colPx = (chars: number) =>
           charsToPx(chars, digitWidthPx(parsed.fontFamily, parsed.fontSizePx));
         setBaseColW(colPx(parsed.defaultColWidthChars));
@@ -1090,7 +1107,7 @@ export function CanvasGrid({
         setFontFamily(parsed.fontFamily);
         setFontSize(parsed.fontSizePx);
         setShowGrid(parsed.showGridLines);
-        seeded.current = `${path}\u0000${sheet.name}`;
+        seeded.current = sheetIdentity(path, sheet.name);
         // What the reader has dragged or fitted since wins over the file's own
         // sizes, which are only where this sheet started.
         const saved = views.get(path)?.get(sheet.name);
@@ -1140,7 +1157,7 @@ export function CanvasGrid({
    * writing those under the new sheet's name would hand it the wrong ones.
    */
   useEffect(() => {
-    if (seeded.current !== `${path}\u0000${sheet.name}`) return;
+    if (seeded.current !== sheetIdentity(path, sheet.name)) return;
     const bySheet = views.get(path) ?? new Map<string, SheetView>();
     const view = bySheet.get(sheet.name) ?? { ...scrollRef.current };
     bySheet.set(sheet.name, {
@@ -1527,6 +1544,7 @@ export function CanvasGrid({
    */
   const ensureBlocks = useCallback(
     (view: GridView) => {
+      const prefix = blockPrefix(path, sheet.name);
       const firstCol = Math.floor(view.colStart / BLOCK_COLS);
       const lastCol = Math.floor(Math.max(view.colStart, view.colEnd - 1) / BLOCK_COLS);
       /**
@@ -1548,14 +1566,14 @@ export function CanvasGrid({
         const block = Math.floor(sheetRow / BLOCK_ROWS);
         if (block > lastUsedRow) continue;
         for (let bc = firstCol; bc <= lastCol && bc <= lastUsedCol; bc += 1) {
-          needed.add(`${sheet.name}#${block}#${bc}`);
+          needed.add(`${prefix}${block}${SEP}${bc}`);
         }
       }
 
       for (const key of needed) {
         if (cache.current.has(key) || pending.current.has(key)) continue;
         pending.current.add(key);
-        const [, rawRow, rawCol] = key.split("#");
+        const [rawRow, rawCol] = key.slice(prefix.length).split(SEP);
         getCells(
           path,
           sheet.name,
@@ -1578,7 +1596,7 @@ export function CanvasGrid({
   );
 
   const buildView = useCallback((): GridView | null => {
-    if (!layout || layoutSheet !== sheet.name) return null;
+    if (!layout || layoutSheet !== sheetIdentity(path, sheet.name)) return null;
     const scroll = scrollRef.current;
     const size = sizeRef.current;
     const z = zoomRef.current;
@@ -1746,6 +1764,7 @@ export function CanvasGrid({
   }, [
     layout,
     layoutSheet,
+    path,
     sheet.name,
     sheet.rows,
     sheet.cols,
@@ -2237,9 +2256,10 @@ export function CanvasGrid({
   /** Sizes a column to the widest text currently loaded for it. */
   const autofitColumn = (index: number) => {
     let widest = MIN_COL_W;
+    const mine = blockPrefix(path, sheet.name);
     for (const [key, block] of cache.current) {
-      const [name, , rawCol] = key.split("#");
-      if (name !== sheet.name) continue;
+      if (!key.startsWith(mine)) continue;
+      const [, rawCol] = key.slice(mine.length).split(SEP);
       const blockColStart = Number(rawCol) * BLOCK_COLS;
       if (index < blockColStart || index >= blockColStart + BLOCK_COLS) continue;
       const local = index - blockColStart;
@@ -2263,9 +2283,10 @@ export function CanvasGrid({
     const tallest = new Map<number, number>(
       indices.map((row) => [row, baseRowH]),
     );
+    const mine = blockPrefix(path, sheet.name);
     for (const [key, block] of cache.current) {
-      const [name, rawRow] = key.split("#");
-      if (name !== sheet.name) continue;
+      if (!key.startsWith(mine)) continue;
+      const [rawRow] = key.slice(mine.length).split(SEP);
       const blockRowStart = Number(rawRow) * BLOCK_ROWS;
       for (let local = 0; local < block.length; local += 1) {
         const row = blockRowStart + local;
