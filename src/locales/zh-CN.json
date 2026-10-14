@@ -105,7 +105,9 @@
     "resetZoom": "将缩放重置为 100%",
     "spanRows": "已选 {{rows}} 行",
     "spanCols": "已选 {{cols}} 列",
-    "spanBlock": "已选 {{rows}} 行 × {{cols}} 列"
+    "spanBlock": "已选 {{rows}} 行 × {{cols}} 列",
+    "viewNormal": "普通视图",
+    "viewPageBreak": "分页预览"
   },
   "grid": {
     "resizeColumn": "调整列 {{column}} 的宽度",

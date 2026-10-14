@@ -4,7 +4,7 @@
 //! types, and `Range::width()` counts cells rather than pixels. All of this
 //! lives in the workbook's XML, so we unzip it and read it directly.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek};
 
@@ -811,6 +811,56 @@ fn print_area(workbook: &str, sheet_name: &str) -> Option<MergeRect> {
         }
     }
     None
+}
+
+/// The sheets that define a `_xlnm.Print_Area` of their own.
+///
+/// Read at open, alongside the tab colours, because the answer decides which
+/// view the workbook opens in: Excel's Page Break Preview shades around the
+/// print area and boxes it, and a workbook where nobody ever set one belongs in
+/// the ordinary view rather than in a page the app guessed at.
+///
+/// `print_area` below cannot answer this — it falls back to the used range, so
+/// by the time a layout exists *every* sheet has an area. This walks
+/// `workbook.xml` itself, where the difference is still visible.
+pub fn print_area_sheets(path: &str) -> HashSet<String> {
+    let mut sheets = HashSet::new();
+    let Ok(file) = File::open(path) else {
+        return sheets;
+    };
+    let Ok(mut zip) = ZipArchive::new(BufReader::new(file)) else {
+        return sheets;
+    };
+    let Ok(workbook) = read_entry(&mut zip, "xl/workbook.xml") else {
+        return sheets;
+    };
+
+    let mut reader = XmlReader::from_str(&workbook);
+    let mut buf = Vec::new();
+    let mut inside = false;
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) if element.local_name().as_ref() == b"definedName" => {
+                inside = attr(&element, b"name").as_deref() == Some("_xlnm.Print_Area");
+            }
+            Ok(Event::Text(text)) if inside => {
+                inside = false;
+                // `<sheet>!<range>`, the sheet name quoted only when it must be.
+                if let Ok(content) = text.xml_content(XmlVersion::default()) {
+                    if let Some((owner, _)) = content.split_once('!') {
+                        sheets.insert(owner.trim_matches('\'').to_owned());
+                    }
+                }
+            }
+            Ok(Event::End(element)) if element.local_name().as_ref() == b"definedName" => {
+                inside = false;
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    sheets
 }
 
 /// Resolves a sheet name to its part inside the zip via workbook relationships.

@@ -1,8 +1,10 @@
-import { Minus, Plus } from "lucide-react";
+import { Grid3x3, Minus, Plus, TableCellsSplit } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Separator } from "@/components/ui/separator";
 import type { SelectionSize } from "@/lib/selection";
+import { cn } from "@/lib/utils";
+import type { ViewMode } from "@/lib/viewMode";
 import {
   DEFAULT_ZOOM,
   MAX_ZOOM,
@@ -18,10 +20,19 @@ interface StatusBarProps {
   size: string | null;
   /** How many rows and columns the selection spans. */
   span: SelectionSize | null;
+  /** Which of Excel's two views the sheet is drawn in. */
+  view: ViewMode;
+  onView: (view: ViewMode) => void;
   /** View scale as a percentage, the way Excel names it. */
   zoom: number;
   onZoom: (percent: number) => void;
 }
+
+/** The two views, in the order Excel's own buttons sit in. */
+const VIEWS = [
+  { mode: "normal", label: "status.viewNormal", Icon: Grid3x3 },
+  { mode: "pageBreak", label: "status.viewPageBreak", Icon: TableCellsSplit },
+] as const;
 
 /** Each selection shape, mapped to the phrase that counts it. */
 const SPAN_KEY = {
@@ -35,6 +46,8 @@ export function StatusBar({
   sheet,
   size,
   span,
+  view,
+  onView,
   zoom,
   onZoom,
 }: StatusBarProps) {
@@ -77,6 +90,27 @@ export function StatusBar({
               {t(SPAN_KEY[span.kind], span)}
             </span>
           )}
+          {/*
+            Excel's two views, at the right end of the bar as its own buttons
+            are, with the zoom beyond them.
+          */}
+          {VIEWS.map(({ mode, label, Icon }) => (
+            <button
+              key={mode}
+              type="button"
+              aria-label={t(label)}
+              aria-pressed={view === mode}
+              title={t(label)}
+              onClick={() => onView(mode)}
+              className={cn(
+                "rounded-sm p-0.5 hover:bg-accent hover:text-foreground",
+                view === mode && "bg-accent text-foreground",
+              )}
+            >
+              <Icon className="size-3.5" />
+            </button>
+          ))}
+          <Separator orientation="vertical" className="h-3" />
           {/* Excel's zoom lives in the bottom-right corner of the window. */}
           <button
             type="button"
