@@ -806,7 +806,13 @@ export default function App() {
               {t("app.noSheets")}
             </p>
           ) : (
-            <Welcome onOpen={handleOpen} error={error} />
+            <Welcome
+              onOpen={handleOpen}
+              recentFiles={recentFiles}
+              missingFiles={missingFiles}
+              onOpenRecent={handleOpenRecent}
+              error={error}
+            />
           )}
         </div>
 
