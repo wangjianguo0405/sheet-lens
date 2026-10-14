@@ -21,7 +21,13 @@ import { FilterButton } from "@/components/FilterButton";
 import { MarkPalette } from "@/components/MarkPalette";
 import { ShapeLayer, type ShapeDebugFacts } from "@/components/ShapeLayer";
 import { canvasTheme } from "@/lib/canvasTheme";
-import { paintBase, paintOverlay, type GridView, type PaintStats } from "@/lib/canvasPaint";
+import {
+  paintBase,
+  paintOverlay,
+  valueWidth,
+  type GridView,
+  type PaintStats,
+} from "@/lib/canvasPaint";
 import {
   cellFontStack,
   clearTextCaches,
@@ -1842,6 +1848,11 @@ export function CanvasGrid({
             for (let c = col; c < col + (merge?.cols ?? 1); c += 1) {
               w += spanAt(view.cols.offsets, c);
             }
+            // A value is read in the room beside a narrow cell when the cells
+            // after it are empty, and the field has to be that same box: the
+            // width of the column alone is nothing at all for a column two
+            // pixels wide. A merge is painted whole and never spills.
+            if (!merge) w = valueWidth(view, row, col, w, CELL_PAD_LEFT, CELL_PAD_RIGHT);
             let h = 0;
             for (let r = row; r < row + (merge?.rows ?? 1); r += 1) {
               h += spanAt(view.rows.offsets, r);
