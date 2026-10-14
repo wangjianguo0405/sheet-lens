@@ -34,9 +34,25 @@
   "welcome": {
     "tagline": "Fast, local-first Excel viewer. Open a workbook, or drag one anywhere onto this window.",
     "open": "Open workbook",
-    "kbdOpen": "open",
-    "kbdSearch": "search",
-    "kbdGoTo": "go to"
+    "history": "Open recent",
+    "noHistory": "No workbook has been opened yet.",
+    "shortcuts": "Keyboard shortcuts",
+    "sc": {
+      "open": "Open a workbook",
+      "search": "Search the sheet",
+      "goTo": "Go to a cell",
+      "close": "Close the workbook",
+      "selectAll": "Select the whole sheet",
+      "copy": "Copy what is selected",
+      "move": "Move the cursor",
+      "extend": "Extend the selection",
+      "edge": "Jump to the edge of the data",
+      "page": "A screenful up or down",
+      "rowEnds": "First or last column of the row",
+      "sheetEnds": "First or last cell of the sheet",
+      "sheetStep": "Previous or next sheet",
+      "escape": "Close the search, or put a cell's text back"
+    }
   },
   "dialog": {
     "close": "Close"

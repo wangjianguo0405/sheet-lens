@@ -34,9 +34,25 @@
   "welcome": {
     "tagline": "快速、本地优先的 Excel 查看器。打开一个工作簿，或把文件拖到窗口任意位置。",
     "open": "打开工作簿",
-    "kbdOpen": "打开",
-    "kbdSearch": "搜索",
-    "kbdGoTo": "定位"
+    "history": "打开历史",
+    "noHistory": "还没有打开过工作簿。",
+    "shortcuts": "快捷键",
+    "sc": {
+      "open": "打开工作簿",
+      "search": "搜索工作表",
+      "goTo": "定位到单元格",
+      "close": "关闭工作簿",
+      "selectAll": "全选工作表",
+      "copy": "复制选中内容",
+      "move": "移动光标",
+      "extend": "扩展选区",
+      "edge": "跳到数据边缘",
+      "page": "上下翻一页",
+      "rowEnds": "行首 / 行末",
+      "sheetEnds": "工作表开头 / 末尾",
+      "sheetStep": "上一张 / 下一张工作表",
+      "escape": "关闭搜索 / 收起单元格内容"
+    }
   },
   "dialog": {
     "close": "关闭"
