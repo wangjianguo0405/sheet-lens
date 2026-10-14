@@ -1,9 +1,13 @@
 import { FileSpreadsheet } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { fileName } from "@/lib/recent";
 import { cn } from "@/lib/utils";
+
+/** How much of the history shows before the rest goes behind "More". */
+const HISTORY_SHOWN = 6;
 
 interface WelcomeProps {
   onOpen: () => void;
@@ -51,6 +55,8 @@ export function Welcome({
 }: WelcomeProps) {
   const { t } = useTranslation();
   const missing = new Set(missingFiles);
+  /** Whether the history is showing all of itself or only the newest few. */
+  const [fullHistory, setFullHistory] = useState(false);
 
   /**
    * Every key the app answers to, in the order a reader meets them: the file,
@@ -110,7 +116,10 @@ export function Welcome({
               </p>
             ) : (
               <ul className="mt-1 max-h-64 overflow-y-auto">
-                {recentFiles.map((path) => (
+                {(fullHistory
+                  ? recentFiles
+                  : recentFiles.slice(0, HISTORY_SHOWN)
+                ).map((path) => (
                   <li key={path}>
                     <button
                       type="button"
@@ -134,6 +143,20 @@ export function Welcome({
                     </button>
                   </li>
                 ))}
+                {/* The rest of the list, for a history with more in it than
+                    the page has room for — the File menu's own "More", in the
+                    one place a reader is already looking at the list. */}
+                {!fullHistory && recentFiles.length > HISTORY_SHOWN && (
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => setFullHistory(true)}
+                      className="flex w-full items-center rounded-sm px-1.5 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50"
+                    >
+                      {t("welcome.more")}
+                    </button>
+                  </li>
+                )}
               </ul>
             )}
           </section>

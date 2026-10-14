@@ -35,8 +35,9 @@
     "tagline": "Fast, local-first Excel viewer.",
     "hint": "Open a workbook, or drag one anywhere onto this window.",
     "open": "Open workbook",
-    "history": "Open recent",
+    "history": "Recent",
     "noHistory": "No workbook has been opened yet.",
+    "more": "More",
     "shortcuts": "Keyboard shortcuts",
     "sc": {
       "open": "Open a workbook",
