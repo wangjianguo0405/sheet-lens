@@ -51,6 +51,42 @@ export const MARK_SOFT = [
 /** What the paint bucket starts out holding, and fills with on its own. */
 export const DEFAULT_MARK = "#FFEB9C";
 
+const STORAGE_KEY = "sheetlens.markColor";
+
+/** Whether a stored value is one of the palette's, rather than anything at all. */
+function isMarkColor(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    (MARK_STANDARD.includes(value) || MARK_SOFT.includes(value))
+  );
+}
+
+/**
+ * The colour the bucket last held.
+ *
+ * Excel keeps its own fill colour between sessions — the button still shows the
+ * colour it was last given when it is opened the next day — so this is a
+ * setting rather than part of a workbook. The marks themselves are not: they
+ * belong to the tab that made them and are gone with it.
+ */
+export function initialMarkColor(): string {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (isMarkColor(stored)) return stored;
+  } catch {
+    // A webview that refuses storage still gets the default.
+  }
+  return DEFAULT_MARK;
+}
+
+export function storeMarkColor(fill: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, fill);
+  } catch {
+    // As above: the colour changes, the choice just does not survive the window.
+  }
+}
+
 export function markKey(sheet: string, row: number, col: number): string {
   // A NUL between the sheet and the cell: a sheet name may hold a colon, and
   // the pair has to be unambiguous without one.
