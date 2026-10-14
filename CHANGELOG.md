@@ -47,6 +47,10 @@ across.
   region further down the sheet were skipped. The row takes the colour all the
   way across now, and on a sheet with gridlines on, those same columns are ruled
   again
+- An update rewrites the `update-manifest.json` beside the executable now. It
+  used to stay at the version the folder was first unpacked from — a copy
+  updated through a dozen releases still said 0.1.0 — and it names the build
+  actually beside it now
 
 ## [0.3.11] - 2026-10-14
 
