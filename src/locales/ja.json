@@ -105,14 +105,7 @@
     "resetZoom": "ズームを 100% に戻す",
     "spanRows": "{{rows}} 行を選択",
     "spanCols": "{{cols}} 列を選択",
-    "spanBlock": "{{rows}} 行 × {{cols}} 列を選択",
-    "kind": {
-      "text": "文字列",
-      "number": "数値",
-      "bool": "真偽値",
-      "date": "日付",
-      "error": "エラー"
-    }
+    "spanBlock": "{{rows}} 行 × {{cols}} 列を選択"
   },
   "grid": {
     "resizeColumn": "列 {{column}} の幅を変更",
