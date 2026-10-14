@@ -12,6 +12,40 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.10] - 2026-10-14
+
+The window with nothing open is a start page, a file tab's place in the strip
+is yours to set, and shading lands on all of a selection.
+
+### Added
+
+- The empty window is a start page now: a row to open a workbook, the workbooks
+  opened lately down the left — the File menu's own list, so a workbook taken
+  out there goes from here too, each saying which folder it is in — and every key
+  the app answers to down the right
+- The rest of that list is one More row under the newest few
+- A file tab can be dragged to another place in the strip. The order is yours,
+  and the workbook showing stays the one showing
+- A sheet tab's name opens over it when it is double-clicked: selectable and
+  copyable, Ctrl+A taking the whole name, and nothing able to change it.
+  Escape, Enter, or a press anywhere else puts it back
+
+### Fixed
+
+- The File menu was as wide as the word on it, so every workbook in it came out
+  with an ellipsis. It is as wide as the longest name now, and no wider than a
+  quarter of the window
+- Double-clicking a cell too narrow to hold its value opened a field as narrow
+  as the column, which held nothing. The field is the box the value is drawn in:
+  as wide as the value needs, never past the neighbour that stops the spill
+- Shading a row or a block on a sheet narrower than the window left the
+  left-hand columns of the selection unshaded, and whether they took the colour
+  depended on where the sheet was scrolled to. The mark now lands on every cell
+  it was put on, and stays there
+- The paint bucket stopped at the last column holding a value, so a column the
+  file keeps alive with a border, and a merged region reaching past it, were left
+  out. A fill now reaches as far as the sheet is drawn
+
 ## [0.3.9] - 2026-10-14
 
 Cells can be shaded while you read, the sheet opens in whichever of Excel's two
@@ -238,6 +272,11 @@ in. The rest of this release is the keyboard catching up with it.
   stall the way they did
 - A new icon
 
+### Fixed
+
+- Ctrl+Shift with a letter no longer fires the plain shortcut under it —
+  Ctrl+Shift+G was opening the ordinary Go To
+
 ## [0.2.0] - 2026-10-11
 
 The interface now comes in English, Chinese and Japanese, and opens in your
@@ -252,10 +291,14 @@ you pick is remembered.
 
 ## [0.1.1] - 2026-10-11
 
+An update now says what the release it is offering contains.
+
 ### Improved
 
-- The update dialog now shows how far the download has got, instead of a line
-  that only said "downloading".
+- The prompt that offers an update shows that release's own notes, in place of
+  the placeholder every one of them had carried
+- The update dialog shows how far the download has got, instead of a line that
+  only said "downloading"
 
 ## [0.1.0] - 2026-10-11
 

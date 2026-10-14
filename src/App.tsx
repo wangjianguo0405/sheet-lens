@@ -358,7 +358,12 @@ export default function App() {
       // The bucket then holds what was just used, Excel's own behaviour: the
       // next press of the bucket is the same colour without opening anything.
       if (fill !== null) setMarkColor(fill);
-      const bounds = { rows: activeSheet.rows, cols: activeSheet.cols };
+      // The extent the grid is drawing, not `activeSheet`'s, which is calamine's
+      // range: that spans only cells holding a value, so a column kept alive by
+      // a border or a merge falls outside it and the fill stopped short of what
+      // is on screen. The grid reports its own extent; before the first report
+      // the parser's range is all there is.
+      const bounds = extent ?? { rows: activeSheet.rows, cols: activeSheet.cols };
       setTabs((prev) =>
         prev.map((tab) =>
           tab.info.path === active.info.path
@@ -376,7 +381,7 @@ export default function App() {
         ),
       );
     },
-    [active, activeSheet],
+    [active, activeSheet, extent],
   );
 
   const handleSheetSelect = useCallback(

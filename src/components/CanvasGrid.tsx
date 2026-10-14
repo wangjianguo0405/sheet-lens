@@ -1669,6 +1669,13 @@ export function CanvasGrid({
     const markMemo = new Map<number, string | null>();
     const markAtFast = (row: number, col: number): string | null => {
       if (marks.size === 0) return null;
+      // The key only identifies a cell *inside* the sheet: out in the blank area
+      // a column past the last one shares its number with the next row's first
+      // columns, and this pass does paint out there. On a sheet narrower than
+      // the window those blank cells are asked about first, so they answered for
+      // the row below and the mark went missing on everything but a merge, whose
+      // anchor is read before any row is. Nothing out there carries a mark.
+      if (row >= sheetRows || col >= sheetCols) return null;
       const key = cellKey(sheetCols, row, col);
       const hit = markMemo.get(key);
       if (hit !== undefined) return hit;
