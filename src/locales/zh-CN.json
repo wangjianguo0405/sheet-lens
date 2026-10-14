@@ -35,8 +35,9 @@
     "tagline": "快速、本地优先的 Excel 查看器。",
     "hint": "打开一个工作簿，或把文件拖到窗口任意位置。",
     "open": "打开工作簿",
-    "history": "打开历史",
+    "history": "最近",
     "noHistory": "还没有打开过工作簿。",
+    "more": "更多",
     "shortcuts": "快捷键",
     "sc": {
       "open": "打开工作簿",
