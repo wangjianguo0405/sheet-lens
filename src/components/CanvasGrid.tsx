@@ -556,12 +556,29 @@ export function CanvasGrid({
    *
    * A press that follows a click on the toolbar or on the start page lands on the
    * body, where the browser's own select-all highlights the page's DOM, leaves
-   * the sheet unselected, and leaves that highlight behind afterwards. A field
-   * keeps its own Ctrl+A: there it is the user selecting the text they typed.
+   * the sheet unselected, and leaves that highlight behind afterwards.
+   *
+   * While the field over a cell is open it is the thing being worked on, and
+   * Ctrl+A belongs to it — every time it is pressed, as it is in Excel, rather
+   * than walking out to the region and then to the whole sheet. Selecting its
+   * text here rather than leaving it to the browser is what makes that hold
+   * whether or not the field happens to be the thing holding the focus: a field
+   * that lost it would otherwise be answering this as the sheet.
    */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
+      const field = editorRef.current;
+      if (editingRef.current && field) {
+        event.preventDefault();
+        field.focus({ preventScroll: true });
+        const range = document.createRange();
+        range.selectNodeContents(field);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, [contenteditable]")) return;
       event.preventDefault();
