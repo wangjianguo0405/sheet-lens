@@ -12,6 +12,19 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.11] - 2026-10-14
+
+A workbook opened while another whose sheets share its names is already open
+keeps its own cells now.
+
+### Fixed
+
+- Opening a second workbook whose sheets are named the same as the first's left
+  the first one's data in it: the two shared one store of cells, and the second
+  workbook's were never read. A label sitting at one column in one file turned
+  up under another file's column header, and stayed there until the app was
+  restarted. Each workbook's cells are its own now.
+
 ## [0.3.10] - 2026-10-14
 
 The window with nothing open is a start page, a file tab's place in the strip
