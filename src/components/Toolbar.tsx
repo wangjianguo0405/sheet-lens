@@ -30,6 +30,22 @@ import { LOCALES, setLocale, type Locale } from "@/lib/i18n";
 import { fileName, RECENT_SHOWN } from "@/lib/recent";
 import { cn } from "@/lib/utils";
 
+/**
+ * The File menu's width, and its "More" submenu's.
+ *
+ * A menu is as wide as its trigger by default, and this trigger is the word
+ * "ファイル" — far too narrow for a workbook's name, so every one of them came
+ * out with an ellipsis. It takes the width of the longest name instead, and
+ * shortens one only when the window has nothing left to give.
+ *
+ * The cap is the window rather than Radix's own `content-available-width`,
+ * which is measured against the box the menu hangs off rather than the screen:
+ * on a submenu it resolves to the parent menu's width — far more than the room
+ * actually left to the right of it — so it capped nothing at all and let a long
+ * name run off the edge.
+ */
+const MENU_WIDTH = "w-max min-w-52 max-w-[calc(100vw-2rem)]";
+
 interface ToolbarProps {
   onOpen: () => void;
   onToggleSidebar: () => void;
@@ -163,7 +179,7 @@ export function Toolbar({
             {t("toolbar.file")}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-52">
+        <DropdownMenuContent align="start" className={MENU_WIDTH}>
           <DropdownMenuItem className="text-xs" onSelect={onOpen}>
             <FolderOpen className="size-3.5" />
             {t("toolbar.open")}
@@ -182,7 +198,7 @@ export function Toolbar({
                   <DropdownMenuSubTrigger className="text-xs">
                     {t("toolbar.more")}
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="min-w-52">
+                  <DropdownMenuSubContent className={MENU_WIDTH}>
                     {recent(recentFiles.slice(RECENT_SHOWN))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
