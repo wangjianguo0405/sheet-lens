@@ -1,9 +1,8 @@
-import { FileSpreadsheet } from "lucide-react";
+import { FileSpreadsheet, FolderOpen } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Button } from "@/components/ui/button";
-import { fileName } from "@/lib/recent";
+import { fileName, folderName } from "@/lib/recent";
 import { cn } from "@/lib/utils";
 
 /** How much of the history shows before the rest goes behind "More". */
@@ -96,9 +95,17 @@ export function Welcome({
           </p>
           <p className="text-xs text-muted-foreground">{t("welcome.hint")}</p>
 
-          <Button size="sm" className="mt-4 h-8 text-xs" onClick={onOpen}>
+          {/* The one thing the page is for, as a row with an icon rather than
+              as a filled button: it heads the same column as the list under
+              it, and a block of solid colour on an empty window is a shout. */}
+          <button
+            type="button"
+            onClick={onOpen}
+            className="mt-4 flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-xs text-foreground/80 transition-colors hover:bg-accent/50"
+          >
+            <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
             {t("welcome.open")}
-          </Button>
+          </button>
 
           {error && (
             <p className="mt-3 max-w-md rounded-sm bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
@@ -133,13 +140,20 @@ export function Welcome({
                           : path
                       }
                       className={cn(
-                        "flex w-full items-center rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50",
+                        "flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50",
                         missing.has(path)
                           ? "text-muted-foreground"
                           : "text-foreground/80",
                       )}
                     >
-                      <span className="truncate">{fileName(path)}</span>
+                      {/* Where it is, as well as what it is called: two
+                          workbooks of the same name in two folders are told
+                          apart by nothing else. The folder is the part that
+                          gives way when the row runs out. */}
+                      <span className="min-w-0 truncate">{fileName(path)}</span>
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                        {folderName(path)}
+                      </span>
                     </button>
                   </li>
                 ))}

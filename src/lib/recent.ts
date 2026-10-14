@@ -97,3 +97,13 @@ export function forgetAllFiles(): void {
 export function fileName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
+
+/**
+ * Everything before that last segment — the folder a workbook is in, for the
+ * places that have the room to say where it is as well as what it is called.
+ * Empty for a path with no folder in it, which a row shows as nothing at all.
+ */
+export function folderName(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut < 0 ? "" : path.slice(0, cut);
+}
