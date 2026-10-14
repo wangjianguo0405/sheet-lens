@@ -12,6 +12,42 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.12] - 2026-10-14
+
+Shift+click and Ctrl+click select the way Excel's do, the window keeps answering
+while a workbook is read, and a selected row takes its colour the whole way
+across.
+
+### Added
+
+- Shift+clicking a cell selects the block between it and the cell you started
+  from, and that first cell stays the one outlined: a further Shift+click grows
+  or shrinks the block around it rather than around the cell just clicked. A
+  click back inside the block makes it smaller instead of taking a corner off,
+  and Shift+clicking while a whole row or column is selected keeps the whole
+  line. The arrow keys leave from the outlined cell, as they do in Excel
+- Ctrl+click adds what it lands on to the selection, and takes it off again when
+  it is already in it — a cell, or a whole row or column clicked on its header.
+  Ctrl+dragging pulls a block out the same way. The name box lists the areas, the
+  status bar counts them, Ctrl+C copies all of them, and the paint bucket shades
+  all of them
+
+### Improved
+
+- The window keeps answering while a workbook is opened or a sheet is read:
+  every command runs off the UI thread now, rather than holding the message loop
+  for as long as it runs
+- A sheet's pictures arrive in one call instead of one call each, so a document
+  with fifty screenshots no longer opens its archive over and over
+
+### Fixed
+
+- Selecting a row on a sheet scrolled past its last column left gaps in the
+  row's colour: the columns whose place in the blank area lined up with a merged
+  region further down the sheet were skipped. The row takes the colour all the
+  way across now, and on a sheet with gridlines on, those same columns are ruled
+  again
+
 ## [0.3.11] - 2026-10-14
 
 A workbook opened while another whose sheets share its names is already open
