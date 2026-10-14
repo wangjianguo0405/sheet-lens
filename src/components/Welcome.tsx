@@ -82,9 +82,9 @@ export function Welcome({
 
   return (
     <div className="flex h-full w-full items-center justify-center overflow-auto p-6">
-      <div className="flex w-full max-w-3xl flex-col gap-6 md:flex-row md:gap-10">
+      <div className="flex w-full max-w-3xl flex-col gap-6 md:flex-row md:gap-0">
         {/* What to open */}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 md:pr-6">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="size-5 text-muted-foreground/60" />
             <h1 className="text-sm font-semibold">SheetLens</h1>
@@ -162,8 +162,10 @@ export function Welcome({
           </section>
         </div>
 
-        {/* What the keyboard does */}
-        <section className="min-w-0 shrink-0 md:w-80">
+        {/* What the keyboard does. A rule down its left edge, the way the
+            app's own panels are held apart: without it the two columns are
+            told apart by the space between them and nothing else. */}
+        <section className="min-w-0 shrink-0 md:w-84 md:border-l md:border-border md:pl-6">
           <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
             {t("welcome.shortcuts")}
           </h2>
