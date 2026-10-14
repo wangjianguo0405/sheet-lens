@@ -919,31 +919,66 @@ function paintCellText(
   // cells the file mentions into ones it has never heard of, which is how a
   // label sitting in the rightmost column of a narrow sheet — a rules page
   // three columns wide — is read at all; stopping at the data cut every such
-  // label down to the two characters its own column holds. The spill runs to
-  // the edge of what the scroller holds, which is off screen by then.
-  let box = { x, y, w, h };
-  if (!style?.wrap && horizontalOf(style, cell?.kind) === "left") {
-    if (textWidth(cellFont(view, style), text) > w - padLeft - padRight) {
-      let reached = w;
-      for (let next = col + 1; next < view.colEnd; next += 1) {
-        // A merge lives inside the used range, and `covered` is keyed by the
-        // sheet's own width — asking it about a column past that would read a
-        // cell of the row below.
-        if (
-          next < view.sheetCols &&
-          view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, next))
-        ) {
-          break;
-        }
-        if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
-        reached += spanAt(view.cols.offsets, next);
-      }
-      if (reached > w) box = { x, y, w: reached, h };
-    }
-  }
+  // label down to the two characters its own column holds. What stops it in
+  // the end is the value running out, or the scroller's own edge — which for
+  // such a label is off screen by then.
+  const box = {
+    x,
+    y,
+    w: valueWidth(view, sheetRow, col, w, padLeft, padRight),
+    h,
+  };
 
   paintText(ctx, view, box, text, style, cell?.kind, padLeft, padRight, view.richText[text] ?? null);
   return true;
+}
+
+/**
+ * The width a value is drawn in: its own cell's, or — when it is left-aligned,
+ * unwrapped and wider than that — as much of the room beside it as it needs,
+ * never past the first thing that stops a spill.
+ *
+ * The field a double-click opens over a cell is this same box, which is why it
+ * is here rather than inline: a column two pixels wide holds nothing readable,
+ * and its value is read only because the field takes the room the value is
+ * drawn in. A field the width of the column alone showed nothing at all.
+ *
+ * The insets are the caller's, since a filter header's are not a cell's.
+ */
+export function valueWidth(
+  view: GridView,
+  sheetRow: number,
+  col: number,
+  w: number,
+  padLeft: number,
+  padRight: number,
+): number {
+  const cell = view.cellAt(sheetRow, col);
+  const text = cell?.text ?? "";
+  const style = view.styleAt(sheetRow, col);
+  if (text === "" || style?.wrap) return w;
+  if (horizontalOf(style, cell?.kind) !== "left") return w;
+  const needed = textWidth(cellFont(view, style), text) + padLeft + padRight;
+  if (needed <= w) return w;
+
+  // Only as far as the value reaches: Excel runs the *drawing* box on to the
+  // end of the room, and for a field this same number would be a white bar
+  // across a row that is otherwise empty.
+  let reached = w;
+  for (let next = col + 1; reached < needed && next < view.colEnd; next += 1) {
+    // A merge lives inside the used range, and `covered` is keyed by the
+    // sheet's own width — asking it about a column past that would read a
+    // cell of the row below.
+    if (
+      next < view.sheetCols &&
+      view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, next))
+    ) {
+      break;
+    }
+    if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
+    reached += spanAt(view.cols.offsets, next);
+  }
+  return Math.min(reached, needed);
 }
 
 /** The opaque strips behind the row numbers and column letters. */
