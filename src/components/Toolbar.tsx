@@ -35,8 +35,10 @@ import { cn } from "@/lib/utils";
  *
  * A menu is as wide as its trigger by default, and this trigger is the word
  * "ファイル" — far too narrow for a workbook's name, so every one of them came
- * out with an ellipsis. It takes the width of the longest name instead, and
- * shortens one only when the window has nothing left to give.
+ * out with an ellipsis. It takes the width of the longest name instead, up to a
+ * quarter of the window: a name long enough to need more than that is one whose
+ * tail nobody reads anyway, and a menu half the screen wide is worse than a
+ * shortened name.
  *
  * The cap is the window rather than Radix's own `content-available-width`,
  * which is measured against the box the menu hangs off rather than the screen:
@@ -44,7 +46,7 @@ import { cn } from "@/lib/utils";
  * actually left to the right of it — so it capped nothing at all and let a long
  * name run off the edge.
  */
-const MENU_WIDTH = "w-max min-w-52 max-w-[calc(100vw-2rem)]";
+const MENU_WIDTH = "w-max min-w-52 max-w-[25vw]";
 
 interface ToolbarProps {
   onOpen: () => void;
