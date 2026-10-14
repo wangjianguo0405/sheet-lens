@@ -24,7 +24,7 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { toggleShapeDebug } from "@/lib/debugPanels";
-import { DEFAULT_MARK, markSelection } from "@/lib/marks";
+import { initialMarkColor, markSelection, storeMarkColor } from "@/lib/marks";
 import type { Target } from "@/lib/column";
 import {
   initialSheetPanels,
@@ -106,8 +106,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   /** Which of the two sheet pickers are showing; they are independent. */
   const [panels, setPanels] = useState<SheetPanels>(initialSheetPanels);
-  /** The colour the toolbar's paint bucket is holding. */
-  const [markColor, setMarkColor] = useState(DEFAULT_MARK);
+  /** The colour the toolbar's paint bucket is holding, kept between sessions. */
+  const [markColor, setMarkColor] = useState(initialMarkColor);
   /** The workbook paths the File menu offers, newest first. */
   const [recentFiles, setRecentFiles] = useState<string[]>(readRecentFiles);
   /** Those of them that would not open, which the menu greys out. */
@@ -364,6 +364,10 @@ export default function App() {
   useEffect(() => {
     storeSheetPanels(panels);
   }, [panels]);
+
+  useEffect(() => {
+    storeMarkColor(markColor);
+  }, [markColor]);
 
   /**
    * Ctrl+PageUp/PageDown steps along the workbook's sheets in tab order, and
