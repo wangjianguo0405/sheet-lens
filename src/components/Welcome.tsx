@@ -83,9 +83,12 @@ export function Welcome({
             <FileSpreadsheet className="size-5 text-muted-foreground/60" />
             <h1 className="text-sm font-semibold">SheetLens</h1>
           </div>
+          {/* Two lines rather than one paragraph: what the app is, then what
+              to do with it — which is the part worth reading twice. */}
           <p className="mt-1 text-xs text-muted-foreground">
             {t("welcome.tagline")}
           </p>
+          <p className="text-xs text-muted-foreground">{t("welcome.hint")}</p>
 
           <Button size="sm" className="mt-4 h-8 text-xs" onClick={onOpen}>
             {t("welcome.open")}

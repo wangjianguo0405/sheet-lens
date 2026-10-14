@@ -32,7 +32,8 @@
     "ja": "日本語"
   },
   "welcome": {
-    "tagline": "Fast, local-first Excel viewer. Open a workbook, or drag one anywhere onto this window.",
+    "tagline": "Fast, local-first Excel viewer.",
+    "hint": "Open a workbook, or drag one anywhere onto this window.",
     "open": "Open workbook",
     "history": "Open recent",
     "noHistory": "No workbook has been opened yet.",
