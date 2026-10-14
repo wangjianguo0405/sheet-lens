@@ -61,6 +61,14 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
   /** Where the tabs are scrolled to, which decides what the arrows can do. */
   const [bar, setBar] = useState({ left: 0, view: 0, total: 0 });
 
+  /**
+   * The tab whose name is open over it. A sheet's name belongs to the file, so
+   * this is the same field a double-clicked cell opens — one to read and copy
+   * from, not one to change.
+   */
+  const [editing, setEditing] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+
   const sync = useCallback(() => {
     const node = strip.current;
     if (!node) return;
@@ -94,6 +102,97 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
     );
     tab?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [active, sheets]);
+
+  /** It belongs to a tab on a strip, and goes when that strip's tabs do. */
+  useEffect(() => {
+    setEditing(null);
+  }, [sheets, active]);
+
+  /**
+   * Focused as it opens, with the caret at the end of the name — the footing a
+   * double-clicked cell's field starts on, so Ctrl+A reads the whole name from
+   * there.
+   */
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!editing || !el) return;
+    el.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [editing]);
+
+  /**
+   * And nothing may change it, so that what is read is what the workbook holds.
+   * The two are a pair because neither is enough alone: a native `beforeinput`
+   * listener refuses every edit the browser proposes, and the observer puts
+   * back whatever got in without proposing one — a context menu's Paste makes
+   * its edit through `execCommand`, which fires no such event.
+   */
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!editing || !el) return;
+    const refuse = (event: Event) => event.preventDefault();
+    el.addEventListener("beforeinput", refuse);
+    const asRead = el.innerHTML;
+    const observer = new MutationObserver(() => {
+      if (el.innerHTML !== asRead) el.innerHTML = asRead;
+    });
+    observer.observe(el, { childList: true, characterData: true, subtree: true });
+    return () => {
+      el.removeEventListener("beforeinput", refuse);
+      observer.disconnect();
+    };
+  }, [editing]);
+
+  /**
+   * The name owns the keyboard while it is open, and takes it in the capture
+   * phase so that nothing behind it is answering the same press — Ctrl+A would
+   * otherwise reach the sheet and select every cell in it while the tab's own
+   * name sat there unselected. Selecting the text here rather than leaving it
+   * to the browser is what makes that hold whether or not the field happens to
+   * be the thing holding the focus.
+   *
+   * Escape and Enter put it away, as they do on a cell's field.
+   */
+  useEffect(() => {
+    if (!editing) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const field = editorRef.current;
+      if (!field) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        event.stopPropagation();
+        field.focus({ preventScroll: true });
+        const range = document.createRange();
+        range.selectNodeContents(field);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
+      if (event.key === "Escape" || event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        setEditing(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [editing]);
+
+  /** A press anywhere else puts it away, the way leaving a cell does in Excel. */
+  useEffect(() => {
+    if (!editing) return;
+    const onDown = (event: PointerEvent) => {
+      if (!editorRef.current?.contains(event.target as Node)) setEditing(null);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [editing]);
 
   /** The tabs' left edges in scroll coordinates, which the arrows step between. */
   const edges = useCallback(() => {
@@ -191,42 +290,77 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
       >
         {sheets.map((sheet) => {
           const isActive = sheet.name === active;
+          const title = t("sheets.tabTitle", {
+            name: sheet.name,
+            rows: sheet.rows,
+            cols: sheet.cols,
+          });
+          const className = cn(
+            "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition",
+            isActive
+              ? "border-b-[#107C41] bg-background font-medium text-foreground"
+              : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+            // A tab filled with its own colour has the grey the others take
+            // on hover sitting behind an inline fill that wins, so it
+            // lightens instead — the same "this one is under the pointer".
+            !isActive && sheet.tabColor && "hover:brightness-110",
+          );
+          // A sheet the workbook gives a tab colour is filled with it, name
+          // and all — Excel paints the whole tab, not a strip along its
+          // foot. The current sheet keeps the raised tab instead, washed
+          // with that same colour, so it still says which sheet it is
+          // without going solid like the others.
+          const style = sheet.tabColor
+            ? isActive
+              ? { backgroundImage: activeWash(sheet.tabColor) }
+              : {
+                  backgroundColor: sheet.tabColor,
+                  color: readableOn(sheet.tabColor),
+                }
+            : undefined;
+
+          /**
+           * The name, opened over the tab by a double-click, as a cell's text
+           * is opened over its cell. A ring rather than a border: the strip's
+           * tabs are laid out edge to edge, and a border would widen this one
+           * and shift every tab after it the moment the field opened.
+           */
+          if (sheet.name === editing) {
+            return (
+              <div
+                key={sheet.name}
+                ref={editorRef}
+                data-sheet={sheet.name}
+                title={title}
+                contentEditable
+                suppressContentEditableWarning
+                spellCheck={false}
+                onPaste={(event) => event.preventDefault()}
+                onDrop={(event) => event.preventDefault()}
+                className={cn(
+                  className,
+                  "cursor-text outline-none select-text ring-1 ring-ring ring-inset",
+                )}
+                style={style}
+              >
+                {sheet.name}
+              </div>
+            );
+          }
+
           return (
             <button
               key={sheet.name}
               type="button"
               data-sheet={sheet.name}
               onClick={() => onSelect(sheet.name)}
-              title={t("sheets.tabTitle", {
-                name: sheet.name,
-                rows: sheet.rows,
-                cols: sheet.cols,
-              })}
-              className={cn(
-                "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition",
-                isActive
-                  ? "border-b-[#107C41] bg-background font-medium text-foreground"
-                  : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
-                // A tab filled with its own colour has the grey the others take
-                // on hover sitting behind an inline fill that wins, so it
-                // lightens instead — the same "this one is under the pointer".
-                !isActive && sheet.tabColor && "hover:brightness-110",
-              )}
-              // A sheet the workbook gives a tab colour is filled with it, name
-              // and all — Excel paints the whole tab, not a strip along its
-              // foot. The current sheet keeps the raised tab instead, washed
-              // with that same colour, so it still says which sheet it is
-              // without going solid like the others.
-              style={
-                sheet.tabColor
-                  ? isActive
-                    ? { backgroundImage: activeWash(sheet.tabColor) }
-                    : {
-                        backgroundColor: sheet.tabColor,
-                        color: readableOn(sheet.tabColor),
-                      }
-                  : undefined
-              }
+              // The second press is the one that opens the name, and the first
+              // has selected the sheet by then — which is what Excel does with
+              // a tab that is not the current one.
+              onDoubleClick={() => setEditing(sheet.name)}
+              title={title}
+              className={className}
+              style={style}
             >
               {sheet.name}
             </button>
