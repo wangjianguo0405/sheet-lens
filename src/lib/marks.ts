@@ -7,7 +7,7 @@
  * because closing its tab is what forgets the marks, the same way it forgets
  * the cursors.
  */
-import type { Selection } from "@/lib/selection";
+import { areasOf, type Area, type Selection } from "@/lib/selection";
 
 /** One cell's mark: a fill colour, keyed off the sheet and the cell. */
 export type Marks = Map<string, string>;
@@ -93,41 +93,41 @@ export function markKey(sheet: string, row: number, col: number): string {
   return `${sheet}\u0000${row}:${col}`;
 }
 
-/** The box a selection covers, with a run of rows or columns reaching the data. */
+/** The box one area covers, with a run of rows or columns reaching the data. */
 function rectOf(
-  selection: Selection,
+  area: Area,
   bounds: { rows: number; cols: number },
 ): { row: number; col: number; rows: number; cols: number } {
   const clampRows = (rows: number, row: number) =>
     Math.max(1, Math.min(rows, Math.max(0, bounds.rows - row)));
   const clampCols = (cols: number, col: number) =>
     Math.max(1, Math.min(cols, Math.max(0, bounds.cols - col)));
-  switch (selection.kind) {
+  switch (area.kind) {
     case "cell":
-      return { row: selection.row, col: selection.col, rows: 1, cols: 1 };
+      return { row: area.row, col: area.col, rows: 1, cols: 1 };
     // A whole row or column runs to the sheet's edge in Excel; here it stops at
     // the data, since marking a million empty cells is not what a fill means on
     // a sheet whose extent this app can see.
     case "row":
       return {
-        row: selection.row,
+        row: area.row,
         col: 0,
-        rows: Math.min(selection.rows, Math.max(1, bounds.rows)),
+        rows: Math.min(area.rows, Math.max(1, bounds.rows)),
         cols: bounds.cols,
       };
     case "column":
       return {
         row: 0,
-        col: selection.col,
+        col: area.col,
         rows: bounds.rows,
-        cols: Math.min(selection.cols, Math.max(1, bounds.cols)),
+        cols: Math.min(area.cols, Math.max(1, bounds.cols)),
       };
     case "range":
       return {
-        row: selection.row,
-        col: selection.col,
-        rows: clampRows(selection.rows, selection.row),
-        cols: clampCols(selection.cols, selection.col),
+        row: area.row,
+        col: area.col,
+        rows: clampRows(area.rows, area.row),
+        cols: clampCols(area.cols, area.col),
       };
   }
 }
@@ -136,6 +136,9 @@ function rectOf(
  * The marks after shading everything the selection covers, or after lifting the
  * shading off it when `fill` is null. Returns a new map, so React sees a new
  * value and repaints.
+ *
+ * Every area of a Ctrl+clicked selection is shaded: the bucket is pointed at
+ * what is selected, and what is selected is all of it.
  */
 export function markSelection(
   marks: Marks,
@@ -144,13 +147,15 @@ export function markSelection(
   bounds: { rows: number; cols: number },
   fill: string | null,
 ): Marks {
-  const { row, col, rows, cols } = rectOf(selection, bounds);
   const next = new Map(marks);
-  for (let r = row; r < row + rows; r += 1) {
-    for (let c = col; c < col + cols; c += 1) {
-      const key = markKey(sheet, r, c);
-      if (fill === null) next.delete(key);
-      else next.set(key, fill);
+  for (const area of areasOf(selection)) {
+    const { row, col, rows, cols } = rectOf(area, bounds);
+    for (let r = row; r < row + rows; r += 1) {
+      for (let c = col; c < col + cols; c += 1) {
+        const key = markKey(sheet, r, c);
+        if (fill === null) next.delete(key);
+        else next.set(key, fill);
+      }
     }
   }
   return next;

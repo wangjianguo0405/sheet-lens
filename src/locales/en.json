@@ -126,6 +126,7 @@
     "spanRows": "{{rows}} rows selected",
     "spanCols": "{{cols}} cols selected",
     "spanBlock": "{{rows}} rows × {{cols}} cols selected",
+    "spanAreas": "{{areas}} areas selected",
     "viewNormal": "Normal",
     "viewPageBreak": "Page Break Preview"
   },

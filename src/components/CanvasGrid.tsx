@@ -86,12 +86,17 @@ import {
 } from "@/lib/gridGeometry";
 import { stepZoom } from "@/lib/zoom";
 import {
+  activeArea,
+  areasOf,
   colsBetween,
   rangeBetween,
   rangeOver,
   rowsBetween,
   selectionAnchor,
   selectionCovers,
+  toggleArea,
+  withArea,
+  type Area,
   type Selection,
 } from "@/lib/selection";
 import { markKey, type Marks } from "@/lib/marks";
@@ -472,6 +477,14 @@ export function CanvasGrid({
    * how a run like `3:7` is made by mouse, and only that end moves.
    */
   const rangeDrag = useRef<DragAnchor | null>(null);
+  /**
+   * The selection a Ctrl+drag is adding to, if that is what this drag is.
+   *
+   * Held here rather than read as it goes, because each move redraws the block
+   * being pulled out from scratch: adding to the selection as it stands would
+   * pile up one area per pointer event.
+   */
+  const dragBase = useRef<Selection | null>(null);
   /** Where the pointer last was, which a drag keeps reading after it leaves. */
   const dragPointer = useRef<{ x: number; y: number } | null>(null);
   /** The frame that carries a drag on past the edge of the viewport. */
@@ -545,7 +558,7 @@ export function CanvasGrid({
    * the only sign it worked, and it stays until Escape or the next copy, on the
    * sheet it came from rather than on whichever sheet is showing.
    */
-  const copiedRef = useRef<{ path: string; sheet: string; rect: MergeRect } | null>(null);
+  const copiedRef = useRef<{ path: string; sheet: string; rects: MergeRect[] } | null>(null);
   /** How far the marquee's dashes have crawled, walked by the timer below. */
   const antsRef = useRef(0);
   const antsTimer = useRef(0);
@@ -1034,7 +1047,7 @@ export function CanvasGrid({
           -selection.row,
           Math.min(sheetRows - selection.row - selection.rows, row - selection.row),
         );
-        onSelect(rowsBetween(selection.anchor + step, selection.active + step));
+        onSelect(rowsBetween(selection.anchor + step, selection.edge + step));
         return;
       }
       if (selection.kind === "column") {
@@ -1047,7 +1060,7 @@ export function CanvasGrid({
           -selection.col,
           Math.min(sheetCols - selection.col - selection.cols, col - selection.col),
         );
-        onSelect(colsBetween(selection.anchor + step, selection.active + step));
+        onSelect(colsBetween(selection.anchor + step, selection.edge + step));
         return;
       }
       if (extend) onSelect(rangeBetween(selection.kind === "range" ? selection.anchor : from, { row, col }));
@@ -1297,7 +1310,7 @@ export function CanvasGrid({
    * life of the grid.
    */
   const markCopied = useCallback(
-    (next: { path: string; sheet: string; rect: MergeRect } | null) => {
+    (next: { path: string; sheet: string; rects: MergeRect[] } | null) => {
       copiedRef.current = next;
       window.clearInterval(antsTimer.current);
       antsTimer.current = 0;
@@ -1480,25 +1493,22 @@ export function CanvasGrid({
     if (!follow) return;
     const factor = zoom / 100;
 
-    // A block follows its active cell rather than its rectangle, which for one
-    // growing leftward is the wrong corner; the active cell is the end the
-    // keyboard walks, so an extension carries it into view as it goes.
+    // A block follows its edge rather than its rectangle, which for one growing
+    // leftward is the wrong corner: the edge is the end the pointer and the
+    // keyboard walk, so an extension carries it into view as it goes. A
+    // Ctrl+clicked selection follows the area just added, that being the one
+    // being looked at.
+    const at = activeArea(selection);
+    const moving =
+      at.kind === "range"
+        ? at.edge
+        : at.kind === "cell"
+          ? { row: at.row, col: at.col }
+          : null;
     const atRow =
-      selection.kind === "column"
-        ? -1
-        : selection.kind === "range"
-          ? selection.active.row
-          : selection.kind === "row"
-            ? selection.active
-            : selection.row;
+      at.kind === "column" ? -1 : moving ? moving.row : at.kind === "row" ? at.edge : -1;
     const atCol =
-      selection.kind === "row"
-        ? -1
-        : selection.kind === "range"
-          ? selection.active.col
-          : selection.kind === "column"
-            ? selection.active
-            : selection.col;
+      at.kind === "row" ? -1 : moving ? moving.col : at.kind === "column" ? at.edge : -1;
 
     // Scrolling *up* to a cell means matching its offset, not the offset plus
     // the gutter: the gutter scrolls with the content and would leave the cell
@@ -1748,9 +1758,10 @@ export function CanvasGrid({
       workbookFontSizePx: fontSize,
       showGrid,
       selection: selectionRef.current,
-      copied: copiedRef.current?.path === path && copiedRef.current?.sheet === sheet.name
-        ? copiedRef.current.rect
-        : null,
+      copied:
+        copiedRef.current?.path === path && copiedRef.current?.sheet === sheet.name
+          ? copiedRef.current.rects
+          : [],
       ants: antsRef.current,
       merges,
       mergeView: { shown: shownMerges, covered: coveredMerges },
@@ -2041,7 +2052,7 @@ export function CanvasGrid({
    * sheet included: Excel keeps selecting rows after the pointer leaves the
    * gutter, and only the end it started from stays put.
    */
-  const dragTo = useCallback((anchor: DragAnchor, hit: Exclude<Hit, null>): Selection | null => {
+  const dragTo = useCallback((anchor: DragAnchor, hit: Exclude<Hit, null>): Area | null => {
     if (anchor.kind === "cell") {
       if (hit.kind !== "cell") return null;
       if (hit.row === anchor.row && hit.col === anchor.col) return null;
@@ -2104,7 +2115,8 @@ export function CanvasGrid({
         const next = hit ? dragTo(anchor, hit) : null;
         if (next) {
           anchor.dragged = true;
-          onSelect(next);
+          const base = dragBase.current;
+          onSelect(base ? withArea(base, next) : next);
         }
       }
     }
@@ -2119,8 +2131,54 @@ export function CanvasGrid({
     }
     const hit = hitAt(event.clientX, event.clientY);
     if (!hit) return;
+    const add = event.ctrlKey || event.metaKey;
     if (hit.kind === "cell") {
+      // A Ctrl+click adds what it landed on to the selection rather than moving
+      // there — and takes off the area it landed inside of, the whole of that
+      // area rather than the part of it pointed at, which is how Excel lets a
+      // block be picked up and then put back.
+      if (add) {
+        const merge = mergeAt(hit.row, hit.col);
+        const row = merge ? merge.row : hit.row;
+        const col = merge ? merge.col : hit.col;
+        onSelect(toggleArea(selection, { kind: "cell", row, col }, { kind: "cell", row, col }));
+        return;
+      }
+      // Shift extends the block from the cell it is pinned at: the anchor is
+      // the pivot, so the same corner keeps growing and a click back inside the
+      // block redraws it smaller rather than taking a corner off.
+      if (event.shiftKey) {
+        // A run of whole rows or columns stays a run when a cell is clicked: the
+        // whole line that cell is on joins it, the way the next header would.
+        if (selection.kind === "row") {
+          onSelect(rowsBetween(selection.anchor, hit.row));
+        } else if (selection.kind === "column") {
+          onSelect(colsBetween(selection.anchor, hit.col));
+        } else {
+          onSelect(rangeBetween(selectionAnchor(selection), { row: hit.row, col: hit.col }));
+        }
+        return;
+      }
       select(hit.row, hit.col);
+    } else if (add) {
+      // A gutter takes a whole line into the selection, on its own or off it.
+      if (hit.kind === "rowHeader") {
+        onSelect(
+          toggleArea(selection, rowsBetween(hit.row, hit.row), {
+            kind: "row",
+            row: hit.row,
+            col: 0,
+          }),
+        );
+      } else {
+        onSelect(
+          toggleArea(selection, colsBetween(hit.col, hit.col), {
+            kind: "column",
+            row: 0,
+            col: hit.col,
+          }),
+        );
+      }
     } else {
       // Shift grows the run from the row or column the selection is anchored
       // on, the way it grows a block from its anchor cell — so a run is made by
@@ -2177,18 +2235,18 @@ export function CanvasGrid({
       if (!selectionCovers(selection, hit.row, hit.col)) select(hit.row, hit.col);
       return;
     }
+    // A press anywhere inside a run of rows or columns leaves the run alone, the
+    // way a press inside a block does, so a whole run can be coloured at once by
+    // right-clicking any part of it.
+    const area = activeArea(selection);
     if (hit.kind === "rowHeader") {
       const covered =
-        selection.kind === "row" &&
-        hit.row >= selection.row &&
-        hit.row < selection.row + selection.rows;
+        area.kind === "row" && hit.row >= area.row && hit.row < area.row + area.rows;
       if (!covered) onSelect(rowsBetween(hit.row, hit.row));
       return;
     }
     const covered =
-      selection.kind === "column" &&
-      hit.col >= selection.col &&
-      hit.col < selection.col + selection.cols;
+      area.kind === "column" && hit.col >= area.col && hit.col < area.col + area.cols;
     if (!covered) onSelect(colsBetween(hit.col, hit.col));
   };
 
@@ -2216,6 +2274,9 @@ export function CanvasGrid({
       rangeDrag.current = { kind: "cell", row: hit.row, col: hit.col, dragged: false };
     }
     dragPointer.current = { x: event.clientX, y: event.clientY };
+    // Ctrl pulls a block out *beside* what is selected rather than over it, so
+    // what is there now is what the drag adds to.
+    dragBase.current = event.ctrlKey || event.metaKey ? selection : null;
     if (!autoScroll.current) autoScroll.current = requestAnimationFrame(runAutoScroll);
     document.body.style.userSelect = "none";
   };
@@ -2233,11 +2294,13 @@ export function CanvasGrid({
       const next = dragTo(anchor, hit);
       if (!next) return;
       anchor.dragged = true;
-      onSelect(next);
+      const base = dragBase.current;
+      onSelect(base ? withArea(base, next) : next);
     };
     const onUp = () => {
       suppressClick.current = rangeDrag.current?.dragged ?? false;
       rangeDrag.current = null;
+      dragBase.current = null;
       dragPointer.current = null;
       cancelAnimationFrame(autoScroll.current);
       autoScroll.current = 0;
@@ -2334,52 +2397,59 @@ export function CanvasGrid({
     });
   };
 
-  /** Ctrl+C: the cell's text, or the whole row/column, tab or newline joined. */
+  /**
+   * Ctrl+C: the cell's text, or the whole row or column, tab or newline joined.
+   *
+   * A Ctrl+clicked selection is copied whole, its blocks in reading order. Excel
+   * puts a blank line between one block and the next, which is what keeps the
+   * seam between them visible in a text paste instead of running the last row of
+   * one into the first row of the next.
+   */
   const copySelection = useCallback(async () => {
     const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
     const sheetCols = Math.max(sheet.cols, layout?.cols ?? 0);
-    let text: string;
-    let rect: MergeRect;
-    try {
-      if (selection.kind === "cell") {
-        text = cellAt(selection.row, selection.col)?.text ?? "";
-        rect = { row: selection.row, col: selection.col, rows: 1, cols: 1 };
-      } else if (selection.kind === "row") {
-        text = (await axisValues(path, sheet.name, { row: selection.row }, 0, sheetCols - 1)).join(
-          "\t",
-        );
-        rect = { row: selection.row, col: 0, rows: selection.rows, cols: sheetCols };
-      } else if (selection.kind === "range") {
-        const block = await getCells(
-          path,
-          sheet.name,
-          selection.row,
-          selection.col,
-          selection.rows,
-          selection.cols,
-        );
-        text = block
-          .map((line) => line.map((cell) => cell?.text ?? "").join("\t"))
-          .join("\n");
-        rect = {
-          row: selection.row,
-          col: selection.col,
-          rows: selection.rows,
-          cols: selection.cols,
+
+    /** One block's text, and the box the marquee is drawn around. */
+    const take = async (area: Area): Promise<{ text: string; rect: MergeRect }> => {
+      if (area.kind === "cell") {
+        return {
+          text: cellAt(area.row, area.col)?.text ?? "",
+          rect: { row: area.row, col: area.col, rows: 1, cols: 1 },
         };
-      } else {
-        text = (await axisValues(path, sheet.name, { col: selection.col }, 0, sheetRows - 1)).join(
-          "\n",
-        );
-        rect = { row: 0, col: selection.col, rows: sheetRows, cols: selection.cols };
       }
+      if (area.kind === "row") {
+        const text = (
+          await axisValues(path, sheet.name, { row: area.row }, 0, sheetCols - 1)
+        ).join("\t");
+        return { text, rect: { row: area.row, col: 0, rows: area.rows, cols: sheetCols } };
+      }
+      if (area.kind === "column") {
+        const text = (
+          await axisValues(path, sheet.name, { col: area.col }, 0, sheetRows - 1)
+        ).join("\n");
+        return { text, rect: { row: 0, col: area.col, rows: sheetRows, cols: area.cols } };
+      }
+      const block = await getCells(path, sheet.name, area.row, area.col, area.rows, area.cols);
+      return {
+        text: block
+          .map((line) => line.map((cell) => cell?.text ?? "").join("\t"))
+          .join("\n"),
+        rect: { row: area.row, col: area.col, rows: area.rows, cols: area.cols },
+      };
+    };
+
+    let parts: { text: string; rect: MergeRect }[];
+    try {
+      parts = await Promise.all(areasOf(selection).map(take));
     } catch {
       // Nothing sensible to do if the backend is gone; leave the clipboard be.
       return;
     }
     // The marquee only follows a copy that took, so it never claims a write
     // that the clipboard refused.
-    if (await copyText(text)) markCopied({ path, sheet: sheet.name, rect });
+    if (await copyText(parts.map((part) => part.text).join("\n\n"))) {
+      markCopied({ path, sheet: sheet.name, rects: parts.map((part) => part.rect) });
+    }
   }, [selection, cellAt, path, sheet.name, sheet.rows, sheet.cols, layout, markCopied]);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -2403,7 +2473,18 @@ export function CanvasGrid({
     const z = zoomRef.current;
     const visible = el ? Math.floor((el.clientHeight / z - COL_HEADER_H) / baseRowH) : 20;
     const page = Math.max(1, visible - 2 * OVERSCAN_ROWS);
-    const cursor = selectionAnchor(selection);
+    // A Ctrl+clicked selection answers the arrows as its active cell alone: the
+    // other areas come off with the first press, as they do in Excel. The two
+    // cells a move is measured from are not the same one: the anchor is Excel's
+    // active cell — where a plain move leaves from, and where a block stays
+    // pinned — and the edge is the end Shift keeps walking, which is what lets
+    // repeated presses accumulate and a press back retrace.
+    const anchor = selectionAnchor(selection);
+    const shown: Selection =
+      selection.kind === "areas"
+        ? { kind: "cell", row: anchor.row, col: anchor.col }
+        : selection;
+    const edge = shown.kind === "range" ? shown.edge : anchor;
 
     // Ctrl belongs to the sheet rather than the cursor: Excel jumps to the two
     // corners with Ctrl+Home/End and steps between sheets with Ctrl+PageUp/Down.
@@ -2456,38 +2537,38 @@ export function CanvasGrid({
     //
     // The slide's step has to keep the *whole* run on the sheet. Clamping the
     // top alone let 27:29 slide onto row 31 of a 30-row sheet.
-    if (selection.kind === "row") {
+    if (shown.kind === "row") {
       const slide = (next: number) => {
         const step = Math.max(
-          -selection.row,
-          Math.min(rowCount - selection.row - selection.rows, next - selection.row),
+          -shown.row,
+          Math.min(rowCount - shown.row - shown.rows, next - shown.row),
         );
-        onSelect(rowsBetween(selection.anchor + step, selection.active + step));
+        onSelect(rowsBetween(shown.anchor + step, shown.edge + step));
       };
       const grow = (next: number) =>
-        onSelect(rowsBetween(selection.anchor, clampRow(next)));
+        onSelect(rowsBetween(shown.anchor, clampRow(next)));
       switch (event.key) {
         case "ArrowUp":
-          if (event.shiftKey) grow(selection.active - 1);
-          else slide(selection.row - 1);
+          if (event.shiftKey) grow(shown.edge - 1);
+          else slide(shown.row - 1);
           break;
         case "ArrowDown":
-          if (event.shiftKey) grow(selection.active + 1);
-          else slide(selection.row + 1);
+          if (event.shiftKey) grow(shown.edge + 1);
+          else slide(shown.row + 1);
           break;
         case "PageUp":
-          if (event.shiftKey) grow(selection.active - page);
-          else slide(selection.row - page);
+          if (event.shiftKey) grow(shown.edge - page);
+          else slide(shown.row - page);
           break;
         case "PageDown":
-          if (event.shiftKey) grow(selection.active + page);
-          else slide(selection.row + page);
+          if (event.shiftKey) grow(shown.edge + page);
+          else slide(shown.row + page);
           break;
         case "Home":
-          select(selection.active, 0);
+          select(shown.anchor, 0);
           break;
         case "End":
-          select(selection.active, lastCol);
+          select(shown.anchor, lastCol);
           break;
         default:
           return;
@@ -2495,32 +2576,32 @@ export function CanvasGrid({
       event.preventDefault();
       return;
     }
-    if (selection.kind === "column") {
+    if (shown.kind === "column") {
       const slide = (next: number) => {
         const step = Math.max(
-          -selection.col,
-          Math.min(colCount - selection.col - selection.cols, next - selection.col),
+          -shown.col,
+          Math.min(colCount - shown.col - shown.cols, next - shown.col),
         );
-        onSelect(colsBetween(selection.anchor + step, selection.active + step));
+        onSelect(colsBetween(shown.anchor + step, shown.edge + step));
       };
       const grow = (next: number) =>
-        onSelect(colsBetween(selection.anchor, clampCol(next)));
+        onSelect(colsBetween(shown.anchor, clampCol(next)));
       switch (event.key) {
         case "ArrowLeft":
-          if (event.shiftKey) grow(selection.active - 1);
-          else slide(selection.col - 1);
+          if (event.shiftKey) grow(shown.edge - 1);
+          else slide(shown.col - 1);
           break;
         case "ArrowRight":
-          if (event.shiftKey) grow(selection.active + 1);
-          else slide(selection.col + 1);
+          if (event.shiftKey) grow(shown.edge + 1);
+          else slide(shown.col + 1);
           break;
         // A column has no vertical page of its own to move by; PageUp and
         // PageDown scroll, which the wheel already does.
         case "Home":
-          select(0, selection.active);
+          select(0, shown.anchor);
           break;
         case "End":
-          select(lastRow, selection.active);
+          select(lastRow, shown.anchor);
           break;
         default:
           return;
@@ -2529,43 +2610,45 @@ export function CanvasGrid({
       return;
     }
 
-    // Shift extends a block rather than collapsing to a cell. The far end walks
-    // from where it already is — `cursor` is a block's active cell, which is
-    // that end — so repeated presses accumulate and a press back retraces.
+    // Shift extends a block rather than collapsing to a cell, walking its edge
+    // from where it already is — so repeated presses accumulate, a press back
+    // retraces, and the block stays pinned at the anchor throughout. A plain
+    // press leaves from the anchor instead, which is Excel's active cell, and
+    // collapses the block to whatever cell it lands on.
+    const step = event.shiftKey ? edge : anchor;
     const moveTo = (row: number, col: number) => {
       const target = { row: clampRow(row), col: clampCol(col) };
       if (!event.shiftKey) {
         select(target.row, target.col);
         return;
       }
-      const anchor = selection.kind === "range" ? selection.anchor : cursor;
       onSelect(rangeBetween(anchor, target));
     };
 
     switch (event.key) {
       case "ArrowUp":
-        moveTo(cursor.row - 1, cursor.col);
+        moveTo(step.row - 1, step.col);
         break;
       case "ArrowDown":
-        moveTo(cursor.row + 1, cursor.col);
+        moveTo(step.row + 1, step.col);
         break;
       case "ArrowLeft":
-        moveTo(cursor.row, cursor.col - 1);
+        moveTo(step.row, step.col - 1);
         break;
       case "ArrowRight":
-        moveTo(cursor.row, cursor.col + 1);
+        moveTo(step.row, step.col + 1);
         break;
       case "PageUp":
-        moveTo(cursor.row - page, cursor.col);
+        moveTo(step.row - page, step.col);
         break;
       case "PageDown":
-        moveTo(cursor.row + page, cursor.col);
+        moveTo(step.row + page, step.col);
         break;
       case "Home":
-        moveTo(cursor.row, 0);
+        moveTo(step.row, 0);
         break;
       case "End":
-        moveTo(cursor.row, lastCol);
+        moveTo(step.row, lastCol);
         break;
       default:
         return;

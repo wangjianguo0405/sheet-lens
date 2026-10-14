@@ -54,7 +54,13 @@ import {
   spanAt,
   type Metrics,
 } from "@/lib/gridGeometry";
-import { selectionCovers, selectionIntersects, type Selection } from "@/lib/selection";
+import {
+  activeArea,
+  areasOf,
+  selectionCovers,
+  selectionIntersects,
+  type Selection,
+} from "@/lib/selection";
 import {
   cellFontStack,
   fontString,
@@ -115,11 +121,12 @@ export interface GridView {
   showGrid: boolean;
   selection: Selection;
   /**
-   * What Ctrl+C took on this sheet, or null when the clipboard holds nothing
-   * from it. Drawn as a dashed rule, which is the only sign a copy happened at
-   * all: Excel's copy shows nothing else.
+   * What Ctrl+C took on this sheet, or an empty list when the clipboard holds
+   * nothing from it. Drawn as a dashed rule, which is the only sign a copy
+   * happened at all: Excel's copy shows nothing else. A Ctrl+clicked selection
+   * is copied as several blocks, and Excel's marquee rings each of them.
    */
-  copied: MergeRect | null;
+  copied: MergeRect[];
   /** How far the marquee's dashes have crawled, in pixels. */
   ants: number;
   merges: MergeRect[];
@@ -1023,9 +1030,19 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
 
   // Excel marks one cell with an outline and anything larger with a fill — and
   // inside a fill it leaves the active cell clear and outlines that one, which
-  // is what makes the corner the arrow keys will leave from visible at all.
-  const single = view.selection.kind === "cell";
-  const active = view.selection.kind === "range" ? view.selection.active : null;
+  // is what makes the corner the arrow keys will leave from visible at all. That
+  // cell is the area's anchor, so it stays where the block was pinned while the
+  // block is grown away from it; a Ctrl+clicked selection has one such cell too,
+  // in whichever of its areas is the active one. A run of whole rows or columns
+  // leaves no cell clear at all.
+  const onlyCell = view.selection.kind === "cell";
+  const shown = activeArea(view.selection);
+  const active =
+    shown.kind === "range"
+      ? shown.anchor
+      : shown.kind === "cell"
+        ? { row: shown.row, col: shown.col }
+        : null;
   for (const { sheetRow, display } of rows) {
     const y = oy + view.rows.offsets[display];
     const h = spanAt(view.rows.offsets, display);
@@ -1036,7 +1053,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
       if (view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, c))) continue;
       const x = ox + view.cols.offsets[c];
       const w = spanAt(view.cols.offsets, c);
-      if (single || (active && active.row === sheetRow && active.col === c)) {
+      if (active && active.row === sheetRow && active.col === c) {
         ring(ctx, x, y, w, h, ACCENT_INK);
       } else {
         fill(ctx, x, y, w, h, SELECTION_WASH);
@@ -1060,23 +1077,26 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
       const at = view.displayOfRow(r);
       if (at >= 0) h += spanAt(view.rows.offsets, at);
     }
-    if (single) ring(ctx, x, y, w, h, ACCENT_INK);
+    if (onlyCell) ring(ctx, x, y, w, h, ACCENT_INK);
     else fill(ctx, x, y, w, h, SELECTION_WASH);
   }
 
-  // Excel draws one rule around the whole block rather than a box per cell.
-  if (view.selection.kind === "range") {
-    const top = view.displayOfRow(view.selection.row);
-    const bottom = view.displayOfRow(view.selection.row + view.selection.rows - 1);
-    const right = Math.min(view.sheetCols - 1, view.selection.col + view.selection.cols - 1);
+  // Excel draws one rule around the whole block rather than a box per cell —
+  // and one around each block of a Ctrl+clicked selection, which is what says
+  // where one area of it ends and the next begins.
+  for (const area of areasOf(view.selection)) {
+    if (area.kind !== "range") continue;
+    const top = view.displayOfRow(area.row);
+    const bottom = view.displayOfRow(area.row + area.rows - 1);
+    const right = Math.min(view.sheetCols - 1, area.col + area.cols - 1);
     if (top >= 0 && bottom >= 0) {
-      const x = ox + view.cols.offsets[view.selection.col];
+      const x = ox + view.cols.offsets[area.col];
       const y = oy + view.rows.offsets[top];
       ring(
         ctx,
         x,
         y,
-        view.cols.offsets[right + 1] - view.cols.offsets[view.selection.col],
+        view.cols.offsets[right + 1] - view.cols.offsets[area.col],
         view.rows.offsets[bottom + 1] - view.rows.offsets[top],
         ACCENT_INK,
       );
@@ -1085,13 +1105,13 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
 
   // What Ctrl+C took, if it was taken here. Drawn over the selection's own
   // rule, so a copied block that is also selected keeps both.
-  if (view.copied) {
+  for (const taken of view.copied) {
     // A merged cell is one cell to the grid and a block to Excel, whose marquee
     // is drawn around the whole of it — so the copied rectangle is grown over any
     // merged region it reaches into before it is outlined. Merged regions never
     // overlap one another, so one pass is enough. The range ring above needs none
     // of this: it is drawn from the region itself.
-    let rect = view.copied;
+    let rect = taken;
     for (const merge of view.merges) {
       if (!overlapsRect(rect, merge)) continue;
       const row = Math.min(rect.row, merge.row);
@@ -1187,27 +1207,31 @@ function paintGutterLabels(
 }
 
 function litRow(selection: Selection, row: number): boolean {
-  switch (selection.kind) {
-    case "row":
-      return row >= selection.row && row < selection.row + selection.rows;
-    case "cell":
-      return selection.row === row;
-    case "range":
-      return row >= selection.row && row < selection.row + selection.rows;
-    default:
-      return false;
-  }
+  return areasOf(selection).some((area) => {
+    switch (area.kind) {
+      case "row":
+      case "range":
+        return row >= area.row && row < area.row + area.rows;
+      case "cell":
+        return area.row === row;
+      // A run of whole columns is every row's, which says nothing about any
+      // one of them.
+      case "column":
+        return false;
+    }
+  });
 }
 
 function litColumn(selection: Selection, col: number): boolean {
-  switch (selection.kind) {
-    case "column":
-      return col >= selection.col && col < selection.col + selection.cols;
-    case "cell":
-      return selection.col === col;
-    case "range":
-      return col >= selection.col && col < selection.col + selection.cols;
-    default:
-      return false;
-  }
+  return areasOf(selection).some((area) => {
+    switch (area.kind) {
+      case "column":
+      case "range":
+        return col >= area.col && col < area.col + area.cols;
+      case "cell":
+        return area.col === col;
+      case "row":
+        return false;
+    }
+  });
 }

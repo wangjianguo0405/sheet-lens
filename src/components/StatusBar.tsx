@@ -39,6 +39,7 @@ const SPAN_KEY = {
   rows: "status.spanRows",
   cols: "status.spanCols",
   block: "status.spanBlock",
+  areas: "status.spanAreas",
 } as const;
 
 export function StatusBar({
