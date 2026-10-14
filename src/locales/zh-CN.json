@@ -124,6 +124,7 @@
     "spanRows": "已选 {{rows}} 行",
     "spanCols": "已选 {{cols}} 列",
     "spanBlock": "已选 {{rows}} 行 × {{cols}} 列",
+    "spanAreas": "已选 {{areas}} 个区域",
     "viewNormal": "普通视图",
     "viewPageBreak": "分页预览"
   },
