@@ -23,6 +23,7 @@
     "hideSheetTabs": "隐藏工作表标签",
     "checkUpdates": "检查更新",
     "updateAvailable": "有新版本可用",
+    "fill": "填充颜色",
     "language": "语言"
   },
   "language": {
@@ -43,7 +44,14 @@
   "tabs": {
     "close": "关闭 {{name}}",
     "new": "新标签页",
-    "openAnother": "打开其他工作簿"
+    "openAnother": "打开其他工作簿",
+    "copyName": "复制文件名",
+    "copyPath": "复制文件路径"
+  },
+  "mark": {
+    "clear": "无填充",
+    "standard": "标准色",
+    "soft": "浅色"
   },
   "sheets": {
     "filter": "筛选工作表",

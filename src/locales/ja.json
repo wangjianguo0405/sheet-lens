@@ -23,6 +23,7 @@
     "hideSheetTabs": "シート見出しを非表示",
     "checkUpdates": "更新を確認",
     "updateAvailable": "新しいバージョンが利用可能です",
+    "fill": "塗りつぶしの色",
     "language": "言語"
   },
   "language": {
@@ -43,7 +44,14 @@
   "tabs": {
     "close": "{{name}} を閉じる",
     "new": "新しいタブ",
-    "openAnother": "別のブックを開く"
+    "openAnother": "別のブックを開く",
+    "copyName": "ファイル名をコピー",
+    "copyPath": "ファイルパスをコピー"
+  },
+  "mark": {
+    "clear": "塗りつぶしなし",
+    "standard": "標準の色",
+    "soft": "淡い色"
   },
   "sheets": {
     "filter": "シートを絞り込む",

@@ -48,6 +48,35 @@ function ContextMenuLabel({
   )
 }
 
+function ContextMenuItem({
+  className,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.Item>) {
+  return (
+    <ContextMenuPrimitive.Item
+      data-slot="context-menu-item"
+      className={cn(
+        "relative flex cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground focus:**:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function ContextMenuSeparator({
+  className,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.Separator>) {
+  return (
+    <ContextMenuPrimitive.Separator
+      data-slot="context-menu-separator"
+      className={cn("-mx-1 my-1 h-px bg-border", className)}
+      {...props}
+    />
+  )
+}
+
 function ContextMenuRadioGroup({
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.RadioGroup>) {
@@ -90,7 +119,9 @@ export {
   ContextMenu,
   ContextMenuTrigger,
   ContextMenuContent,
+  ContextMenuItem,
   ContextMenuLabel,
   ContextMenuRadioGroup,
   ContextMenuRadioItem,
+  ContextMenuSeparator,
 }

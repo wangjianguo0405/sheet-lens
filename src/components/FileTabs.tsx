@@ -2,6 +2,13 @@ import { Plus, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 
 /**
@@ -62,36 +69,57 @@ export function FileTabs({
       {tabs.map((tab) => {
         const isActive = tab.path === active;
         return (
-          <div
-            key={tab.path}
-            className={cn(
-              "group flex max-w-64 shrink-0 items-center gap-1 border-r border-border px-2 py-1 text-xs",
-              isActive
-                ? "bg-background text-foreground"
-                : "text-muted-foreground hover:bg-accent/40",
-            )}
-            onAuxClick={middleClose(() => onClose(tab.path))}
-          >
-            <button
-              type="button"
-              className="truncate"
-              title={tab.path}
-              onClick={() => onSelect(tab.path)}
-            >
-              {tab.fileName}
-            </button>
-            <button
-              type="button"
-              aria-label={t("tabs.close", { name: tab.fileName })}
-              className={cn(
-                "rounded-sm p-0.5 transition-opacity hover:bg-accent",
-                isActive ? "opacity-60" : "opacity-0 group-hover:opacity-60",
-              )}
-              onClick={() => onClose(tab.path)}
-            >
-              <X className="size-3" />
-            </button>
-          </div>
+          <ContextMenu key={tab.path}>
+            <ContextMenuTrigger asChild>
+              <div
+                className={cn(
+                  "group flex max-w-64 shrink-0 items-center gap-1 border-r border-border px-2 py-1 text-xs",
+                  isActive
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:bg-accent/40",
+                )}
+                onAuxClick={middleClose(() => onClose(tab.path))}
+              >
+                <button
+                  type="button"
+                  className="truncate"
+                  title={tab.path}
+                  onClick={() => onSelect(tab.path)}
+                >
+                  {tab.fileName}
+                </button>
+                <button
+                  type="button"
+                  aria-label={t("tabs.close", { name: tab.fileName })}
+                  className={cn(
+                    "rounded-sm p-0.5 transition-opacity hover:bg-accent",
+                    isActive ? "opacity-60" : "opacity-0 group-hover:opacity-60",
+                  )}
+                  onClick={() => onClose(tab.path)}
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            </ContextMenuTrigger>
+            {/* The name and the path are the two things worth having somewhere
+                else — a bug report, a chat message — and neither is easy to get
+                at otherwise, since the tab shows only the name and truncates
+                even that. */}
+            <ContextMenuContent className="min-w-44">
+              <ContextMenuItem
+                className="text-xs"
+                onSelect={() => void copyText(tab.fileName)}
+              >
+                {t("tabs.copyName")}
+              </ContextMenuItem>
+              <ContextMenuItem
+                className="text-xs"
+                onSelect={() => void copyText(tab.path)}
+              >
+                {t("tabs.copyPath")}
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         );
       })}
 
