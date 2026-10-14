@@ -203,6 +203,33 @@ fn refresh_documents(archive: &[u8], dir: &Path) {
     }
 }
 
+/// The manifest the archive carries, as the release wrote it.
+///
+/// Nothing here parses it or names a version: `extract_executable` has already
+/// held the download to it, so what comes back is the copy that passed rather
+/// than a second opinion about it.
+fn manifest_in(archive: &[u8]) -> Option<Vec<u8>> {
+    let mut zip = zip::ZipArchive::new(Cursor::new(archive)).ok()?;
+    let mut entry = zip.by_name(PAYLOAD_MANIFEST).ok()?;
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// Rewrites the folder's own copy of the archive's manifest.
+///
+/// It is a label rather than reading matter, so it is not one of the folder's
+/// documents — but it goes stale the way they do, and worse: the copy that came
+/// out of the first archive someone unpacked went on naming the version they
+/// first installed, however many releases later, which is a folder that lies
+/// about the build beside it. Written from the archive, so the two agree, and
+/// best effort like the documents.
+fn refresh_manifest(archive: &[u8], dir: &Path) {
+    if let Some(bytes) = manifest_in(archive) {
+        let _ = std::fs::write(dir.join(PAYLOAD_MANIFEST), bytes);
+    }
+}
+
 /// Windows PowerShell lives in a versioned directory that Rust's executable
 /// search never visits — it probes `System32` itself and stops — so a machine
 /// whose `PATH` lost that entry reports "program not found" while PowerShell is
@@ -453,6 +480,10 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
     // The folder's own copies of the notes go stale the moment the executable is
     // swapped, and they are the only thing in it a person reads.
     refresh_documents(&archive, &dir);
+    // And its manifest, which says which build this folder holds rather than
+    // describing one: left alone it names whichever release the folder was first
+    // unpacked from.
+    refresh_manifest(&archive, &dir);
     stage_and_launch(&dir, &executable, &exe_name)
 }
 
@@ -464,8 +495,8 @@ pub fn update_restart(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        documents_in, extract_executable, is_document, localised_notes, PAYLOAD_EXECUTABLE,
-        PAYLOAD_MANIFEST,
+        documents_in, extract_executable, is_document, localised_notes, manifest_in,
+        PAYLOAD_EXECUTABLE, PAYLOAD_MANIFEST,
     };
     use std::io::{Cursor, Write};
 
@@ -535,9 +566,8 @@ mod tests {
     #[test]
     fn the_payload_and_its_manifest_are_not_documents() {
         // The payload has its own extraction, which the signature check reads
-        // through, and the manifest describes the archive rather than landing
-        // in the folder. Neither should be written out as if it were a file to
-        // read.
+        // through, and the manifest is a label rather than something to read, so
+        // it has a refresh of its own. Neither is a document to copy out as one.
         assert!(!is_document(PAYLOAD_EXECUTABLE));
         assert!(!is_document(PAYLOAD_MANIFEST));
         assert!(!is_document("apply-update.ps1"));
@@ -549,6 +579,28 @@ mod tests {
         assert!(is_document("README.md"));
         assert!(is_document("CHANGELOG.zh-CN.md"));
         assert!(is_document("LICENSE"));
+    }
+
+    /// What lands beside the executable is the release's own manifest, so the
+    /// folder says the version that is actually in it however it was unpacked.
+    #[test]
+    fn the_manifest_written_beside_the_executable_is_the_archives_own() {
+        let archive = release_archive("0.3.0");
+        let written = manifest_in(&archive).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&written).unwrap(),
+            manifest("0.3.0", super::arch_label())
+        );
+
+        // And an archive without one leaves the folder alone rather than writing
+        // a manifest of its own invention — one that would claim a version
+        // nothing had checked.
+        let mut bare = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        bare.start_file(PAYLOAD_EXECUTABLE, options).unwrap();
+        bare.write_all(b"MZpayload").unwrap();
+        assert!(manifest_in(&bare.finish().unwrap().into_inner()).is_none());
     }
 
     #[test]
