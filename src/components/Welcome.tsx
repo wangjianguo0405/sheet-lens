@@ -8,6 +8,14 @@ import { cn } from "@/lib/utils";
 /** How much of the history shows before the rest goes behind "More". */
 const HISTORY_SHOWN = 6;
 
+/**
+ * What a thing you can click is coloured: the Excel green the app already marks
+ * its live parts with — the current sheet's rule, the panel splitters. A row
+ * that is the same grey as the prose around it does not read as a link, and
+ * everything in this column that is not a folder path is one.
+ */
+const LINK = "text-[#107C41]";
+
 interface WelcomeProps {
   onOpen: () => void;
   /** Newest first, the same list the File menu shows. */
@@ -81,7 +89,7 @@ export function Welcome({
 
   return (
     <div className="flex h-full w-full items-center justify-center overflow-auto p-6">
-      <div className="flex w-full max-w-3xl flex-col gap-6 md:flex-row md:gap-0">
+      <div className="flex w-full max-w-4xl flex-col gap-6 md:flex-row md:gap-0">
         {/* What to open */}
         <div className="min-w-0 flex-1 md:pr-6">
           <div className="flex items-center gap-2">
@@ -97,13 +105,18 @@ export function Welcome({
 
           {/* The one thing the page is for, as a row with an icon rather than
               as a filled button: it heads the same column as the list under
-              it, and a block of solid colour on an empty window is a shout. */}
+              it, and a block of solid colour on an empty window is a shout.
+              A size up from the list, since it is the page's whole purpose and
+              the names under it are only where you were. */}
           <button
             type="button"
             onClick={onOpen}
-            className="mt-4 flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-xs text-foreground/80 transition-colors hover:bg-accent/50"
+            className={cn(
+              LINK,
+              "mt-5 flex w-full items-center gap-2 rounded-sm px-1.5 py-1.5 text-left text-sm transition-colors hover:bg-accent/50 hover:underline",
+            )}
           >
-            <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+            <FolderOpen className="size-4 shrink-0" />
             {t("welcome.open")}
           </button>
 
@@ -140,17 +153,19 @@ export function Welcome({
                           : path
                       }
                       className={cn(
-                        "flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50",
+                        "group flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50",
                         missing.has(path)
                           ? "text-muted-foreground"
-                          : "text-foreground/80",
+                          : LINK,
                       )}
                     >
                       {/* Where it is, as well as what it is called: two
                           workbooks of the same name in two folders are told
                           apart by nothing else. The folder is the part that
                           gives way when the row runs out. */}
-                      <span className="min-w-0 truncate">{fileName(path)}</span>
+                      <span className="min-w-0 truncate group-hover:underline">
+                        {fileName(path)}
+                      </span>
                       <span className="min-w-0 flex-1 truncate text-muted-foreground">
                         {folderName(path)}
                       </span>
@@ -165,7 +180,10 @@ export function Welcome({
                     <button
                       type="button"
                       onClick={() => setFullHistory(true)}
-                      className="flex w-full items-center rounded-sm px-1.5 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50"
+                      className={cn(
+                        LINK,
+                        "flex w-full items-center rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
+                      )}
                     >
                       {t("welcome.more")}
                     </button>
