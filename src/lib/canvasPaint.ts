@@ -616,6 +616,28 @@ export interface PaintStats {
   styleMemoHits: number;
 }
 
+/**
+ * Whether a region covers a cell: a merged region, or the run one cell's text is
+ * centred across. Which set is asked is the caller's.
+ *
+ * Both sets are keyed by the sheet's own width, and this pass goes on drawing
+ * past that width into the blank area — where a column would be read as a cell
+ * of the row below and answer for it. That is what left a selected row's colour
+ * missing from the columns a merge stood above, and what leaves those same
+ * columns of the row above undrawn on a sheet whose gridlines are on. Nothing
+ * out there belongs to a region, so the question is answered before the key is
+ * built.
+ */
+function inRegion(
+  view: GridView,
+  covered: Set<number>,
+  sheetRow: number,
+  col: number,
+): boolean {
+  if (col >= view.sheetCols) return false;
+  return covered.has(cellKey(view.sheetCols, sheetRow, col));
+}
+
 export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintStats {
   const stats: PaintStats = {
     rows: 0,
@@ -660,9 +682,9 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
    * table ends.
    */
   const merged = (sheetRow: number, col: number) =>
-    view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, col));
+    inRegion(view, view.mergeView.covered, sheetRow, col);
   const inRun = (sheetRow: number, col: number) =>
-    view.centerRuns.covered.has(cellKey(view.sheetCols, sheetRow, col));
+    inRegion(view, view.centerRuns.covered, sheetRow, col);
 
   // Everything the text sits on: fills, print shading, gridlines, borders.
   const surfaceStarted = performance.now();
@@ -973,15 +995,7 @@ export function valueWidth(
   // across a row that is otherwise empty.
   let reached = w;
   for (let next = col + 1; reached < needed && next < view.colEnd; next += 1) {
-    // A merge lives inside the used range, and `covered` is keyed by the
-    // sheet's own width — asking it about a column past that would read a
-    // cell of the row below.
-    if (
-      next < view.sheetCols &&
-      view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, next))
-    ) {
-      break;
-    }
+    if (inRegion(view, view.mergeView.covered, sheetRow, next)) break;
     if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
     reached += spanAt(view.cols.offsets, next);
   }
@@ -1050,7 +1064,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
       if (!selectionCovers(view.selection, sheetRow, c)) continue;
       // A merged region's cells are not cells and are handled below; a
       // Center-Across run's are, so a selected row lights every one of them.
-      if (view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, c))) continue;
+      if (inRegion(view, view.mergeView.covered, sheetRow, c)) continue;
       const x = ox + view.cols.offsets[c];
       const w = spanAt(view.cols.offsets, c);
       if (active && active.row === sheetRow && active.col === c) {
