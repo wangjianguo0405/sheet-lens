@@ -914,12 +914,27 @@ function paintCellText(
   // an alignment, and Excel keeps spilling through them. Treating the run as
   // the barrier the DOM renderer never made it cut the value off at its own
   // edge on every label followed by an empty centred field.
+  //
+  // The sheet's own last column is not a barrier either. Excel spills past the
+  // cells the file mentions into ones it has never heard of, which is how a
+  // label sitting in the rightmost column of a narrow sheet — a rules page
+  // three columns wide — is read at all; stopping at the data cut every such
+  // label down to the two characters its own column holds. The spill runs to
+  // the edge of what the scroller holds, which is off screen by then.
   let box = { x, y, w, h };
   if (!style?.wrap && horizontalOf(style, cell?.kind) === "left") {
     if (textWidth(cellFont(view, style), text) > w - padLeft - padRight) {
       let reached = w;
-      for (let next = col + 1; next < view.sheetCols; next += 1) {
-        if (view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, next))) break;
+      for (let next = col + 1; next < view.colEnd; next += 1) {
+        // A merge lives inside the used range, and `covered` is keyed by the
+        // sheet's own width — asking it about a column past that would read a
+        // cell of the row below.
+        if (
+          next < view.sheetCols &&
+          view.mergeView.covered.has(cellKey(view.sheetCols, sheetRow, next))
+        ) {
+          break;
+        }
         if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
         reached += spanAt(view.cols.offsets, next);
       }
