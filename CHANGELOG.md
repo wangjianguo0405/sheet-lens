@@ -12,6 +12,39 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.9] - 2026-10-14
+
+Cells can be shaded while you read, the sheet opens in whichever of Excel's two
+views suits the workbook, and the sizes you change stay changed.
+
+### Added
+
+- Cells can be shaded in a colour, for marking a sheet up as you go: the paint
+  bucket fills the selection with the colour it is holding, the caret beside it
+  opens the palette, and a right-click on the grid opens the same one. The
+  colours are the app's own — nothing is written back to the file
+- Two view buttons at the right of the status bar, as Excel has them: the
+  ordinary view, and Page Break Preview with the print area shaded around and
+  boxed. A workbook that sets no print area opens in the ordinary view, and each
+  sheet can be switched on its own
+- A file tab's right-click copies the workbook's name, or its full path
+
+### Improved
+
+- The status bar no longer repeats the cell's address, its type and its value —
+  the name box and the formula bar sit directly above the sheet and say the
+  same. How far a selection reaches now reads beside the zoom
+- Column widths and row heights you drag or fit are kept while the workbook is
+  open, so leaving a sheet — for another sheet, or for another workbook — and
+  coming back no longer puts the file's own sizes back
+- Text too long for its cell spills past the last column the file uses, as Excel
+  lets it, rather than being cut off at the edge of the data
+
+### Fixed
+
+- Ctrl+A while a cell's text is open over it selects that text, every time it is
+  pressed, instead of walking out to the region and then to the whole sheet
+
 ## [0.3.8] - 2026-10-13
 
 A cell's text can be read and copied without leaving the grid, rows are fitted
