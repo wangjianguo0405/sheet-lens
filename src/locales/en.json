@@ -107,14 +107,7 @@
     "resetZoom": "Reset the zoom to 100%",
     "spanRows": "{{rows}} rows selected",
     "spanCols": "{{cols}} cols selected",
-    "spanBlock": "{{rows}} rows × {{cols}} cols selected",
-    "kind": {
-      "text": "text",
-      "number": "number",
-      "bool": "bool",
-      "date": "date",
-      "error": "error"
-    }
+    "spanBlock": "{{rows}} rows × {{cols}} cols selected"
   },
   "grid": {
     "resizeColumn": "Resize column {{column}}",

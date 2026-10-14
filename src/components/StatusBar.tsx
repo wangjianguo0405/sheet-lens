@@ -15,9 +15,6 @@ import {
 interface StatusBarProps {
   fileName: string | null;
   sheet: string | null;
-  cell: string | null;
-  kind: string | null;
-  value: string | null;
   size: string | null;
   /** How many rows and columns the selection spans. */
   span: SelectionSize | null;
@@ -33,21 +30,9 @@ const SPAN_KEY = {
   block: "status.spanBlock",
 } as const;
 
-/** The cell kinds the backend reports, mapped to their translated labels. */
-const KIND_KEY = {
-  text: "status.kind.text",
-  number: "status.kind.number",
-  bool: "status.kind.bool",
-  date: "status.kind.date",
-  error: "status.kind.error",
-} as const;
-
 export function StatusBar({
   fileName,
   sheet,
-  cell,
-  kind,
-  value,
   size,
   span,
   zoom,
@@ -57,6 +42,12 @@ export function StatusBar({
 
   return (
     <div className="flex shrink-0 items-center gap-2 border-t border-border bg-muted/40 px-3 py-1 text-[11px] text-muted-foreground">
+      {/*
+        The bar names the workbook and the sheet and says how far the grid
+        reaches, and nothing about the cell: the name box and the formula bar
+        are directly above the sheet and already say which cell is current and
+        what is in it.
+      */}
       <span className="truncate" title={fileName ?? undefined}>
         {fileName ?? t("status.noFile")}
       </span>
@@ -74,28 +65,19 @@ export function StatusBar({
           <span className="tabular-nums">{size}</span>
         </>
       )}
-      {cell && (
-        <>
-          <Separator orientation="vertical" className="h-3" />
-          <span className="font-medium text-foreground select-text">{cell}</span>
+      {/*
+        A whole run or block is the one thing those two cannot say — the name
+        box addresses `A1:B2` or `3:7` and never counts it — so it sits at this
+        end, beside the zoom, where Excel keeps its own figures for a selection.
+      */}
+      {sheet && (
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {span && (
-            <span className="whitespace-nowrap tabular-nums">
+            <span className="mr-1.5 whitespace-nowrap tabular-nums">
               {t(SPAN_KEY[span.kind], span)}
             </span>
           )}
-          {kind && kind !== "empty" && (
-            <span className="rounded-sm bg-muted px-1 py-px text-[10px]">
-              {t(KIND_KEY[kind as keyof typeof KIND_KEY], { defaultValue: kind })}
-            </span>
-          )}
-          <span className="min-w-0 flex-1 truncate text-foreground/80 select-text" title={value ?? ""}>
-            {value}
-          </span>
-        </>
-      )}
-      {cell && (
-        // Excel's zoom lives in the bottom-right corner of the window.
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* Excel's zoom lives in the bottom-right corner of the window. */}
           <button
             type="button"
             aria-label={t("status.zoomOut")}

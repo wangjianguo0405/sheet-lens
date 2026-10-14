@@ -769,10 +769,7 @@ export default function App() {
               ? t("app.extent", { rows: extent.rows, cols: extent.cols })
               : null
           }
-          cell={activeSheet ? selectionRef(selection) : null}
           span={activeSheet ? selectionSize(selection) : null}
-          kind={detail?.kind ?? null}
-          value={detail?.text ?? null}
           zoom={zoom}
           onZoom={setZoom}
         />

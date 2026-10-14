@@ -105,14 +105,7 @@
     "resetZoom": "将缩放重置为 100%",
     "spanRows": "已选 {{rows}} 行",
     "spanCols": "已选 {{cols}} 列",
-    "spanBlock": "已选 {{rows}} 行 × {{cols}} 列",
-    "kind": {
-      "text": "文本",
-      "number": "数值",
-      "bool": "布尔",
-      "date": "日期",
-      "error": "错误"
-    }
+    "spanBlock": "已选 {{rows}} 行 × {{cols}} 列"
   },
   "grid": {
     "resizeColumn": "调整列 {{column}} 的宽度",
