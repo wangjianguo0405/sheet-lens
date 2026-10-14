@@ -24,6 +24,7 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { toggleShapeDebug } from "@/lib/debugPanels";
+import { DEFAULT_MARK, markSelection } from "@/lib/marks";
 import type { Target } from "@/lib/column";
 import {
   initialSheetPanels,
@@ -53,6 +54,12 @@ interface Tab {
   sheet: string;
   /** Cursor per sheet, so switching away and back returns to where you were. */
   cursors: Record<string, Selection>;
+  /**
+   * The review marks, keyed by sheet and cell. They belong to the tab rather
+   * than to the app, so closing it — like closing the file — forgets them; they
+   * are never written back to the workbook.
+   */
+  marks: Map<string, string>;
 }
 
 const EXCEL_EXTENSIONS = ["xlsx", "xlsm", "xls", "xlsb", "ods"];
@@ -99,6 +106,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   /** Which of the two sheet pickers are showing; they are independent. */
   const [panels, setPanels] = useState<SheetPanels>(initialSheetPanels);
+  /** The colour the toolbar's paint bucket is holding. */
+  const [markColor, setMarkColor] = useState(DEFAULT_MARK);
   /** The workbook paths the File menu offers, newest first. */
   const [recentFiles, setRecentFiles] = useState<string[]>(readRecentFiles);
   /** Those of them that would not open, which the menu greys out. */
@@ -172,6 +181,7 @@ export default function App() {
                   info,
                   sheet: info.sheets[0]?.name ?? "",
                   cursors: {},
+                  marks: new Map(),
                 },
               ],
         );
@@ -302,6 +312,38 @@ export default function App() {
       putCursor(active.sheet, next);
     },
     [active, putCursor],
+  );
+
+  /**
+   * Shades the current selection in a review colour, or lifts the shading off
+   * it when `fill` is null. The marks belong to the tab, so they last only as
+   * long as the workbook is open and the file is never touched.
+   */
+  const applyMark = useCallback(
+    (fill: string | null) => {
+      if (!active || !activeSheet) return;
+      // The bucket then holds what was just used, Excel's own behaviour: the
+      // next press of the bucket is the same colour without opening anything.
+      if (fill !== null) setMarkColor(fill);
+      const bounds = { rows: activeSheet.rows, cols: activeSheet.cols };
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.info.path === active.info.path
+            ? {
+                ...tab,
+                marks: markSelection(
+                  tab.marks,
+                  tab.sheet,
+                  tab.cursors[tab.sheet] ?? ORIGIN,
+                  bounds,
+                  fill,
+                ),
+              }
+            : tab,
+        ),
+      );
+    },
+    [active, activeSheet],
   );
 
   const handleSheetSelect = useCallback(
@@ -553,6 +595,8 @@ export default function App() {
           sidebarOpen={panels.list}
           sheetTabsOpen={panels.tabs}
           hasWorkbook={active !== null}
+          onMark={applyMark}
+          markColor={markColor}
           recentFiles={recentFiles}
           missingFiles={missingFiles}
           onOpenRecent={handleOpenRecent}
@@ -627,6 +671,9 @@ export default function App() {
                     sheet={activeSheet}
                     views={views.current}
                     selection={selection}
+                    marks={active.marks}
+                    onMark={applyMark}
+                    markColor={markColor}
                     onSelect={handleSelect}
                     onDetail={setDetail}
                     onExtent={handleExtent}

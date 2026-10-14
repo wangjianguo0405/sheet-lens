@@ -23,6 +23,7 @@
     "hideSheetTabs": "Hide the sheet tabs",
     "checkUpdates": "Check for updates",
     "updateAvailable": "A newer version is available",
+    "fill": "Fill colour",
     "language": "Language"
   },
   "language": {
@@ -43,7 +44,14 @@
   "tabs": {
     "close": "Close {{name}}",
     "new": "New tab",
-    "openAnother": "Open another workbook"
+    "openAnother": "Open another workbook",
+    "copyName": "Copy file name",
+    "copyPath": "Copy file path"
+  },
+  "mark": {
+    "clear": "No Fill",
+    "standard": "Standard colours",
+    "soft": "Light colours"
   },
   "sheets": {
     "filter": "Filter sheets",

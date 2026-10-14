@@ -102,6 +102,12 @@ export interface GridView {
    */
   styleCalls: { resolved: number; memo: number };
   mergeAt: (row: number, col: number) => MergeRect | null;
+  /**
+   * The review fill a cell carries, or null when it has none. It is the app's
+   * own mark rather than the file's, so it wins over the cell's own fill — a
+   * mark is only there because the reader put it there.
+   */
+  markAt: (row: number, col: number) => string | null;
 
   // --- sheet facts ---
   workbookFontFamily: string | null;
@@ -754,7 +760,10 @@ function paintSpanSurface(
 ): void {
   const { x, y, w, h, rect, style } = span;
 
-  fillBlock(ctx, view, page, x, y, w, h, style?.fill ?? null);
+  // A merged region is one cell to Excel, and a selection always lands on its
+  // anchor — so its mark is read from the anchor too.
+  const mark = view.markAt(rect.row, rect.col);
+  fillBlock(ctx, view, page, x, y, w, h, mark ?? style?.fill ?? null);
 
   if (view.showGrid) {
     line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
@@ -826,8 +835,13 @@ function paintCellSurface(
   const w = spanAt(view.cols.offsets, col);
   const style = view.styleAt(sheetRow, col);
   const own = style?.fill ?? null;
+  const mark = view.markAt(sheetRow, col);
 
-  if (view.outsidePrint(sheetRow, col)) {
+  if (mark) {
+    // A mark is the reader's own, so it takes the cell whole — over the file's
+    // fill and over the print-area shade both.
+    fill(ctx, x, y, w, h, mark);
+  } else if (view.outsidePrint(sheetRow, col)) {
     // Already OUTSIDE_PRINT: paintBase flooded the whole cell area with it and
     // then cut the page rect back out in the sheet's own background, so shading
     // the cell again would only repaint the colour that is underneath it. The

@@ -12,7 +12,13 @@ import { ListFilter } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { FilterButton } from "@/components/FilterButton";
+import { MarkPalette } from "@/components/MarkPalette";
 import { ShapeLayer, type ShapeDebugFacts } from "@/components/ShapeLayer";
 import { canvasTheme } from "@/lib/canvasTheme";
 import { paintBase, paintOverlay, type GridView, type PaintStats } from "@/lib/canvasPaint";
@@ -79,8 +85,10 @@ import {
   rangeOver,
   rowsBetween,
   selectionAnchor,
+  selectionCovers,
   type Selection,
 } from "@/lib/selection";
+import { markKey, type Marks } from "@/lib/marks";
 
 /** Where a pointer landed: a cell, or one of the two gutter strips. */
 type Hit =
@@ -124,6 +132,15 @@ interface GridProps {
    */
   views: SheetViews;
   onSelect: (selection: Selection) => void;
+  /**
+   * The review marks this workbook carries, keyed by sheet and cell. They are
+   * the app's own, so closing the tab is what forgets them.
+   */
+  marks: Marks;
+  /** Shades the selection, or lifts the shading off it when `fill` is null. */
+  onMark: (fill: string | null) => void;
+  /** The colour the toolbar's bucket is holding, so the palette can ring it. */
+  markColor: string;
   onDetail?: (cell: Cell | null) => void;
   /** The extent actually on screen, which can exceed calamine's range. */
   onExtent?: (rows: number, cols: number) => void;
@@ -323,6 +340,9 @@ export function CanvasGrid({
   selection,
   views,
   onSelect,
+  marks,
+  onMark,
+  markColor,
   onDetail,
   onExtent,
   onSheetStep,
@@ -1334,6 +1354,7 @@ export function CanvasGrid({
     visibleRows,
     path,
     sheet.name,
+    marks,
   ]);
 
   /**
@@ -1568,6 +1589,22 @@ export function CanvasGrid({
     const mergeAtFast = (row: number, col: number): MergeRect | null =>
       mergeIndex.get(cellKey(sheetCols, row, col)) ?? null;
 
+    /**
+     * Review marks, keyed off the pass the same way the styles are — a cell's
+     * mark is asked about once for its own fill. Most sheets carry none, so the
+     * empty map short-circuits before any key is built.
+     */
+    const markMemo = new Map<number, string | null>();
+    const markAtFast = (row: number, col: number): string | null => {
+      if (marks.size === 0) return null;
+      const key = cellKey(sheetCols, row, col);
+      const hit = markMemo.get(key);
+      if (hit !== undefined) return hit;
+      const value = marks.get(markKey(sheet.name, row, col)) ?? null;
+      markMemo.set(key, value);
+      return value;
+    };
+
     const shownRuns: (MergeRect & { text: string | null })[] = [];
     const coveredRuns = new Set<number>();
     const joinable = (row: number, col: number) =>
@@ -1609,6 +1646,7 @@ export function CanvasGrid({
       styleAt: styleAtFast,
       styleCalls,
       mergeAt: mergeAtFast,
+      markAt: markAtFast,
       workbookFontFamily: fontFamily,
       workbookFontSizePx: fontSize,
       showGrid,
@@ -1643,6 +1681,7 @@ export function CanvasGrid({
     cellAt,
     styleAt,
     mergeAt,
+    marks,
     fontFamily,
     fontSize,
     showGrid,
@@ -2019,6 +2058,35 @@ export function CanvasGrid({
       const col = merge?.col ?? hit.col;
       if ((cellAt(row, col)?.text ?? "") !== "") setEditing({ row, col });
     }
+  };
+
+  /**
+   * A right-click moves the cursor to what is under the pointer before the menu
+   * opens, the way Excel does — so the colour it asks for lands on the cell that
+   * was pointed at rather than wherever the cursor happened to be. A press
+   * inside the block already selected leaves it alone, which is how a whole
+   * block is shaded by right-clicking any one of its cells.
+   */
+  const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    const hit = hitAt(event.clientX, event.clientY);
+    if (!hit) return;
+    if (hit.kind === "cell") {
+      if (!selectionCovers(selection, hit.row, hit.col)) select(hit.row, hit.col);
+      return;
+    }
+    if (hit.kind === "rowHeader") {
+      const covered =
+        selection.kind === "row" &&
+        hit.row >= selection.row &&
+        hit.row < selection.row + selection.rows;
+      if (!covered) onSelect(rowsBetween(hit.row, hit.row));
+      return;
+    }
+    const covered =
+      selection.kind === "column" &&
+      hit.col >= selection.col &&
+      hit.col < selection.col + selection.cols;
+    if (!covered) onSelect(colsBetween(hit.col, hit.col));
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -2695,22 +2763,35 @@ export function CanvasGrid({
       {bar}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div
-          ref={viewportRef}
-          tabIndex={0}
-          onScroll={handleScroll}
-          onClick={handleClick}
-          onDoubleClick={handleDoubleClick}
-          onPointerDownCapture={handlePointerDownCapture}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerLeave={handlePointerLeave}
-          onKeyDown={handleKeyDown}
-          style={hBarHeight ? { marginBottom: -hBarHeight } : undefined}
-          className="absolute inset-0 overflow-auto outline-none [scrollbar-gutter:stable]"
-        >
-          <div style={{ width: contentW, height: contentH }} />
-        </div>
+        {/*
+          The whole sheet answers a right-click: the trigger is the scroller
+          itself, so the menu opens wherever on the grid it was pressed, and the
+          colour it carries lands on what was under the pointer.
+        */}
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              ref={viewportRef}
+              tabIndex={0}
+              onScroll={handleScroll}
+              onClick={handleClick}
+              onContextMenu={handleContextMenu}
+              onDoubleClick={handleDoubleClick}
+              onPointerDownCapture={handlePointerDownCapture}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerLeave={handlePointerLeave}
+              onKeyDown={handleKeyDown}
+              style={hBarHeight ? { marginBottom: -hBarHeight } : undefined}
+              className="absolute inset-0 overflow-auto outline-none [scrollbar-gutter:stable]"
+            >
+              <div style={{ width: contentW, height: contentH }} />
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="min-w-[13.5rem]">
+            <MarkPalette variant="context" current={markColor} onPick={onMark} />
+          </ContextMenuContent>
+        </ContextMenu>
 
         {/* The cell layer: painted, and never in the way of a pointer. */}
         <canvas ref={baseRef} className="pointer-events-none absolute top-0 left-0" />

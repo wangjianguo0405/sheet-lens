@@ -1,7 +1,9 @@
 import {
+  ChevronDown,
   Download,
   FolderOpen,
   Languages,
+  PaintBucket,
   PanelBottom,
   PanelLeft,
   X,
@@ -9,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { MarkPalette } from "@/components/MarkPalette";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +37,10 @@ interface ToolbarProps {
   sidebarOpen: boolean;
   sheetTabsOpen: boolean;
   hasWorkbook: boolean;
+  /** Shades the selection, or lifts the shading off it when `fill` is null. */
+  onMark: (fill: string | null) => void;
+  /** What the bucket fills with when it is pressed rather than its caret. */
+  markColor: string;
   /** Newest first. The File menu shows the first few and puts the rest under More. */
   recentFiles: string[];
   /** Those of them the last attempt to open failed on, which are shown greyed. */
@@ -55,6 +62,8 @@ export function Toolbar({
   sidebarOpen,
   sheetTabsOpen,
   hasWorkbook,
+  onMark,
+  markColor,
   recentFiles,
   missingFiles,
   onOpenRecent,
@@ -196,6 +205,46 @@ export function Toolbar({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* The review fill, as Excel's paint bucket: the bucket itself fills the
+          selection with the colour it is holding, and the caret beside it opens
+          the palette. Its colours are the app's own — the file is never
+          written to. */}
+      <div className="flex items-stretch">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 rounded-r-none px-1.5"
+          disabled={!hasWorkbook}
+          onClick={() => onMark(markColor)}
+          title={t("toolbar.fill")}
+        >
+          <span className="flex flex-col items-center justify-center">
+            <PaintBucket className="size-3.5" />
+            <span
+              aria-hidden
+              className="mt-px h-[3px] w-4 rounded-[1px] ring-1 ring-foreground/20 ring-inset"
+              style={{ background: markColor }}
+            />
+          </span>
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 rounded-l-none px-0.5"
+              disabled={!hasWorkbook}
+              title={t("toolbar.fill")}
+            >
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[13.5rem]">
+            <MarkPalette variant="dropdown" current={markColor} onPick={onMark} />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
 
       <div className="ml-auto flex items-center gap-1">
         {canUpdate && (
