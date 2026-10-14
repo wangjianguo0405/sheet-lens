@@ -27,6 +27,10 @@ pub struct SheetInfo {
     /// The sheet tab's own colour (`<tabColor>`), as `#RRGGBB`. Excel shows it
     /// as a strip under the tab, and a tab with none has none.
     pub tab_color: Option<String>,
+    /// Whether the sheet defines a `_xlnm.Print_Area` of its own. A workbook
+    /// with none anywhere opens in the ordinary view rather than under the page
+    /// shading, so this is read before any layout is.
+    pub print_area: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -92,6 +96,9 @@ pub fn load(path: &str) -> Result<Book, String> {
     // One pass over the zip for every sheet's tab colour, up front: the tab
     // strip draws them all at once and a sheet's own layout is read lazily.
     let tab_colors = layout::tab_colors(path);
+    // Same pass, same reason: which view the workbook opens in is decided from
+    // this before anything is drawn.
+    let print_areas = layout::print_area_sheets(path);
 
     for name in names {
         let range = workbook
@@ -104,6 +111,7 @@ pub fn load(path: &str) -> Result<Book, String> {
             rows: rows as u32,
             cols: cols as u32,
             tab_color: tab_colors.get(&name).cloned(),
+            print_area: print_areas.contains(&name),
         });
         sheets.insert(name, Sheet { range, origin });
     }
@@ -898,6 +906,7 @@ mod tests {
                     rows: rows as u32,
                     cols: cols as u32,
                     tab_color: None,
+                    print_area: false,
                 }],
             },
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
@@ -957,6 +966,7 @@ mod tests {
                     rows: rows as u32,
                     cols: cols as u32,
                     tab_color: None,
+                    print_area: false,
                 }],
             },
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),

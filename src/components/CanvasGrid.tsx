@@ -168,6 +168,12 @@ interface GridProps {
    */
   hideHScroll?: boolean;
   /**
+   * Excel's Page Break Preview rather than its ordinary view. True shades
+   * around the print area and boxes it; false leaves the sheet drawn with no
+   * page at all, which is where a workbook that never set a print area belongs.
+   */
+  pageBreak: boolean;
+  /**
    * The element the sheet scrolls within, handed out so a scrollbar drawn
    * elsewhere is a view of it rather than a second scroller.
    */
@@ -351,6 +357,7 @@ export function CanvasGrid({
   onZoom,
   bar,
   hideHScroll,
+  pageBreak,
   onViewport,
 }: GridProps) {
   const { t } = useTranslation();
@@ -612,7 +619,13 @@ export function CanvasGrid({
   }, [layout, sheetRowsGuess, sheetColsGuess]);
 
   const autoFilter = layout?.autoFilter ?? null;
-  const printArea = layout?.printArea ?? null;
+  /**
+   * The page the shading and the box are drawn around — and nothing at all in
+   * the ordinary view, which is the whole of the difference between Excel's two
+   * views here. `outsidePrint` below already answers "no" whenever this is null,
+   * and the box over the page is the same question asked of the same value.
+   */
+  const printArea = pageBreak ? (layout?.printArea ?? null) : null;
 
   /**
    * The columns carrying a filter button. All of them are mounted and moved
@@ -1358,6 +1371,7 @@ export function CanvasGrid({
     version,
     layout,
     layoutSheet,
+    pageBreak,
     cols,
     rows,
     colOverrides,

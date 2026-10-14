@@ -107,7 +107,9 @@
     "resetZoom": "Reset the zoom to 100%",
     "spanRows": "{{rows}} rows selected",
     "spanCols": "{{cols}} cols selected",
-    "spanBlock": "{{rows}} rows × {{cols}} cols selected"
+    "spanBlock": "{{rows}} rows × {{cols}} cols selected",
+    "viewNormal": "Normal",
+    "viewPageBreak": "Page Break Preview"
   },
   "grid": {
     "resizeColumn": "Resize column {{column}}",

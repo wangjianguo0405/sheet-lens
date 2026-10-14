@@ -13,6 +13,12 @@ export interface SheetInfo {
   cols: number;
   /** The tab's own colour, or null where Excel shows none. */
   tabColor?: string | null;
+  /**
+   * Whether the sheet defines a print area of its own. A workbook where none
+   * does opens in the ordinary view rather than under the page shading, which
+   * would otherwise be drawn around a page nobody asked for.
+   */
+  printArea: boolean;
 }
 
 export interface WorkbookInfo {

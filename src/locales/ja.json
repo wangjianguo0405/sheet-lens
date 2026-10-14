@@ -105,7 +105,9 @@
     "resetZoom": "ズームを 100% に戻す",
     "spanRows": "{{rows}} 行を選択",
     "spanCols": "{{cols}} 列を選択",
-    "spanBlock": "{{rows}} 行 × {{cols}} 列を選択"
+    "spanBlock": "{{rows}} 行 × {{cols}} 列を選択",
+    "viewNormal": "標準",
+    "viewPageBreak": "改ページ プレビュー"
   },
   "grid": {
     "resizeColumn": "列 {{column}} の幅を変更",

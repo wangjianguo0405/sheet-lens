@@ -41,6 +41,7 @@ import {
 } from "@/lib/recent";
 import { checkForUpdate, updateStatus, type UpdateStatus } from "@/lib/update";
 import { DEFAULT_ZOOM } from "@/lib/zoom";
+import { initialView, type ViewMode } from "@/lib/viewMode";
 import {
   closeWorkbook,
   openWorkbook,
@@ -60,6 +61,15 @@ interface Tab {
    * are never written back to the workbook.
    */
   marks: Map<string, string>;
+  /**
+   * The view every sheet of this workbook opens in — the page view when the
+   * file sets a print area anywhere, since a workbook that is printed is read
+   * with an eye on the page. Only a default: each sheet is then switched on its
+   * own, and a switch lasts as long as the tab.
+   */
+  defaultView: ViewMode;
+  /** The sheets switched away from that default, by name. */
+  views: Record<string, ViewMode>;
 }
 
 const EXCEL_EXTENSIONS = ["xlsx", "xlsm", "xls", "xlsb", "ods"];
@@ -167,6 +177,11 @@ export default function App() {
 
   const selection = active?.cursors[active.sheet] ?? ORIGIN;
 
+  /** What the sheet on screen is drawn in: its own switch, or the default. */
+  const view: ViewMode = active
+    ? (active.views[active.sheet] ?? active.defaultView)
+    : "normal";
+
   const openPaths = useCallback(async (paths: string[]) => {
     setError(null);
     for (const path of paths) {
@@ -182,6 +197,8 @@ export default function App() {
                   sheet: info.sheets[0]?.name ?? "",
                   cursors: {},
                   marks: new Map(),
+                  defaultView: initialView(info),
+                  views: {},
                 },
               ],
         );
@@ -349,6 +366,33 @@ export default function App() {
   const handleSheetSelect = useCallback(
     (name: string) => updateActive({ sheet: name }),
     [updateActive],
+  );
+
+  /**
+   * Remembers which view a sheet was switched to. Keyed by sheet, like the
+   * cursors: switching away and back returns the sheet to the view it was left
+   * in, rather than to the one the workbook opened with.
+   */
+  const putView = useCallback(
+    (sheetName: string, next: ViewMode) => {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.info.path === activePath
+            ? { ...tab, views: { ...tab.views, [sheetName]: next } }
+            : tab,
+        ),
+      );
+    },
+    [activePath],
+  );
+
+  /** Which of Excel's two views the sheet on screen is being read in. */
+  const handleView = useCallback(
+    (next: ViewMode) => {
+      if (!active) return;
+      putView(active.sheet, next);
+    },
+    [active, putView],
   );
 
   /**
@@ -686,6 +730,7 @@ export default function App() {
                     zoom={zoom}
                     onZoom={setZoom}
                     hideHScroll={panels.tabs}
+                    pageBreak={view === "pageBreak"}
                     onViewport={setViewport}
                     bar={
                       <FormulaBar
@@ -774,6 +819,8 @@ export default function App() {
               : null
           }
           span={activeSheet ? selectionSize(selection) : null}
+          view={view}
+          onView={handleView}
           zoom={zoom}
           onZoom={setZoom}
         />
