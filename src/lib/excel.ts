@@ -401,9 +401,15 @@ export function closeWorkbook(path: string): Promise<void> {
 }
 
 /**
- * One embedded image, as base64. Asked for one at a time and only once on
- * screen: a design document carries around twenty screenshots.
+ * The embedded images a sheet refers to, as base64, keyed by part.
+ *
+ * Asked for in one call per sheet: a design document's sheet can float fifty
+ * screenshots, and one call per picture meant fifty archive reads and fifty
+ * round trips. Parts the workbook does not hold come back missing.
  */
-export function readMedia(path: string, part: string): Promise<string> {
-  return invoke<string>("read_media", { path, part });
+export function readMedia(
+  path: string,
+  parts: string[],
+): Promise<Record<string, string>> {
+  return invoke<Record<string, string>>("read_media", { path, parts });
 }

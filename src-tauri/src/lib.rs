@@ -61,7 +61,13 @@ fn warm_layouts(store: Shared, path: String, names: Vec<String>) {
     }
 }
 
-#[tauri::command]
+/// Every command here is declared `async` so that it runs on the thread pool
+/// instead of on the thread that received it. Tauri dispatches a plain `fn`
+/// inline (`run_invoke_handler` in `webview/mod.rs`), and the webview's messages
+/// arrive on the main one, so a synchronous command holds the whole IPC up for
+/// as long as it runs — a sheet's layout, a workbook-wide search or a screenful
+/// of pictures is long enough to be felt.
+#[tauri::command(async)]
 fn open_workbook(path: String, store: State<'_, Shared>) -> Result<WorkbookInfo, String> {
     let book = excel::load(&path)?;
     let info = book.info.clone();
@@ -79,7 +85,7 @@ fn open_workbook(path: String, store: State<'_, Shared>) -> Result<WorkbookInfo,
     Ok(info)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_cells(
     path: String,
     sheet: String,
@@ -96,7 +102,7 @@ fn get_cells(
     book.cells(&sheet, row, col, rows, cols)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn search_workbook(
     path: String,
     query: String,
@@ -113,7 +119,7 @@ fn search_workbook(
     Ok(book.search(sheet.as_deref(), &matcher))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sheet_layout(
     path: String,
     sheet: String,
@@ -126,7 +132,7 @@ fn sheet_layout(
     book.layout(&sheet)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn column_values(
     path: String,
     sheet: String,
@@ -143,7 +149,7 @@ fn column_values(
     book.column_values(&sheet, col, first_row, last_row, query.as_deref(), MAX_VALUES)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn filter_rows(
     path: String,
     sheet: String,
@@ -163,7 +169,7 @@ fn filter_rows(
     book.filter_rows(&sheet, first_row, last_row, &criteria, MAX_FILTER_ROWS)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn axis_values(
     path: String,
     sheet: String,
@@ -180,7 +186,7 @@ fn axis_values(
     book.axis_values(&sheet, row, col, from, to, MAX_AXIS_CELLS)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn current_region(
     path: String,
     sheet: String,
@@ -199,7 +205,7 @@ fn current_region(
 /// direction, or the nearest filled cell when the one it starts from is blank.
 /// A null reply is nothing ahead at all, which the grid reads as the sheet's own
 /// edge — the stored range stops at the last cell the file mentions.
-#[tauri::command]
+#[tauri::command(async)]
 fn edge_cell(
     path: String,
     sheet: String,
@@ -215,26 +221,36 @@ fn edge_cell(
     book.edge_cell(&sheet, row, col, &dir)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn close_workbook(path: String, store: State<'_, Shared>) {
     store.0.lock().unwrap().remove(&path);
 }
 
-/// Reads one embedded image out of a workbook, as base64.
+/// Reads embedded images out of a workbook, as base64, keyed by part.
 ///
-/// Pictures are asked for one at a time and only once they are on screen: a
-/// design document carries around twenty screenshots, and folding them into the
-/// layout payload would cost megabytes on every sheet switch.
-#[tauri::command]
-fn read_media(path: String, part: String) -> Result<String, String> {
+/// Asked for in one call per sheet rather than one per picture: a design
+/// document's sheet can float fifty screenshots, and every call would re-open
+/// the archive and walk its directory to reach a single entry. The parts the
+/// archive does not hold are left out rather than failing the call — a picture
+/// that cannot be read is simply not drawn, and the cells still are.
+#[tauri::command(async)]
+fn read_media(path: String, parts: Vec<String>) -> Result<HashMap<String, String>, String> {
     let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let mut zip =
         zip::ZipArchive::new(BufReader::new(file)).map_err(|e| e.to_string())?;
-    // A lookup in the archive's own directory, so a crafted name cannot escape it.
-    let mut entry = zip.by_name(&part).map_err(|e| e.to_string())?;
-    let mut bytes = Vec::new();
-    entry.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-    Ok(base64(&bytes))
+    let mut out = HashMap::with_capacity(parts.len());
+    for part in parts {
+        // A lookup in the archive's own directory, so a crafted name cannot
+        // escape it.
+        let Ok(mut entry) = zip.by_name(&part) else {
+            continue;
+        };
+        let mut bytes = Vec::new();
+        if entry.read_to_end(&mut bytes).is_ok() {
+            out.insert(part, base64(&bytes));
+        }
+    }
+    Ok(out)
 }
 
 /// Standard base64, so the renderer can put the bytes straight into a `data:` URL.
