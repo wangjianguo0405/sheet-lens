@@ -141,18 +141,19 @@ function mimeOf(part: string): string | null {
   return MIME[extension] ?? null;
 }
 
-/** Reads every image a sheet's shapes refer to, once each. */
+/** Reads every image a sheet's shapes refer to, once each, in one call. */
 function useMedia(path: string, parts: string[]): Map<string, string> {
   const [, bump] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    for (const part of parts) {
-      const cacheKey = `${path}#${part}`;
-      if (mediaCache.has(cacheKey)) continue;
-      readMedia(path, part)
-        .then((data) => {
-          mediaCache.set(cacheKey, data);
+    const missing = parts.filter((part) => !mediaCache.has(`${path}#${part}`));
+    if (missing.length > 0) {
+      readMedia(path, missing)
+        .then((found) => {
+          for (const [part, data] of Object.entries(found)) {
+            mediaCache.set(`${path}#${part}`, data);
+          }
           if (alive) bump((tick) => tick + 1);
         })
         .catch(() => {
