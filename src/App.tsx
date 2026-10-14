@@ -280,6 +280,22 @@ export default function App() {
     setActivePath(path);
   }, []);
 
+  /**
+   * A tab dragged along the strip. It moves in this list and nowhere else —
+   * the order is the reader's, not the workbook's — and the tab showing stays
+   * the tab showing, since the cursors travel with their own entry.
+   */
+  const handleReorderTabs = useCallback((from: number, to: number) => {
+    setTabs((prev) => {
+      if (from === to) return prev;
+      if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  }, []);
+
   const closeTab = useCallback(
     (path: string) => {
       void closeWorkbook(path).catch(() => {});
@@ -664,6 +680,7 @@ export default function App() {
           active={activePath}
           onSelect={selectTab}
           onClose={closeTab}
+          onReorder={handleReorderTabs}
           homeOpen={homeOpen}
           atHome={homeOpen && activePath === null}
           onHome={() => setActivePath(null)}
