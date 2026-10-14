@@ -115,6 +115,15 @@ export interface SheetView {
    * yet, which is not the same as having cleared it.
    */
   filters?: Map<number, string[]>;
+  /**
+   * The column widths and row heights the reader has dragged or fitted here.
+   *
+   * The file's own sizes are only where a sheet starts; what has since been
+   * done to it belongs to the sheet for as long as the workbook is open, so
+   * leaving one — for another sheet, for another workbook and back — returns it
+   * as it was left. Closing the workbook is what puts the file's own back.
+   */
+  sizes?: { col: Map<number, number>; row: Map<number, number> };
 }
 
 /** Those positions, by workbook path and then by sheet name. */
@@ -431,6 +440,8 @@ export function CanvasGrid({
   const cache = useRef(new Map<string, Cell[][]>());
   const pending = useRef(new Set<string>());
   const drag = useRef<ResizeDrag | null>(null);
+  /** Which workbook and sheet the sizes in state belong to; see the effect on them. */
+  const seeded = useRef<string | null>(null);
   /**
    * A drag-select in progress, and whether it has moved.
    *
@@ -1054,6 +1065,9 @@ export function CanvasGrid({
   // --- the sheet's layout, once per switch ---
   useEffect(() => {
     drag.current = null;
+    // Which workbook and sheet the sizes now in state belong to, so nothing
+    // writes them under another sheet's name before this one's layout lands.
+    seeded.current = null;
     // The incoming sheet's own cursor is where its view was left, so arriving
     // with it is not a cursor move for the pass below to carry.
     followedRef.current = selectionRef.current;
@@ -1070,8 +1084,12 @@ export function CanvasGrid({
         setFontFamily(parsed.fontFamily);
         setFontSize(parsed.fontSizePx);
         setShowGrid(parsed.showGridLines);
-        setColOverrides(toOverrides(parsed.colWidthsChars, colPx));
-        setRowOverrides(toOverrides(parsed.rowHeightsPx));
+        seeded.current = `${path}\u0000${sheet.name}`;
+        // What the reader has dragged or fitted since wins over the file's own
+        // sizes, which are only where this sheet started.
+        const saved = views.get(path)?.get(sheet.name);
+        setColOverrides(saved?.sizes?.col ?? toOverrides(parsed.colWidthsChars, colPx));
+        setRowOverrides(saved?.sizes?.row ?? toOverrides(parsed.rowHeightsPx));
 
         // Put back the view this sheet was left at, before anything is
         // fetched, so the first paint is the right block rather than A1's.
@@ -1079,18 +1097,16 @@ export function CanvasGrid({
         // in, even where that leaves the active cell off screen; seeding this
         // from the cursor instead dragged a sheet whose cursor sat far out to
         // the right until that cell was the first visible column.
-        const view = views.get(path)?.get(sheet.name);
-        setScrollTo(view?.top ?? 0, view?.left ?? 0);
+        setScrollTo(saved?.top ?? 0, saved?.left ?? 0);
 
         // What this sheet was left holding beats what the workbook stores: a
         // filter applied here is in no file, and an empty Map is a filter the
         // user cleared rather than one that was never set.
-        const saved =
-          views.get(path)?.get(sheet.name)?.filters ??
-          toFilters(parsed.autoFilter?.applied);
-        if (saved.size > 0) {
-          setFilters(saved);
-          computeVisibleRows(path, sheet.name, parsed.autoFilter, saved)
+        const filters =
+          saved?.filters ?? toFilters(parsed.autoFilter?.applied);
+        if (filters.size > 0) {
+          setFilters(filters);
+          computeVisibleRows(path, sheet.name, parsed.autoFilter, filters)
             .then((found) => {
               if (!cancelled) setVisibleRows(found);
             })
@@ -1108,6 +1124,25 @@ export function CanvasGrid({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setScrollTo is stable
   }, [path, sheet.name, views]);
+
+  /**
+   * Keeps what the reader has dragged or fitted on the sheet it was done to.
+   *
+   * Held back until the layout for *this* workbook and sheet has arrived: a
+   * switch — another sheet, or another workbook whose sheet happens to share
+   * this one's name — leaves the previous sizes in state for a render, and
+   * writing those under the new sheet's name would hand it the wrong ones.
+   */
+  useEffect(() => {
+    if (seeded.current !== `${path}\u0000${sheet.name}`) return;
+    const bySheet = views.get(path) ?? new Map<string, SheetView>();
+    const view = bySheet.get(sheet.name) ?? { ...scrollRef.current };
+    bySheet.set(sheet.name, {
+      ...view,
+      sizes: { col: colOverrides, row: rowOverrides },
+    });
+    views.set(path, bySheet);
+  }, [views, path, sheet.name, colOverrides, rowOverrides]);
 
   /** Moves the scroller to a sheet-space offset, through the paint refs. */
   const setScrollTo = useCallback((top: number, left: number) => {
