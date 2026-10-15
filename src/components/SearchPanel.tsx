@@ -184,6 +184,7 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
 
   return (
     <div
+      data-search-panel
       className="flex h-full min-h-0 flex-col border-l border-border bg-sidebar"
       // On the panel rather than on the field, so the arrows answer wherever
       // in it the focus is — and so the default is taken away from the list,
