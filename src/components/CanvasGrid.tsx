@@ -1009,6 +1009,44 @@ export function CanvasGrid({
   );
 
   /**
+   * Opens the text of a cell over it, which is what a double-click and F2 both
+   * come to. A merged cell opens as its top-left corner, since that is the only
+   * part of the merge the text is in — the rest of it reads as empty — and an
+   * empty cell has nothing to offer, so it stays a plain press.
+   */
+  const openEditor = useCallback(
+    (row: number, col: number) => {
+      const merge = mergeAt(row, col);
+      const at = { row: merge?.row ?? row, col: merge?.col ?? col };
+      if ((cellAt(at.row, at.col)?.text ?? "") === "") return;
+      setEditing(at);
+    },
+    [mergeAt, cellAt],
+  );
+
+  /**
+   * F2 opens the active cell's text, which is the keyboard's way to what a
+   * double-click on it does — and the one that works without the pointer.
+   *
+   * On `window` for the reason Ctrl+A is: a press that landed on a toolbar
+   * button leaves the focus there, and the key still has to reach the sheet.
+   * What is focused elsewhere keeps it: a field is typing into its own text, and
+   * the sheet strip is not the sheet — Excel's F2 means nothing over a tab, so
+   * neither does this one.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "F2" || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable], [data-sheet-strip]")) return;
+      const at = selectionAnchor(selection);
+      openEditor(at.row, at.col);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selection, openEditor]);
+
+  /**
    * Ctrl+arrow: Excel's jump to the edge of the data.
    *
    * The backend says where the run in that direction ends; nothing ahead at all
@@ -2211,14 +2249,7 @@ export function CanvasGrid({
     }
     // A cell with text in it opens that text for reading. An empty one has
     // nothing to offer, so it stays an ordinary double-click.
-    if (hit?.kind === "cell") {
-      // Which for a merged cell means its top-left corner, since that is the
-      // only part of the merge the text is in — the rest of it reads as empty.
-      const merge = mergeAt(hit.row, hit.col);
-      const row = merge?.row ?? hit.row;
-      const col = merge?.col ?? hit.col;
-      if ((cellAt(row, col)?.text ?? "") !== "") setEditing({ row, col });
-    }
+    if (hit?.kind === "cell") openEditor(hit.row, hit.col);
   };
 
   /**
