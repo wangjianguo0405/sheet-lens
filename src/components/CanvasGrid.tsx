@@ -68,6 +68,7 @@ import {
   MIN_ROW_H,
   OVERSCAN_COLS,
   OVERSCAN_ROWS,
+  OUTSIDE_PRINT,
   PRINT_AREA_INSIDE,
   PRINT_AREA_INK,
   PRINT_AREA_LINE,
@@ -1962,7 +1963,15 @@ export function CanvasGrid({
               `${style?.bold ? "700 " : ""}${size}px ` +
               cellFontStack(style?.family ?? null, view.workbookFontFamily);
             field.style.color = style?.color ?? "";
-            field.style.background = style?.fill ?? "#fff";
+            // What the canvas painted under the text, in the canvas's own
+            // order: the reader's mark wins over everything, the print shade
+            // sits over the file's fill, and white is only what is left when
+            // the file says nothing. The field's own white used to cover
+            // whatever was there, so a marked cell lost its colour the moment
+            // it was opened.
+            field.style.background =
+              view.markAt(row, col) ??
+              (view.outsidePrint(at.row, at.col) ? OUTSIDE_PRINT : (style?.fill ?? "#fff"));
             field.style.textAlign =
               style?.horizontal === "center" ||
               style?.horizontal === "centerContinuous"
