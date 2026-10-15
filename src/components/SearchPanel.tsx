@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { ChevronDown, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cellRef } from "@/lib/column";
@@ -18,6 +25,25 @@ interface SearchPanelProps {
 
 type Scope = "sheet" | "workbook";
 
+/**
+ * The searches this session has run, newest first — and the whole of where they
+ * live. They are the app's own memory rather than the reader's: a query is
+ * worth having back while the workbooks it was asked of are still open, and a
+ * workbook has nowhere to keep one anyway. Closing the app forgets them, which
+ * is the whole of the forgetting.
+ */
+const RECENT_LIMIT = 8;
+const recentQueries: string[] = [];
+
+function remember(query: string) {
+  const text = query.trim();
+  if (!text || recentQueries[0] === text) return;
+  const at = recentQueries.indexOf(text);
+  if (at >= 0) recentQueries.splice(at, 1);
+  recentQueries.unshift(text);
+  if (recentQueries.length > RECENT_LIMIT) recentQueries.length = RECENT_LIMIT;
+}
+
 export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -27,6 +53,23 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** What to offer back, which is the list above as it stands. */
+  const [recent, setRecent] = useState<string[]>(() => [...recentQueries]);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const queryRef = useRef(query);
+  queryRef.current = query;
+
+  /**
+   * A search is the reader's once they have looked somewhere with it, and the
+   * box's own contents when the panel goes are the same act's leftovers.
+   */
+  const keep = (text: string) => {
+    remember(text);
+    setRecent([...recentQueries]);
+  };
+
+  useEffect(() => () => remember(queryRef.current), []);
+
   /**
    * The hit the arrows are on, or null before the first one. It is held as the
    * cell rather than as a place in the list because walking it moves the
@@ -99,6 +142,13 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
         : "bg-muted text-muted-foreground hover:bg-accent",
     );
 
+  /** Everything that moves the sheet to a hit goes through here. */
+  const jumpTo = (hit: SearchHit) => {
+    setCurrent(hit);
+    keep(query);
+    onJump(hit);
+  };
+
   /**
    * The arrows walk the list a hit at a time, and the sheet goes with them, so
    * that reading down the results is looking at them. Excel's Find All walks
@@ -111,8 +161,7 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
     if (hits.length === 0) return;
     const next = Math.min(Math.max(at + delta, 0), hits.length - 1);
     if (next === at) return;
-    setCurrent(hits[next]);
-    onJump(hits[next]);
+    jumpTo(hits[next]);
   };
 
   return (
@@ -143,13 +192,57 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
       </div>
 
       <div className="shrink-0 space-y-1.5 border-b border-border p-2">
-        <Input
-          autoFocus
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("search.placeholder")}
-          className="h-7 text-xs select-text"
-        />
+        {/* Excel's Find what: a field with the list of what has been searched
+            for hanging off a button inside its right edge. */}
+        <div className="relative">
+          <Input
+            ref={inputRef}
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("search.placeholder")}
+            className="h-7 pr-6 text-xs select-text"
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={t("search.history")}
+                title={t("search.history")}
+                className="absolute top-1/2 right-0.5 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ChevronDown className="size-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="w-56"
+              // The list is picked from to go on typing, so the field takes the
+              // keyboard back rather than the button, which has done its job.
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                inputRef.current?.focus();
+              }}
+            >
+              <DropdownMenuLabel className="text-[10px]">{t("search.history")}</DropdownMenuLabel>
+              {recent.length === 0 ? (
+                <DropdownMenuItem disabled className="text-[11px] text-muted-foreground">
+                  {t("search.historyEmpty")}
+                </DropdownMenuItem>
+              ) : (
+                recent.map((text) => (
+                  <DropdownMenuItem
+                    key={text}
+                    className="text-xs"
+                    onSelect={() => setQuery(text)}
+                  >
+                    <span className="truncate">{text}</span>
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
         <div className="flex flex-wrap items-center gap-1">
           <button
@@ -202,7 +295,11 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
         </p>
       )}
 
-      <ScrollArea className="min-h-0 flex-1">
+      {/* Always, not on hover: the arrows walk this list, and the bar is how
+          far down the walk is — a bar that appears only when the pointer
+          happens to be over it says nothing while the keyboard is doing the
+          moving. */}
+      <ScrollArea type="always" className="min-h-0 flex-1">
         <div className="flex flex-col gap-px p-1">
           {hits.map((hit, index) => {
             const walked = index === at;
@@ -211,10 +308,7 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
                 key={`${hit.sheet}:${hit.row}:${hit.col}`}
                 ref={walked ? currentRef : null}
                 type="button"
-                onClick={() => {
-                  setCurrent(hit);
-                  onJump(hit);
-                }}
+                onClick={() => jumpTo(hit)}
                 className={cn(
                   "rounded-sm px-2 py-1.5 text-left text-[11px]",
                   walked ? "bg-[#0F6CBD] text-white" : "hover:bg-accent/50",
