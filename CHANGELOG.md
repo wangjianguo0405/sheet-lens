@@ -12,6 +12,40 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.14] - 2026-10-15
+
+A search that walks: its results answer to the arrow keys, and what has been
+searched for comes back.
+
+### Added
+
+- The search results answer to the arrow keys. Down and Up walk them a row at a
+  time with the sheet following, so reading down the list is looking at the
+  cells it found; the row the walk is on is marked, and the list keeps it in
+  sight as the walk goes past. The ends hold rather than wrapping. The list's
+  scrollbar is drawn always rather than only under the pointer, since it is how
+  far down the walk has got
+- The search field is a combo. The button in its right edge opens what this
+  session has searched for, newest first, as wide as the field and hanging
+  under it; picking one puts it back in the box and searches again. They are
+  the app's own memory and nothing more — nothing is written anywhere, so
+  closing the app is the whole of the forgetting
+
+### Improved
+
+- Escape closes the search panel only when it is pressed inside the panel
+  itself. It used to close it from wherever the key was pressed, so an Escape
+  meant to take the marquee off a copy, to put away a cell's text or the name
+  box, or to dismiss a dialog took the search away with it. Ctrl+F still closes
+  it from anywhere
+
+### Fixed
+
+- The box a double-click or F2 opens over a cell follows a filter that hid the
+  rows above it. It used to stay where its row would have been with nothing
+  hidden, which on a filtered sheet left it over whatever cell had moved up into
+  that space
+
 ## [0.3.13] - 2026-10-15
 
 Excel's own colour palette, a colour for a worksheet tab, F2, a workbook the
