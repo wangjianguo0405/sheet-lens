@@ -18,7 +18,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { FilterButton } from "@/components/FilterButton";
-import { MarkPalette } from "@/components/MarkPalette";
+import { ColorPalette } from "@/components/ColorPalette";
 import { ShapeLayer, type ShapeDebugFacts } from "@/components/ShapeLayer";
 import { canvasTheme } from "@/lib/canvasTheme";
 import {
@@ -2977,7 +2977,7 @@ export function CanvasGrid({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="min-w-[13.5rem]">
-            <MarkPalette variant="context" current={markColor} onPick={onMark} />
+            <ColorPalette variant="context" current={markColor} onPick={onMark} />
           </ContextMenuContent>
         </ContextMenu>
 

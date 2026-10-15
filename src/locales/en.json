@@ -66,10 +66,11 @@
     "copyName": "Copy file name",
     "copyPath": "Copy file path"
   },
-  "mark": {
-    "clear": "No Fill",
+  "palette": {
+    "theme": "Theme colours",
     "standard": "Standard colours",
-    "soft": "Light colours"
+    "recent": "Recent colours",
+    "clear": "No Fill"
   },
   "sheets": {
     "filter": "Filter sheets",
