@@ -463,14 +463,20 @@ export function CanvasGrid({
    * nothing until the grid was clicked first. `preventScroll`, because focusing
    * something that fills the view can otherwise jog the scroller.
    *
-   * A field being typed in keeps it, though: a jump to a hit on another sheet
-   * is a sheet change like any other, and taking the keyboard out of the
-   * search box mid-walk would end the walk on the first hit that happened to be
-   * on another sheet.
+   * A field being typed in keeps it, though, and so does anything inside the
+   * search panel: a jump to a hit on another sheet is a sheet change like any
+   * other, and taking the keyboard off the results would end the walk on the
+   * first hit that happened to be on another sheet — the next press of the key
+   * would go to the sheet instead, and move the cell rather than the walk. The
+   * whole panel is meant, not just its box: the list is walked from wherever in
+   * it the focus happens to be, which after a click on a hit is that hit.
    */
   useEffect(() => {
     const active = document.activeElement;
-    if (active instanceof HTMLElement && active.closest("input, textarea, [contenteditable]")) {
+    if (
+      active instanceof HTMLElement &&
+      active.closest("input, textarea, [contenteditable], [data-search-panel]")
+    ) {
       return;
     }
     viewportRef.current?.focus({ preventScroll: true });
