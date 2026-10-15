@@ -71,6 +71,24 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
   useEffect(() => () => remember(queryRef.current), []);
 
   /**
+   * The field's own box, so the list can hang under it at its width. Measured
+   * rather than a class: the panel is dragged wider and narrower, and the list
+   * is a menu in a portal, which no longer sits in a layout that could size it.
+   */
+  const fieldRef = useRef<HTMLDivElement>(null);
+  const [fieldWidth, setFieldWidth] = useState(0);
+
+  useEffect(() => {
+    const el = fieldRef.current;
+    if (!el) return;
+    const measure = () => setFieldWidth(el.getBoundingClientRect().width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  /**
    * The hit the arrows are on, or null before the first one. It is held as the
    * cell rather than as a place in the list because walking it moves the
    * sheet, and a jump to another sheet has the panel searching again — the
@@ -194,7 +212,7 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
       <div className="shrink-0 space-y-1.5 border-b border-border p-2">
         {/* Excel's Find what: a field with the list of what has been searched
             for hanging off a button inside its right edge. */}
-        <div className="relative">
+        <div ref={fieldRef} className="relative">
           <Input
             ref={inputRef}
             autoFocus
@@ -205,18 +223,25 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
+              {/* The field's own height rather than a chip floating in it, so
+                  the list it opens hangs under the field rather than under a
+                  button that stops short of the field's bottom. */}
               <button
                 type="button"
                 aria-label={t("search.history")}
                 title={t("search.history")}
-                className="absolute top-1/2 right-0.5 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="absolute inset-y-0.5 right-0.5 flex w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 <ChevronDown className="size-3.5" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
-              align="start"
-              className="w-56"
+              // Hung under the field and as wide as it, off the button's own
+              // right edge — that button is what opens it, and it sits at the
+              // field's end.
+              align="end"
+              sideOffset={4}
+              style={{ width: fieldWidth || undefined }}
               // The list is picked from to go on typing, so the field takes the
               // keyboard back rather than the button, which has done its job.
               onCloseAutoFocus={(event) => {
