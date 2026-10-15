@@ -1924,11 +1924,18 @@ export function CanvasGrid({
         const field = editorRef.current;
         if (field) {
           const at = editingRef.current;
-          if (!at) {
+          const merge = at ? view.mergeAt(at.row, at.col) : null;
+          const row = at ? (merge?.row ?? at.row) : -1;
+          // Where that row is on screen. The offsets are indexed by the rows
+          // this view shows, which a filter has thinned out, so the sheet's own
+          // row number would put the field over whatever cell now stands there
+          // — a row above the edit having been hidden moves it up.
+          const display = row < 0 ? -1 : view.displayOfRow(row);
+          if (!at || display < 0) {
+            // No cell open, or a row the filter has taken out of the view:
+            // either way there is nothing for the field to sit on.
             field.style.display = "none";
           } else {
-            const merge = view.mergeAt(at.row, at.col);
-            const row = merge?.row ?? at.row;
             const col = merge?.col ?? at.col;
             const style = view.styleAt(at.row, at.col);
             let w = 0;
@@ -1940,15 +1947,23 @@ export function CanvasGrid({
             // width of the column alone is nothing at all for a column two
             // pixels wide. A merge is painted whole and never spills.
             if (!merge) w = valueWidth(view, row, col, w, CELL_PAD_LEFT, CELL_PAD_RIGHT);
+            // The merge's own rows, as far down the view as the last of them
+            // still shows.
+            const lastRow = row + (merge?.rows ?? 1) - 1;
+            let lastDisplay = display;
+            for (let r = row; r <= lastRow; r += 1) {
+              const shown = view.displayOfRow(r);
+              if (shown >= 0) lastDisplay = shown;
+            }
             let h = 0;
-            for (let r = row; r < row + (merge?.rows ?? 1); r += 1) {
+            for (let r = display; r <= lastDisplay; r += 1) {
               h += spanAt(view.rows.offsets, r);
             }
             const size = (style?.sizePx ?? view.workbookFontSizePx) * view.zoom;
             field.style.display = "";
             field.style.transform =
               `translate(${(view.cols.offsets[col] - view.scrollLeft) * view.zoom}px, ` +
-              `${(view.rows.offsets[row] - view.scrollTop) * view.zoom}px)`;
+              `${(view.rows.offsets[display] - view.scrollTop) * view.zoom}px)`;
             // The cell's boundary is one pixel past its last one on the right
             // and bottom — that is where the ring and the cell's own border are
             // drawn. The field has to reach that far, and it wears the
