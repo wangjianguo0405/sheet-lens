@@ -67,6 +67,18 @@ export const ACCENT_INK = "#217346";
 export const SELECTION_WASH = "rgba(33, 115, 70, 0.07)";
 
 /**
+ * How thick the selection's rule is, in the sheet's own pixels.
+ *
+ * Excel marks a selection with a heavy line rather than a hairline, and the
+ * weight goes *inward*: the outer edge of the box stays on the cell's boundary —
+ * the pixels `paintEdges` puts the cell's own border on — so a thicker rule
+ * never spills onto the neighbouring cells. The grid's in-cell field wears the
+ * same rule while it is open, which is why this lives here and not inside the
+ * painter.
+ */
+export const RING_W = 2;
+
+/**
  * The tint on a lit gutter entry. Gutters must stay opaque — the grid scrolls
  * under them — so the tint is layered over an opaque base rather than being
  * drawn on its own.

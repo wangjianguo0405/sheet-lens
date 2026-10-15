@@ -17,9 +17,12 @@
  *
  * `paintBase` deliberately does NOT read the selection. An outlined cell loses
  * its right and bottom gridlines in the DOM renderer, and reproducing that here
- * would make the cell layer depend on the selection and defeat the split;
- * instead the gridlines are drawn as usual and the overlay's ring, which is on
- * the same pixels, covers them.
+ * would make the cell layer depend on the selection and defeat the split, so the
+ * gridlines are drawn as usual and the ring is left to land where it lands. It
+ * lands on the border, because `ring` and `paintEdges` share one convention —
+ * which is the case these files are full of. Where a sheet shows gridlines
+ * instead, the rule under the ring's right and bottom sides stays visible one
+ * pixel inside it.
  *
  * Every line is drawn in the sheet's own pixel space, on the boundary it
  * belongs to and extending away from the cell. Two cells sharing an edge
@@ -45,6 +48,7 @@ import {
   COL_HEADER_H,
   GUTTER_TINT,
   OUTSIDE_PRINT,
+  RING_W,
   ROW_HEADER_W,
   SELECTION_WASH,
   indentPadding,
@@ -267,7 +271,17 @@ function paintEdges(
   if (edges.right) strokeEdge(ctx, edges.right, "v", x + w, y, h, fallback);
 }
 
-/** A selection ring: the four sides drawn just inside the box, as an inset shadow is. */
+/**
+ * A selection ring, `RING_W` pixels thick, on the four pixels a cell's own
+ * border would be drawn on — left and top at the cell's own coordinates, right
+ * and bottom one past its last pixel, which is the neighbour's first.
+ *
+ * That is `paintEdges`'s convention, and it has to be the ring's too: inset so
+ * that the right and bottom sides landed on the cell's last pixel, a bordered
+ * cell showed the green line *and* the border beside it — those two sides read
+ * as twice the thickness of the left and top, where the ring sits exactly on
+ * the border and covers it.
+ */
 function ring(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -277,10 +291,11 @@ function ring(
   color: string,
 ): void {
   if (w <= 0 || h <= 0) return;
-  fill(ctx, x, y, w, 1, color);
-  fill(ctx, x, y + h - 1, w, 1, color);
-  fill(ctx, x, y, 1, h, color);
-  fill(ctx, x + w - 1, y, 1, h, color);
+  const t = RING_W;
+  fill(ctx, x, y, w + 1, t, color);
+  fill(ctx, x, y + h - t + 1, w + 1, t, color);
+  fill(ctx, x, y, t, h + 1, color);
+  fill(ctx, x + w - t + 1, y, t, h + 1, color);
 }
 
 /** Whether two rectangles share a cell. */
@@ -315,16 +330,23 @@ function marquee(
   casing: string,
 ): void {
   if (w <= 0 || h <= 0) return;
+  // The same box `ring` fills, struck as one centred path instead of four
+  // rectangles: a stroke spreads half its width either side of the path, so the
+  // path is inset half a width from the box's outer edge and the dashes land on
+  // exactly the pixels the selection's own rule covers.
+  const t = RING_W;
+  const px = x + t / 2;
+  const py = y + t / 2;
+  const pw = w + 1 - t;
+  const ph = h + 1 - t;
   ctx.save();
-  ctx.lineWidth = 1;
-  // Half a pixel in, so a 1px stroke lands on a pixel rather than straddling
-  // two of them — the same reason the rules above are filled one pixel thick.
+  ctx.lineWidth = t;
   ctx.strokeStyle = casing;
-  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.strokeRect(px, py, pw, ph);
   ctx.strokeStyle = ACCENT_INK;
   ctx.setLineDash([4, 3]);
   ctx.lineDashOffset = -phase;
-  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.strokeRect(px, py, pw, ph);
   ctx.restore();
 }
 
