@@ -86,6 +86,20 @@ export const RING_W = 2;
 export const GUTTER_TINT = "rgba(33, 115, 70, 0.18)";
 
 /**
+ * The row numbers of the range a filter is working on: Excel draws those in
+ * blue rather than in the gutter's grey, and it is the one mark the sheet
+ * itself carries that says rows are missing. Only the rows *inside* the range
+ * take it — the rows above its header and below its last row stay grey.
+ *
+ * Measured off a screenshot of the row number itself at a zoom that made the
+ * strokes more than a pixel wide, where the ink inside them reads exactly
+ * `#0000FF`. At 100% the digits are one pixel across and ClearType leaves
+ * nothing behind them but coloured fringe, which reads as some lighter blue and
+ * is what an earlier guess at this was built from.
+ */
+export const FILTERED_INK = "#0000FF";
+
+/**
  * What page-break preview paints outside the print area. Measured off Excel at
  * 100% — it is a mid grey, noticeably darker than the `#D0D0D0` this started
  * with. It *replaces* a cell's own fill rather than sitting under it.
