@@ -267,7 +267,10 @@ export function SheetTabs({
     );
 
   return (
-    <div className="flex shrink-0 items-stretch border-t border-border bg-muted/40">
+    <div
+      data-sheet-strip
+      className="flex shrink-0 items-stretch border-t border-border bg-muted/40"
+    >
       {/*
         Excel's sheet list hangs off a right-click on the tab arrows: with more
         sheets than fit, it is how you reach one without walking the arrows.
