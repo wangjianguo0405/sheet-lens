@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Ellipsis } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuLabel,
-  ContextMenuRadioGroup,
-  ContextMenuRadioItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -82,8 +77,11 @@ export function SheetTabs({
 }: SheetTabsProps) {
   const { t } = useTranslation();
   const strip = useRef<HTMLDivElement>(null);
+  /** The "…" at each end, measured so they are not counted as tabs that fit. */
+  const moreLeft = useRef<HTMLButtonElement>(null);
+  const moreRight = useRef<HTMLButtonElement>(null);
   /** Where the tabs are scrolled to, which decides what the arrows can do. */
-  const [bar, setBar] = useState({ left: 0, view: 0, total: 0 });
+  const [bar, setBar] = useState({ left: 0, view: 0, total: 0, more: 0 });
 
   /**
    * The tab whose name is open over it. A sheet's name belongs to the file, so
@@ -100,6 +98,13 @@ export function SheetTabs({
   const [menu, setMenu] = useState<{ sheet: string; x: number; y: number } | null>(
     null,
   );
+  /**
+   * Where a right-click on the tab arrows was made, since the sheet list opens
+   * from the press rather than from the arrow's own box — the same footing the
+   * tab's colour menu takes, and the reason both are dropdowns: a context menu
+   * may not choose the side it opens on.
+   */
+  const [listMenu, setListMenu] = useState<{ x: number; y: number } | null>(null);
 
   const sync = useCallback(() => {
     const node = strip.current;
@@ -108,6 +113,13 @@ export function SheetTabs({
       left: node.scrollLeft,
       view: node.clientWidth,
       total: node.scrollWidth,
+      // The dots are laid out beside the strip, so they are width the tabs
+      // cannot use. Counting them back here is what keeps them from promising
+      // themselves room to exist: without it, tabs that fit perfectly well on
+      // their own would count as overflowing for as long as the dots were up.
+      more:
+        (moreLeft.current?.offsetWidth ?? 0) +
+        (moreRight.current?.offsetWidth ?? 0),
     });
   }, []);
 
@@ -236,7 +248,9 @@ export function SheetTabs({
     );
   }, []);
 
-  const overflowing = bar.total > bar.view + 1;
+  // Measured against the strip *plus* the room the dots are taking, so that
+  // what this answers is "do the tabs fit without them".
+  const overflowing = bar.total > bar.view + bar.more + 1;
   const atStart = bar.left <= 0;
   const atEnd = bar.left + bar.view >= bar.total - 1;
 
@@ -256,6 +270,44 @@ export function SheetTabs({
     [edges],
   );
 
+  /** Ctrl+click on an arrow: the whole way to that end of the tabs, which is
+   *  what Excel's own help gives as the way to reach the first or last sheet. */
+  const jump = useCallback((direction: 1 | -1) => {
+    const node = strip.current;
+    if (!node) return;
+    node.scrollTo({
+      left: direction < 0 ? 0 : node.scrollWidth,
+      behavior: "smooth",
+    });
+  }, []);
+
+  /**
+   * The sheet the "…" at that end belongs to: the one just past the tabs that
+   * are wholly on screen, which is what the dots there are the clue about.
+   *
+   * Pressing it makes that sheet current and brings it into view — it does not
+   * merely scroll — so pressing it again walks the selection one sheet further
+   * in the same direction, and the dots on that side go out once the first (or
+   * last) sheet is wholly visible.
+   */
+  const reveal = useCallback(
+    (direction: 1 | -1) => {
+      const node = strip.current;
+      if (!node) return;
+      const box = node.getBoundingClientRect();
+      const tabs = [...node.querySelectorAll<HTMLElement>("[data-sheet]")];
+      const whole = tabs.filter((tab) => {
+        const rect = tab.getBoundingClientRect();
+        return rect.left >= box.left - 1 && rect.right <= box.right + 1;
+      });
+      const edge = direction < 0 ? whole[0] : whole[whole.length - 1];
+      if (!edge) return;
+      const name = tabs[tabs.indexOf(edge) + direction]?.dataset.sheet;
+      if (name) onSelect(name);
+    },
+    [onSelect],
+  );
+
   const arrowClass = (enabled: boolean) =>
     cn(
       // A disabled arrow still belongs to the right-click list, so it must not
@@ -273,50 +325,73 @@ export function SheetTabs({
     >
       {/*
         Excel's sheet list hangs off a right-click on the tab arrows: with more
-        sheets than fit, it is how you reach one without walking the arrows.
+        sheets than fit, it is how you reach one without walking the arrows. The
+        press opens it, and the menu is drawn further down with the tab's colour
+        menu — both hang off the pointer, which a context menu cannot do.
       */}
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div className="flex shrink-0 items-stretch">
-            <button
-              type="button"
-              aria-label={t("sheets.scrollLeft")}
-              title={t("sheets.scrollLeft")}
-              disabled={!overflowing || atStart}
-              onClick={() => step(-1)}
-              className={cn(arrowClass(overflowing && !atStart), "border-r")}
-            >
-              <ChevronLeft className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              aria-label={t("sheets.scrollRight")}
-              title={t("sheets.scrollRight")}
-              disabled={!overflowing || atEnd}
-              onClick={() => step(1)}
-              className={cn(arrowClass(overflowing && !atEnd), "border-r")}
-            >
-              <ChevronRight className="size-3.5" />
-            </button>
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent className="max-h-80 min-w-40">
-          <ContextMenuLabel className="text-[10px]">
-            {t("sheets.list")}
-          </ContextMenuLabel>
-          <ContextMenuRadioGroup value={active} onValueChange={onSelect}>
-            {sheets.map((sheet) => (
-              <ContextMenuRadioItem
-                key={sheet.name}
-                value={sheet.name}
-                className="text-xs"
-              >
-                <span className="truncate">{sheet.name}</span>
-              </ContextMenuRadioItem>
-            ))}
-          </ContextMenuRadioGroup>
-        </ContextMenuContent>
-      </ContextMenu>
+      <div
+        className="flex shrink-0 items-stretch"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setListMenu({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        <button
+          type="button"
+          aria-label={t("sheets.scrollLeft")}
+          title={t("sheets.scrollLeft")}
+          disabled={!overflowing || atStart}
+          onClick={(event) =>
+            event.ctrlKey || event.metaKey ? jump(-1) : step(-1)
+          }
+          className={cn(arrowClass(overflowing && !atStart), "border-r")}
+        >
+          <ChevronLeft className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label={t("sheets.scrollRight")}
+          title={t("sheets.scrollRight")}
+          disabled={!overflowing || atEnd}
+          onClick={(event) =>
+            event.ctrlKey || event.metaKey ? jump(1) : step(1)
+          }
+          className={cn(arrowClass(overflowing && !atEnd), "border-r")}
+        >
+          <ChevronRight className="size-3.5" />
+        </button>
+      </div>
+
+      {/*
+        Excel's "…": with tabs hidden past the end of the strip, it puts three
+        dots at that end as the clue that there are more, and pressing them
+        makes the sheet just beyond what is on screen current and scrolls it
+        into view — see `reveal`. Both ends do that, so pressing one again walks
+        the selection one sheet further that way.
+
+        Each end keeps its slot even when nothing is hidden that way, and then
+        draws *nothing*: the gap stays but the dots go. Excel's own screenshots
+        of a tab bar at its first sheet show exactly that, and it is the right
+        shape for the row besides — a slot that came and went would shift every
+        tab along by its width the moment the strip reached that end.
+
+        It stands beside the strip rather than over it, so the dots take the
+        room the tabs then cannot: that is how Excel lays it out too, and it
+        keeps the tabs scrolling under nothing.
+      */}
+      {overflowing && (
+        <button
+          ref={moreLeft}
+          type="button"
+          aria-label={t("sheets.moreLeft")}
+          title={t("sheets.moreLeft")}
+          disabled={atStart}
+          onClick={() => reveal(-1)}
+          className={cn(arrowClass(!atStart), "border-r px-1")}
+        >
+          <Ellipsis className={cn("size-3.5", atStart && "invisible")} />
+        </button>
+      )}
 
       <div
         ref={strip}
@@ -410,6 +485,64 @@ export function SheetTabs({
           );
         })}
       </div>
+
+      {overflowing && (
+        <button
+          ref={moreRight}
+          type="button"
+          aria-label={t("sheets.moreRight")}
+          title={t("sheets.moreRight")}
+          disabled={atEnd}
+          onClick={() => reveal(1)}
+          className={cn(arrowClass(!atEnd), "border-l px-1")}
+        >
+          <Ellipsis className={cn("size-3.5", atEnd && "invisible")} />
+        </button>
+      )}
+
+      {/*
+        The sheet list a right-click on the arrows opens, hung off the pointer
+        exactly as the tab's own menu is — and for the same reason: a context
+        menu always opens to the right of whatever it is attached to, and this
+        belongs at the press. It opens *downwards* from the point, so the
+        pointer sits at its top-left corner; at the foot of a window there is
+        nowhere below to go, so it flips up over the sheet.
+      */}
+      <DropdownMenu
+        open={listMenu !== null}
+        onOpenChange={(open) => {
+          if (!open) setListMenu(null);
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <span
+            aria-hidden
+            className="pointer-events-none fixed size-px"
+            style={{ left: listMenu?.x ?? 0, top: listMenu?.y ?? 0 }}
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          side="bottom"
+          align="start"
+          sideOffset={3}
+          className="max-h-80 min-w-40"
+        >
+          <DropdownMenuLabel className="text-[10px]">
+            {t("sheets.list")}
+          </DropdownMenuLabel>
+          <DropdownMenuRadioGroup value={active} onValueChange={onSelect}>
+            {sheets.map((sheet) => (
+              <DropdownMenuRadioItem
+                key={sheet.name}
+                value={sheet.name}
+                className="text-xs"
+              >
+                <span className="truncate">{sheet.name}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {/*
         Excel's right-click on a tab, which for this app holds the one thing it

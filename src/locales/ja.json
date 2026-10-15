@@ -85,7 +85,9 @@
     "count_other": "{{count}} シート",
     "none": "一致するシートはありません。",
     "tabColor": "シート見出しの色",
-    "tabColorNone": "色なし"
+    "tabColorNone": "色なし",
+    "moreLeft": "左に隠れているシート見出しを表示",
+    "moreRight": "右に隠れているシート見出しを表示"
   },
   "formulaBar": {
     "expand": "展開",
