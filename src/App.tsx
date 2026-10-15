@@ -919,6 +919,7 @@ export default function App() {
 
         <StatusBar
           fileName={active?.info.fileName ?? null}
+          sheetCount={active?.info.sheets.length ?? null}
           sheet={active?.sheet ?? null}
           size={
             extent

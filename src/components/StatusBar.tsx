@@ -16,6 +16,8 @@ import {
 
 interface StatusBarProps {
   fileName: string | null;
+  /** How many sheets the workbook holds, said beside its name. */
+  sheetCount: number | null;
   sheet: string | null;
   size: string | null;
   /** How many rows and columns the selection spans. */
@@ -44,6 +46,7 @@ const SPAN_KEY = {
 
 export function StatusBar({
   fileName,
+  sheetCount,
   sheet,
   size,
   span,
@@ -65,6 +68,19 @@ export function StatusBar({
       <span className="truncate" title={fileName ?? undefined}>
         {fileName ?? t("status.noFile")}
       </span>
+      {/*
+        How many sheets are inside is the one thing about the workbook the
+        window does not say anywhere else: the list counts them only when it is
+        open, and the tabs only ever show the ones that fit.
+      */}
+      {sheetCount !== null && (
+        <>
+          <Separator orientation="vertical" className="h-3" />
+          <span className="shrink-0 whitespace-nowrap tabular-nums">
+            {t("sheets.count", { count: sheetCount })}
+          </span>
+        </>
+      )}
       {sheet && (
         <>
           <Separator orientation="vertical" className="h-3" />
