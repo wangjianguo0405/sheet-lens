@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -27,6 +27,32 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The hit the arrows are on, or null before the first one. It is held as the
+   * cell rather than as a place in the list because walking it moves the
+   * sheet, and a jump to another sheet has the panel searching again — the
+   * same hits come back as a new array, in which that cell is still the cell
+   * the walk is on.
+   */
+  const [current, setCurrent] = useState<SearchHit | null>(null);
+  /** Where in the list that is, or -1 for a cell this search no longer lists. */
+  const at = current
+    ? hits.findIndex(
+        (hit) =>
+          hit.sheet === current.sheet && hit.row === current.row && hit.col === current.col,
+      )
+    : -1;
+  /** That row, so the list follows the highlight rather than losing it. */
+  const currentRef = useRef<HTMLButtonElement>(null);
+
+  // A different search is a different list to walk.
+  useEffect(() => {
+    setCurrent(null);
+  }, [path, query, scope, caseSensitive, wholeCell]);
+
+  useEffect(() => {
+    currentRef.current?.scrollIntoView({ block: "nearest" });
+  }, [at]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -73,8 +99,36 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
         : "bg-muted text-muted-foreground hover:bg-accent",
     );
 
+  /**
+   * The arrows walk the list a hit at a time, and the sheet goes with them, so
+   * that reading down the results is looking at them. Excel's Find All walks
+   * its own list the same way.
+   *
+   * The ends hold rather than wrapping: walking off the last hit back to the
+   * first would read as the list having jumped somewhere.
+   */
+  const step = (delta: number) => {
+    if (hits.length === 0) return;
+    const next = Math.min(Math.max(at + delta, 0), hits.length - 1);
+    if (next === at) return;
+    setCurrent(hits[next]);
+    onJump(hits[next]);
+  };
+
   return (
-    <div className="flex h-full min-h-0 flex-col border-l border-border bg-sidebar">
+    <div
+      className="flex h-full min-h-0 flex-col border-l border-border bg-sidebar"
+      // On the panel rather than on the field, so the arrows answer wherever
+      // in it the focus is — and so the default is taken away from the list,
+      // which would otherwise scroll the hits past a highlight that never
+      // moved.
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        if (hits.length === 0) return;
+        event.preventDefault();
+        step(event.key === "ArrowDown" ? 1 : -1);
+      }}
+    >
       <div className="flex shrink-0 items-center justify-between border-b border-border px-2 py-1.5">
         <span className="text-xs font-medium">{t("search.title")}</span>
         <Button
@@ -150,12 +204,19 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-px p-1">
-          {hits.map((hit) => (
+          {hits.map((hit, index) => (
             <button
               key={`${hit.sheet}:${hit.row}:${hit.col}`}
+              ref={index === at ? currentRef : null}
               type="button"
-              onClick={() => onJump(hit)}
-              className="rounded-sm px-2 py-1.5 text-left text-[11px] hover:bg-accent"
+              onClick={() => {
+                setCurrent(hit);
+                onJump(hit);
+              }}
+              className={cn(
+                "rounded-sm px-2 py-1.5 text-left text-[11px]",
+                index === at ? "bg-accent" : "hover:bg-accent/50",
+              )}
             >
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                 <span className="rounded-sm bg-muted px-1 py-px font-mono font-medium text-foreground">
