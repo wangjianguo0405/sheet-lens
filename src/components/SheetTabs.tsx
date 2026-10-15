@@ -26,6 +26,14 @@ interface SheetTabsProps {
   sheets: SheetInfo[];
   active: string;
   onSelect: (name: string) => void;
+  /**
+   * The colours the reader has given the tabs, by sheet name, over the ones the
+   * workbook sets. They are the app's own, like the review marks: nothing is
+   * written back, and a colour lasts as long as the tab holding it.
+   */
+  colors: Map<string, string>;
+  /** Sets one sheet's tab colour, or takes the reader's off it when null. */
+  onColor: (sheet: string, color: string | null) => void;
   /** Drawn at the right end of the row: the sheet's own scrollbar. */
   trailing?: ReactNode;
 }
@@ -64,7 +72,14 @@ function activeWash(color: string): string {
  * a press on the tabs is a press on a sheet, and a bar there would be read as
  * the sheet's.
  */
-export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps) {
+export function SheetTabs({
+  sheets,
+  active,
+  onSelect,
+  colors,
+  onColor,
+  trailing,
+}: SheetTabsProps) {
   const { t } = useTranslation();
   const strip = useRef<HTMLDivElement>(null);
   /** Where the tabs are scrolled to, which decides what the arrows can do. */
@@ -77,6 +92,14 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
    */
   const [editing, setEditing] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  /**
+   * The tab a right-click was made on, and where on it — the menu that opens
+   * from there is drawn once for the whole strip rather than once per tab, so
+   * this is what says which tab it belongs to and where to put it.
+   */
+  const [menu, setMenu] = useState<{ sheet: string; x: number; y: number } | null>(
+    null,
+  );
 
   const sync = useCallback(() => {
     const node = strip.current;
@@ -304,6 +327,9 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
             rows: sheet.rows,
             cols: sheet.cols,
           });
+          // The reader's colour over the workbook's, which is what the tab is
+          // drawn in and what the palette below rings.
+          const color = colors.get(sheet.name) ?? sheet.tabColor ?? null;
           const className = cn(
             "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition",
             isActive
@@ -312,19 +338,18 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
             // A tab filled with its own colour has the grey the others take
             // on hover sitting behind an inline fill that wins, so it
             // lightens instead — the same "this one is under the pointer".
-            !isActive && sheet.tabColor && "hover:brightness-110",
+            !isActive && color && "hover:brightness-110",
           );
-          // A sheet the workbook gives a tab colour is filled with it, name
-          // and all — Excel paints the whole tab, not a strip along its
-          // foot. The current sheet keeps the raised tab instead, washed
-          // with that same colour, so it still says which sheet it is
-          // without going solid like the others.
-          const style = sheet.tabColor
+          // A tab that has a colour is filled with it, name and all — Excel
+          // paints the whole tab, not a strip along its foot. The current sheet
+          // keeps the raised tab instead, washed with that same colour, so it
+          // still says which sheet it is without going solid like the others.
+          const style = color
             ? isActive
-              ? { backgroundImage: activeWash(sheet.tabColor) }
+              ? { backgroundImage: activeWash(color) }
               : {
-                  backgroundColor: sheet.tabColor,
-                  color: readableOn(sheet.tabColor),
+                  backgroundColor: color,
+                  color: readableOn(color),
                 }
             : undefined;
 
@@ -364,9 +389,15 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
               data-sheet={sheet.name}
               onClick={() => onSelect(sheet.name)}
               // The second press is the one that opens the name, and the first
-              // has selected the sheet by then — which is what Excel does with
-              // a tab that is not the current one.
+              // has selected the sheet by then — which is what Excel does with a
+              // tab that is not the current one.
               onDoubleClick={() => setEditing(sheet.name)}
+              // The colour menu, opened from where the press was rather than
+              // from the tab's own box: see the strip's menu below.
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({ sheet: sheet.name, x: event.clientX, y: event.clientY });
+              }}
               title={title}
               className={className}
               style={style}
@@ -376,6 +407,67 @@ export function SheetTabs({ sheets, active, onSelect, trailing }: SheetTabsProps
           );
         })}
       </div>
+
+      {/*
+        Excel's right-click on a tab, which for this app holds the one thing it
+        can do: colour the tab. Nothing is written back, so the colour is the
+        reader's own — and it lands on the tab that was pointed at rather than
+        moving the selection, which a right-click on a tab does not do in Excel
+        either.
+
+        A menu of its own rather than the strip's shared context menu, because a
+        context menu may not choose the side it opens on — Radix anchors one to
+        the pointer and puts it to the right, and this one belongs *above* the
+        pointer, the way Excel opens a tab's menu out over the sheet. So the
+        anchor is a hair's-breadth box placed where the press was, and the menu
+        hangs off that with the corners set here: its bottom-left corner sits
+        just above and to the right of the pointer.
+      */}
+      <DropdownMenu
+        open={menu !== null}
+        onOpenChange={(open) => {
+          if (!open) setMenu(null);
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <span
+            aria-hidden
+            className="pointer-events-none fixed size-px"
+            // The few pixels to the right are the anchor's own: the menu's left
+            // edge lands on it, and an align offset is not something this menu
+            // answers to.
+            style={{ left: (menu?.x ?? 0) + 4, top: menu?.y ?? 0 }}
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          side="top"
+          align="start"
+          sideOffset={3}
+          className="min-w-44"
+        >
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="text-xs">
+              {t("sheets.tabColor")}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <ColorPalette
+                variant="dropdown"
+                current={
+                  menu === null
+                    ? null
+                    : (colors.get(menu.sheet) ??
+                      sheets.find((one) => one.name === menu.sheet)?.tabColor ??
+                      null)
+                }
+                clearLabel={t("sheets.tabColorNone")}
+                onPick={(fill) => {
+                  if (menu !== null) onColor(menu.sheet, fill);
+                }}
+              />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {trailing}
     </div>

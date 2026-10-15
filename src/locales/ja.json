@@ -80,7 +80,9 @@
     "scrollLeft": "シート見出しを左へスクロール",
     "scrollRight": "シート見出しを右へスクロール",
     "count_other": "{{count}} シート",
-    "none": "一致するシートはありません。"
+    "none": "一致するシートはありません。",
+    "tabColor": "シート見出しの色",
+    "tabColorNone": "色なし"
   },
   "formulaBar": {
     "expand": "展開",

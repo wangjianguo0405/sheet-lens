@@ -62,6 +62,13 @@ interface Tab {
    */
   marks: Map<string, string>;
   /**
+   * The colours the reader gave the tabs, by sheet name. Excel writes a tab
+   * colour into the file; this app has nowhere to write it, so the colour is its
+   * own the way a mark is — it lives as long as the tab holding it, and a tab
+   * left out of the map is drawn in whatever colour the workbook set.
+   */
+  tabColors: Map<string, string>;
+  /**
    * The view every sheet of this workbook opens in — the page view when the
    * file sets a print area anywhere, since a workbook that is printed is read
    * with an eye on the page. Only a default: each sheet is then switched on its
@@ -197,6 +204,7 @@ export default function App() {
                   sheet: info.sheets[0]?.name ?? "",
                   cursors: {},
                   marks: new Map(),
+                  tabColors: new Map(),
                   defaultView: initialView(info),
                   views: {},
                 },
@@ -382,6 +390,28 @@ export default function App() {
       );
     },
     [active, activeSheet, extent],
+  );
+
+  /**
+   * Colours a sheet's tab, or takes the reader's colour off it when `color` is
+   * null — which hands the tab back to the colour the workbook gives it, not to
+   * no colour at all. Like a mark, it belongs to the tab and the file is never
+   * touched.
+   */
+  const applyTabColor = useCallback(
+    (sheet: string, color: string | null) => {
+      if (!active) return;
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.info.path !== active.info.path) return tab;
+          const tabColors = new Map(tab.tabColors);
+          if (color === null) tabColors.delete(sheet);
+          else tabColors.set(sheet, color);
+          return { ...tab, tabColors };
+        }),
+      );
+    },
+    [active],
   );
 
   const handleSheetSelect = useCallback(
@@ -768,6 +798,8 @@ export default function App() {
                     sheets={active.info.sheets}
                     active={active.sheet}
                     onSelect={handleSheetSelect}
+                    colors={active.tabColors}
+                    onColor={applyTabColor}
                     trailing={
                       <>
                         {/* Excel's splitter, at the left end of the sheet's
