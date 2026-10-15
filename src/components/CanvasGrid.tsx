@@ -55,6 +55,7 @@ import {
   type SheetLayout,
 } from "@/lib/excel";
 import {
+  ACCENT_INK,
   BLOCK_COLS,
   BLOCK_ROWS,
   CELL_PAD_LEFT,
@@ -71,6 +72,7 @@ import {
   PRINT_AREA_INK,
   PRINT_AREA_LINE,
   RESIZE_HANDLE,
+  RING_W,
   ROW_HEADER_W,
   buildMetrics,
   cellKey,
@@ -1937,12 +1939,24 @@ export function CanvasGrid({
             field.style.transform =
               `translate(${(view.cols.offsets[col] - view.scrollLeft) * view.zoom}px, ` +
               `${(view.rows.offsets[row] - view.scrollTop) * view.zoom}px)`;
-            field.style.width = `${w * view.zoom}px`;
-            field.style.height = `${h * view.zoom}px`;
+            // The cell's boundary is one pixel past its last one on the right
+            // and bottom — that is where the ring and the cell's own border are
+            // drawn. The field has to reach that far, and it wears the
+            // selection's own rule rather than a border of its own: an inset
+            // shadow takes no room in the box, so the rule lands on the pixels
+            // the selection covers while the cell's text stays exactly where the
+            // canvas drew it. A border cannot — its width comes out of the
+            // content box, which pushed the text along and left a top-aligned
+            // cell's line nowhere to go.
+            field.style.width = `${(w + 1) * view.zoom}px`;
+            field.style.height = `${(h + 1) * view.zoom}px`;
+            field.style.boxShadow = `inset 0 0 0 ${RING_W * view.zoom}px ${ACCENT_INK}`;
             // The cell's own insets, scaled with the view: 3 left and 2 right,
-            // which is Excel's and is not symmetric.
+            // which is Excel's and is not symmetric. The extra pixel the field
+            // is wider by belongs to the right one, so the text ends where the
+            // canvas ends it rather than one pixel short.
             field.style.paddingLeft = `${CELL_PAD_LEFT * view.zoom}px`;
-            field.style.paddingRight = `${CELL_PAD_RIGHT * view.zoom}px`;
+            field.style.paddingRight = `${(CELL_PAD_RIGHT + 1) * view.zoom}px`;
             field.style.paddingBottom = "0px";
             field.style.font =
               `${style?.bold ? "700 " : ""}${size}px ` +
@@ -3089,7 +3103,7 @@ export function CanvasGrid({
               // where the cell is; hidden until it has been, or it would show up
               // at the origin for a frame.
               style={{ display: "none" }}
-              className="pointer-events-auto absolute top-0 left-0 overflow-auto break-words whitespace-pre-wrap border border-ring outline-none select-text"
+              className="pointer-events-auto absolute top-0 left-0 overflow-auto break-words whitespace-pre-wrap outline-none select-text"
             >
               {runs ? (
                 runs.map((run, index) => (
