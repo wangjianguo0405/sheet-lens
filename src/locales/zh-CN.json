@@ -80,7 +80,9 @@
     "scrollLeft": "向左滚动工作表标签",
     "scrollRight": "向右滚动工作表标签",
     "count_other": "{{count}} 个工作表",
-    "none": "没有匹配的工作表。"
+    "none": "没有匹配的工作表。",
+    "tabColor": "工作表标签颜色",
+    "tabColorNone": "无颜色"
   },
   "formulaBar": {
     "expand": "展开",

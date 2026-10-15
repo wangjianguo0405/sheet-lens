@@ -81,7 +81,9 @@
     "scrollRight": "Scroll the sheet tabs right",
     "count_one": "{{count}} sheet",
     "count_other": "{{count}} sheets",
-    "none": "No sheets match."
+    "none": "No sheets match.",
+    "tabColor": "Sheet tab colour",
+    "tabColorNone": "No colour"
   },
   "formulaBar": {
     "expand": "Expand",
