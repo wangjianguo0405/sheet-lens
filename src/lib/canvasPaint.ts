@@ -46,6 +46,7 @@ import {
   CELL_PAD_LEFT,
   CELL_PAD_RIGHT,
   COL_HEADER_H,
+  FILTERED_INK,
   GUTTER_TINT,
   OUTSIDE_PRINT,
   RING_W,
@@ -137,6 +138,11 @@ export interface GridView {
   mergeView: { shown: MergeRect[]; covered: Set<number> };
   centerRuns: { shown: (MergeRect & { text: string | null })[]; covered: Set<number> };
   autoFilter: AutoFilter | null;
+  /**
+   * Whether a filter is hiding rows on this sheet. It decides one thing here:
+   * the row numbers of the filtered range are drawn in Excel's blue.
+   */
+  filtering: boolean;
   printArea: MergeRect | null;
   /** Whether a cell lies outside the print area, and so takes the grey shade. */
   outsidePrint: (row: number, col: number) => boolean;
@@ -1216,7 +1222,19 @@ function paintGutterLabels(
     } else {
       ctx.font = fontString(stack, GUTTER_FONT_PX, false);
     }
-    ctx.fillStyle = lit ? ACCENT_INK : view.theme.mutedForeground;
+    // A filter's own range keeps Excel's blue on the numbers of the rows it
+    // shows — not on the row that carries the filter buttons, and not past its
+    // last row. It is the sheet's only mark that rows are missing from it.
+    const filtering =
+      view.filtering &&
+      view.autoFilter !== null &&
+      sheetRow > view.autoFilter.row &&
+      sheetRow < view.autoFilter.row + view.autoFilter.rows;
+    ctx.fillStyle = lit
+      ? ACCENT_INK
+      : filtering
+        ? FILTERED_INK
+        : view.theme.mutedForeground;
     ctx.fillText(String(sheetRow + 1), ROW_HEADER_W / 2, y + h / 2);
   }
   ctx.restore();

@@ -1831,6 +1831,7 @@ export function CanvasGrid({
       mergeView: { shown: shownMerges, covered: coveredMerges },
       centerRuns: { shown: shownRuns, covered: coveredRuns },
       autoFilter,
+      filtering: visibleRows !== null && filters.size > 0,
       printArea,
       outsidePrint,
       richText: layout.richText ?? {},
@@ -1859,6 +1860,8 @@ export function CanvasGrid({
     fontSize,
     showGrid,
     autoFilter,
+    visibleRows,
+    filters,
     printArea,
     outsidePrint,
   ]);
