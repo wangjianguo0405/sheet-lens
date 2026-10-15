@@ -12,6 +12,48 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.15] - 2026-10-15
+
+The things a workbook keeps out of sight are marked: the rows a rule colours,
+the sheets hiding past either end of the tab strip, and the rows a filter has
+taken away.
+
+### Added
+
+- Conditional formats are drawn. This is what a review checklist greys its
+  out-of-scope rows with: each rule's formula is worked out per cell, and the
+  fill, font colour and border it asks for are painted where it matches. A rule
+  written as a formula is what this reads — a colour scale, a data bar, or a
+  rule reaching into another sheet is left alone
+- The tab strip carries Excel's "…" at either end when sheets are hiding past
+  it. Pressing one makes the sheet just beyond what is on screen current and
+  scrolls its tab in, so pressing it again walks the selection along one sheet
+  at a time; each end keeps its slot when nothing is hidden that way, so the row
+  never shifts. Ctrl+click an arrow to jump straight to the first or last sheet,
+  and the sheet list a right-click opens now appears at the pointer
+- The status bar says how many sheets the workbook holds, beside its name
+- The row numbers of the rows a filter is working on are blue, as Excel draws
+  them. The grid was already skipping the numbers of the rows it hides away; the
+  colour was the rest of that mark
+
+### Improved
+
+- What a filter is hiding is said in the status bar rather than in a band across
+  the top of the grid, which spent a row of the sheet on saying it. A filter is
+  cleared from its column's own funnel menu, a column at a time
+
+### Fixed
+
+- The sheet's scrollbar splitter stops where the tab row can take no more. Past
+  that point the handle used to stand still under a pointer that was still
+  moving, and the first stretch of a drag back did nothing at all; on a wide
+  window, the first touch of it also snapped the bar shorter
+- The search list keeps the arrow keys when the walk crosses into another sheet.
+  A sheet switch hands the keyboard to the sheet — that is what makes the
+  shortcuts act on it — and the list was not excepted from it, so the next press
+  moved the cell instead of the next hit. It only happened once the focus sat on
+  a row of the list, which is where a click on a hit leaves it
+
 ## [0.3.14] - 2026-10-15
 
 A search that walks: its results answer to the arrow keys, and what has been
