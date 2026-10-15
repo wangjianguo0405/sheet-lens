@@ -95,6 +95,8 @@
     "title": "搜索",
     "close": "关闭搜索",
     "placeholder": "在工作表中查找…",
+    "history": "最近的搜索",
+    "historyEmpty": "还没有搜索过",
     "thisSheet": "当前工作表",
     "workbook": "整个工作簿",
     "wholeCell": "整个单元格",

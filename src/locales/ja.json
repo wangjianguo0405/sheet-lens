@@ -95,6 +95,8 @@
     "title": "検索",
     "close": "検索を閉じる",
     "placeholder": "シート内を検索…",
+    "history": "最近の検索",
+    "historyEmpty": "まだありません",
     "thisSheet": "このシート",
     "workbook": "ブック全体",
     "wholeCell": "セル全体",

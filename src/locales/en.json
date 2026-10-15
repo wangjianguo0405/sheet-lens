@@ -96,6 +96,8 @@
     "title": "Search",
     "close": "Close search",
     "placeholder": "Find in sheet…",
+    "history": "Recent searches",
+    "historyEmpty": "Nothing searched for yet",
     "thisSheet": "This sheet",
     "workbook": "Workbook",
     "wholeCell": "Whole cell",
