@@ -1,6 +1,6 @@
 [package]
 name = "sheet-lens"
-version = "0.3.12"
+version = "0.3.13"
 description = "Fast, local-first Excel viewer for developers and QA"
 authors = ["SheetLens"]
 edition = "2021"

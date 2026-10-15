@@ -12,6 +12,42 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.13] - 2026-10-15
+
+Excel's own colour palette, a colour for a worksheet tab, F2, a workbook the
+start page can pin — and a selection whose four sides are the same weight.
+
+### Added
+
+- The colour palette is the one Excel draws: the theme's colours over the forty
+  tints and shades that hang from them, the standard band under those, the
+  colours just used under that, and No Fill at the foot. The ten slots of
+  recently used colours are shared by everything that opens the palette, so a
+  colour picked for a cell is one a worksheet tab may want next
+- A worksheet tab takes a colour from its own right-click menu — Excel's sheet
+  menu, as far as this app has anything to put in it. The colour is the app's
+  own: there is nowhere to write it back to, so it lasts as long as the workbook
+  is open, and taking it off hands the tab back to the colour the file gives it
+  rather than to no colour at all
+- F2 opens the active cell's text, which is the keyboard's way to what a
+  double-click on a cell does. An empty cell has nothing to offer, so it is left
+  alone
+- The start page can fix a workbook to the top of the list, above the history. A
+  fixed workbook does not age out with the fifty the history keeps, and clearing
+  the history leaves it fixed
+
+### Fixed
+
+- A selection's four sides are the same weight now. The rule was drawn a pixel
+  inside the cell, while the cell's own border is drawn on its boundary — so on
+  a sheet with borders the right and bottom sides showed the green line *and*
+  the border beside it, and read as twice as thick as the left and top. The rule
+  is heavier than it was, as Excel's is, and the cell wears it while it is being
+  edited as well as while it is selected
+- Opening a cell no longer loses its colour. The field put over it painted the
+  file's own fill and nothing else, so a cell you had marked lost its colour the
+  moment you opened it, and a cell outside the print area lost its grey
+
 ## [0.3.12] - 2026-10-14
 
 Shift+click and Ctrl+click select the way Excel's do, the window keeps answering
