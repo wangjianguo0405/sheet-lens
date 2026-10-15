@@ -461,8 +461,17 @@ export function CanvasGrid({
    * focus on whatever had been clicked, so PageUp, Home and the rest did
    * nothing until the grid was clicked first. `preventScroll`, because focusing
    * something that fills the view can otherwise jog the scroller.
+   *
+   * A field being typed in keeps it, though: a jump to a hit on another sheet
+   * is a sheet change like any other, and taking the keyboard out of the
+   * search box mid-walk would end the walk on the first hit that happened to be
+   * on another sheet.
    */
   useEffect(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest("input, textarea, [contenteditable]")) {
+      return;
+    }
     viewportRef.current?.focus({ preventScroll: true });
     window.getSelection()?.removeAllRanges();
   }, [path, sheet.name]);

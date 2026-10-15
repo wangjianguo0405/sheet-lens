@@ -204,33 +204,52 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-px p-1">
-          {hits.map((hit, index) => (
-            <button
-              key={`${hit.sheet}:${hit.row}:${hit.col}`}
-              ref={index === at ? currentRef : null}
-              type="button"
-              onClick={() => {
-                setCurrent(hit);
-                onJump(hit);
-              }}
-              className={cn(
-                "rounded-sm px-2 py-1.5 text-left text-[11px]",
-                index === at ? "bg-accent" : "hover:bg-accent/50",
-              )}
-            >
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <span className="rounded-sm bg-muted px-1 py-px font-mono font-medium text-foreground">
-                  {cellRef(hit.row, hit.col)}
-                </span>
-                <span className="truncate" title={hit.sheet}>
-                  {hit.sheet}
-                </span>
-              </div>
-              <div className="mt-0.5 truncate text-foreground/90 select-text" title={hit.text}>
-                {hit.text || " "}
-              </div>
-            </button>
-          ))}
+          {hits.map((hit, index) => {
+            const walked = index === at;
+            return (
+              <button
+                key={`${hit.sheet}:${hit.row}:${hit.col}`}
+                ref={walked ? currentRef : null}
+                type="button"
+                onClick={() => {
+                  setCurrent(hit);
+                  onJump(hit);
+                }}
+                className={cn(
+                  "rounded-sm px-2 py-1.5 text-left text-[11px]",
+                  walked ? "bg-[#0F6CBD] text-white" : "hover:bg-accent/50",
+                )}
+              >
+                <div
+                  className={cn(
+                    "flex items-center gap-1.5 text-[10px]",
+                    walked ? "text-white/75" : "text-muted-foreground",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "rounded-sm px-1 py-px font-mono font-medium",
+                      walked ? "bg-white/25 text-white" : "bg-muted text-foreground",
+                    )}
+                  >
+                    {cellRef(hit.row, hit.col)}
+                  </span>
+                  <span className="truncate" title={hit.sheet}>
+                    {hit.sheet}
+                  </span>
+                </div>
+                <div
+                  className={cn(
+                    "mt-0.5 truncate select-text",
+                    walked ? "text-white" : "text-foreground/90",
+                  )}
+                  title={hit.text}
+                >
+                  {hit.text || " "}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </ScrollArea>
     </div>
