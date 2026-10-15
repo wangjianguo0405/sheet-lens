@@ -20,6 +20,8 @@ interface StatusBarProps {
   sheetCount: number | null;
   sheet: string | null;
   size: string | null;
+  /** What the sheet's filter is hiding, or null when none is. */
+  filtered: { shown: number; total: number } | null;
   /** How many rows and columns the selection spans. */
   span: SelectionSize | null;
   /** Which of Excel's two views the sheet is drawn in. */
@@ -49,6 +51,7 @@ export function StatusBar({
   sheetCount,
   sheet,
   size,
+  filtered,
   span,
   view,
   onView,
@@ -93,6 +96,22 @@ export function StatusBar({
         <>
           <Separator orientation="vertical" className="h-3" />
           <span className="tabular-nums">{size}</span>
+        </>
+      )}
+      {/*
+        What the filter is hiding, which Excel says here too rather than in a
+        band over the sheet: the rows are already gone from the grid, and a
+        count of them costs the sheet a row of height to repeat that.
+      */}
+      {filtered && (
+        <>
+          <Separator orientation="vertical" className="h-3" />
+          <span className="shrink-0 whitespace-nowrap tabular-nums">
+            {t("filter.showing", {
+              shown: filtered.shown,
+              total: filtered.total,
+            })}
+          </span>
         </>
       )}
       {/*

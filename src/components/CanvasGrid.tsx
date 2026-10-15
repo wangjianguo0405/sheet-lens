@@ -8,10 +8,6 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { ListFilter } from "lucide-react";
-import { useTranslation } from "react-i18next";
-
-import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -183,6 +179,11 @@ interface GridProps {
   onDetail?: (cell: Cell | null) => void;
   /** The extent actually on screen, which can exceed calamine's range. */
   onExtent?: (rows: number, cols: number) => void;
+  /**
+   * How many rows the sheet's filter is hiding, or null when it is hiding none.
+   * The status bar says it, which is where Excel says it too.
+   */
+  onFiltered?: (filtered: { shown: number; total: number } | null) => void;
   /** Steps to the sheet `delta` along in the workbook, for Ctrl+PageUp/Down. */
   onSheetStep?: (delta: number) => void;
   /**
@@ -390,6 +391,7 @@ export function CanvasGrid({
   markColor,
   onDetail,
   onExtent,
+  onFiltered,
   onSheetStep,
   reveal,
   zoom,
@@ -399,7 +401,6 @@ export function CanvasGrid({
   pageBreak,
   onViewport,
 }: GridProps) {
-  const { t } = useTranslation();
   const viewportRef = useRef<HTMLDivElement>(null);
   /**
    * How tall the scroller's own horizontal scrollbar is, and 0 when that bar is
@@ -1147,6 +1148,19 @@ export function CanvasGrid({
     },
     [path, sheet.name, rememberFilters],
   );
+
+  /**
+   * The status bar is told how many rows the filter is hiding, which is where
+   * Excel says it. It used to be a band wedged above the grid, which cost a row
+   * of the sheet to say something the sheet is already showing.
+   */
+  useEffect(() => {
+    onFiltered?.(
+      visibleRows && autoFilter
+        ? { shown: visibleRows.length, total: autoFilter.rows - 1 }
+        : null,
+    );
+  }, [visibleRows, autoFilter, onFiltered]);
 
   // --- the sheet's layout, once per switch ---
   useEffect(() => {
@@ -3002,30 +3016,6 @@ export function CanvasGrid({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {autoFilter && visibleRows && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-accent/40 px-2 py-1 text-[11px]">
-          <ListFilter className="size-3 shrink-0" />
-          <span className="tabular-nums">
-            {t("filter.showing", {
-              shown: visibleRows.length,
-              total: autoFilter.rows - 1,
-            })}
-          </span>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-5 px-1.5 text-[11px]"
-            onClick={() => {
-              setFilters(new Map());
-              rememberFilters(new Map());
-              setVisibleRows(null);
-            }}
-          >
-            {t("filter.clearAll")}
-          </Button>
-        </div>
-      )}
-
       {bar}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">

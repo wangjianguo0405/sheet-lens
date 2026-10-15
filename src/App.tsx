@@ -127,6 +127,15 @@ export default function App() {
   const [extent, setExtent] = useState<{ rows: number; cols: number } | null>(
     null,
   );
+  /**
+   * How many rows the active sheet's filter is hiding, or null when there is no
+   * filter. The grid owns the filter, so it reports this up for the status bar
+   * to say — the same footing the extent is on.
+   */
+  const [filtered, setFiltered] = useState<{
+    shown: number;
+    total: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Which of the two sheet pickers are showing; they are independent. */
   const [panels, setPanels] = useState<SheetPanels>(initialSheetPanels);
@@ -532,6 +541,12 @@ export default function App() {
     setExtent({ rows, cols });
   }, []);
 
+  /** What the sheet's filter is hiding, for the status bar to say. */
+  const handleFiltered = useCallback(
+    (next: { shown: number; total: number } | null) => setFiltered(next),
+    [],
+  );
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
@@ -824,6 +839,7 @@ export default function App() {
                     onSelect={handleSelect}
                     onDetail={setDetail}
                     onExtent={handleExtent}
+                    onFiltered={handleFiltered}
                     onSheetStep={handleSheetStep}
                     reveal={reveal}
                     zoom={zoom}
@@ -927,6 +943,7 @@ export default function App() {
               : null
           }
           span={activeSheet ? selectionSize(selection) : null}
+          filtered={active ? filtered : null}
           view={view}
           onView={handleView}
           zoom={zoom}
