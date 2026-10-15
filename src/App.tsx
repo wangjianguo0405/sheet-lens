@@ -89,8 +89,15 @@ const DEFAULT_SEARCH_W = 288;
 const MIN_SEARCH_W = 200;
 const MAX_SEARCH_W = 640;
 
+/**
+ * The sheet's scrollbar takes a third of the row until it is dragged, and there
+ * is no configured ceiling on it afterwards: what it may take is whatever the
+ * tab strip beside it can spare, measured during the drag. A fixed one was wrong
+ * twice over — on a narrow window the strip's own floor decides first, and the
+ * default share can start out *wider* than the number, so the first touch of the
+ * handle would snap the bar shorter instead of moving it.
+ */
 const MIN_SHEET_BAR_W = 120;
-const MAX_SHEET_BAR_W = 720;
 
 /**
  * The three things a drag can size: the sheet list, the search panel, and the
@@ -101,7 +108,7 @@ type DraggablePanel = "sheetList" | "search" | "sheetBar";
 const PANEL_LIMITS: Record<DraggablePanel, [number, number]> = {
   sheetList: [MIN_SHEET_LIST_W, MAX_SHEET_LIST_W],
   search: [MIN_SEARCH_W, MAX_SEARCH_W],
-  sheetBar: [MIN_SHEET_BAR_W, MAX_SHEET_BAR_W],
+  sheetBar: [MIN_SHEET_BAR_W, Number.POSITIVE_INFINITY],
 };
 
 function looksLikeWorkbook(path: string): boolean {
@@ -654,6 +661,30 @@ export default function App() {
   }, []);
 
   /**
+   * The widest the sheet's scrollbar can be before the tab strip beside it would
+   * have to give up more room than it has — which is the only ceiling there is,
+   * and so has to be measured rather than written down: the dots come and go,
+   * and the floor the tabs keep is the stylesheet's business, not this file's.
+   *
+   * Asking for more than this is not merely pointless, it is what made the drag
+   * go dead: the layout clamps while the number goes on climbing, so the handle
+   * stops following the pointer and the first stretch of a drag back does
+   * nothing at all.
+   */
+  const sheetBarRoom = useCallback(() => {
+    const bar = sheetBarRef.current;
+    const strip = bar
+      ?.closest("[data-sheet-strip]")
+      ?.querySelector("[data-sheet]")?.parentElement;
+    // Neither can be missing while a drag is running — the handle that starts it
+    // is in the same row — so the fallback is only here to keep the type honest.
+    if (!bar || !strip) return Number.POSITIVE_INFINITY;
+    const floor = parseFloat(getComputedStyle(strip).minWidth) || 0;
+    const spare = strip.getBoundingClientRect().width - floor;
+    return bar.getBoundingClientRect().width + Math.max(0, spare);
+  }, []);
+
+  /**
    * The listeners live on the window, not the handle: a drag leaves the four
    * pixels of it immediately, and pointer capture would keep the cursor from
    * reading as a resize once it is outside.
@@ -674,7 +705,11 @@ export default function App() {
       const drag = panelDrag.current;
       if (!drag) return;
       const delta = (event.clientX - drag.x) * direction;
-      resize(Math.min(max, Math.max(min, drag.width + delta)));
+      // The scrollbar's ceiling is whichever comes first: the width the row has
+      // to give it, or the one configured for it.
+      const ceiling =
+        draggingPanel === "sheetBar" ? Math.min(max, sheetBarRoom()) : max;
+      resize(Math.min(ceiling, Math.max(min, drag.width + delta)));
     };
     const onUp = () => setDraggingPanel(null);
 
@@ -691,7 +726,7 @@ export default function App() {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [draggingPanel]);
+  }, [draggingPanel, sheetBarRoom]);
 
   return (
     <TooltipProvider>
