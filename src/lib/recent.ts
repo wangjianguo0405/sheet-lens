@@ -15,6 +15,16 @@ const STORAGE_KEY = "sheetlens.recentFiles";
  */
 const MISSING_KEY = "sheetlens.missingFiles";
 
+/**
+ * The workbooks fixed to the start page by hand.
+ *
+ * Their own list rather than a flag on the history: a workbook is fixed because
+ * it is wanted whatever was opened last, so it must not age out with the fifty
+ * the history keeps — and emptying the history is not the same as unfixing
+ * everything, since one is a privacy sweep and the other a choice.
+ */
+const PINNED_KEY = "sheetlens.pinnedFiles";
+
 /** How many of them the File menu shows inline, before "More". */
 export const RECENT_SHOWN = 10;
 
@@ -91,6 +101,35 @@ export function forgetFile(path: string): string[] {
 export function forgetAllFiles(): void {
   writeList(STORAGE_KEY, []);
   writeList(MISSING_KEY, []);
+}
+
+/**
+ * The workbooks fixed to the start page, most recently fixed first — the same
+ * order as the history, so that a workbook just fixed is the one at the top.
+ */
+export function readPinnedFiles(): string[] {
+  return readList(PINNED_KEY);
+}
+
+/** Fixes `path` there, and hands back the list the page should show now. */
+export function pinFile(path: string): string[] {
+  const next = [
+    path,
+    ...readPinnedFiles().filter((other) => other !== path),
+  ];
+  writeList(PINNED_KEY, next);
+  return next;
+}
+
+/**
+ * Unfixes it, and hands back what is left. The workbook itself is not touched:
+ * it goes back to being an ordinary entry of the history, or of nothing at all
+ * if it has already aged out of that.
+ */
+export function unpinFile(path: string): string[] {
+  const next = readPinnedFiles().filter((other) => other !== path);
+  writeList(PINNED_KEY, next);
+  return next;
 }
 
 /** The last segment of a path, which is all a one-line menu entry shows. */
