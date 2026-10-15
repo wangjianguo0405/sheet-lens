@@ -1,8 +1,14 @@
-import { FileSpreadsheet, FolderOpen } from "lucide-react";
+import { FileSpreadsheet, FolderOpen, Pin, PinOff } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { fileName, folderName } from "@/lib/recent";
+import {
+  fileName,
+  folderName,
+  pinFile,
+  readPinnedFiles,
+  unpinFile,
+} from "@/lib/recent";
 import { cn } from "@/lib/utils";
 
 /** How much of the history shows before the rest goes behind "More". */
@@ -44,14 +50,83 @@ function Keys({ combo }: { combo: string }) {
 }
 
 /**
+ * One workbook, in either list: where it is, what it is called, and the pin
+ * that moves it between the two. The name and the pin are two buttons side by
+ * side rather than one button with a button in it, which HTML has no such
+ * thing as — and the pin has to be its own target, or clicking it would open
+ * the workbook it was meant to fix.
+ */
+function Row({
+  path,
+  missing,
+  fixed,
+  onOpen,
+  onToggle,
+}: {
+  path: string;
+  missing: boolean;
+  /** Whether this workbook is fixed, which decides what the pin does. */
+  fixed: boolean;
+  onOpen: (path: string) => void;
+  onToggle: (path: string) => void;
+}) {
+  const { t } = useTranslation();
+  const label = t(fixed ? "welcome.unpin" : "welcome.pin", {
+    name: fileName(path),
+  });
+
+  return (
+    <li className="group flex items-center">
+      <button
+        type="button"
+        onClick={() => onOpen(path)}
+        // A workbook that would not open is greyed and left in place, exactly
+        // as the File menu leaves it: a click is what gives it another try.
+        title={missing ? t("toolbar.missing", { path }) : path}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50",
+          missing ? "text-muted-foreground" : LINK,
+        )}
+      >
+        {/* Where it is, as well as what it is called: two workbooks of the
+            same name in two folders are told apart by nothing else. The folder
+            is the part that gives way when the row runs out. */}
+        <span className="min-w-0 truncate group-hover:underline">
+          {fileName(path)}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+          {folderName(path)}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onToggle(path)}
+        aria-label={label}
+        title={label}
+        className={cn(
+          "shrink-0 rounded-sm p-1 text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100",
+          // A fixed workbook shows the way back out of being fixed without
+          // being asked for; the history offers the way in only under a
+          // pointer already on the row.
+          fixed ? "opacity-60" : "opacity-0 group-hover:opacity-60",
+        )}
+      >
+        {fixed ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+      </button>
+    </li>
+  );
+}
+
+/**
  * The start page: what to open on the left, and what the keyboard does on the
  * right.
  *
- * The history is here rather than only behind the File menu because an empty
- * window is the one place it is worth the space: the workbook being come back
- * to is usually one of the last few, and picking it out of a list beats walking
- * the file picker again. It is the File menu's list, so anything taken out
- * there goes from here too.
+ * The two lists are here rather than only behind the File menu because an empty
+ * window is the one place they are worth the space: the workbook being come
+ * back to is usually one of the last few, and picking it out of a list beats
+ * walking the file picker again. The history is the File menu's own list, so
+ * anything taken out there goes from here too — and the fixed ones are the
+ * handful that should not have to be found again at all.
  */
 export function Welcome({
   onOpen,
@@ -64,6 +139,16 @@ export function Welcome({
   const missing = new Set(missingFiles);
   /** Whether the history is showing all of itself or only the newest few. */
   const [fullHistory, setFullHistory] = useState(false);
+  /** Fixed by hand, and kept here rather than in the app: the page is its only
+      reader, and mounting reads the list back out of storage. */
+  const [pinnedFiles, setPinnedFiles] = useState<string[]>(readPinnedFiles);
+  const pinned = new Set(pinnedFiles);
+  /** A fixed workbook is shown above, so the history leaves it out rather
+      than offering the same workbook twice. */
+  const history = recentFiles.filter((path) => !pinned.has(path));
+
+  const togglePinned = (path: string) =>
+    setPinnedFiles(pinned.has(path) ? unpinFile(path) : pinFile(path));
 
   /**
    * Every key the app answers to, in the order a reader meets them: the file,
@@ -127,69 +212,82 @@ export function Welcome({
           )}
 
           <section className="mt-6">
-            <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-              {t("welcome.history")}
-            </h2>
-            {recentFiles.length === 0 ? (
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                {t("welcome.noHistory")}
-              </p>
+            {pinnedFiles.length === 0 && history.length === 0 ? (
+              <>
+                <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                  {t("welcome.history")}
+                </h2>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {t("welcome.noHistory")}
+                </p>
+              </>
             ) : (
-              <ul className="mt-1 max-h-64 overflow-y-auto">
-                {(fullHistory
-                  ? recentFiles
-                  : recentFiles.slice(0, HISTORY_SHOWN)
-                ).map((path) => (
-                  <li key={path}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenRecent(path)}
-                      // A workbook that would not open is greyed and left in
-                      // place, exactly as the File menu leaves it: a click is
-                      // what gives it another try.
-                      title={
-                        missing.has(path)
-                          ? t("toolbar.missing", { path })
-                          : path
-                      }
-                      className={cn(
-                        "group flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50",
-                        missing.has(path)
-                          ? "text-muted-foreground"
-                          : LINK,
-                      )}
-                    >
-                      {/* Where it is, as well as what it is called: two
-                          workbooks of the same name in two folders are told
-                          apart by nothing else. The folder is the part that
-                          gives way when the row runs out. */}
-                      <span className="min-w-0 truncate group-hover:underline">
-                        {fileName(path)}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                        {folderName(path)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-                {/* The rest of the list, for a history with more in it than
-                    the page has room for — the File menu's own "More", in the
-                    one place a reader is already looking at the list. */}
-                {!fullHistory && recentFiles.length > HISTORY_SHOWN && (
-                  <li>
-                    <button
-                      type="button"
-                      onClick={() => setFullHistory(true)}
-                      className={cn(
-                        LINK,
-                        "flex w-full items-center rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
-                      )}
-                    >
-                      {t("welcome.more")}
-                    </button>
-                  </li>
+              <>
+                {pinnedFiles.length > 0 && (
+                  <>
+                    <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                      {t("welcome.pinned")}
+                    </h2>
+                    <ul className="mt-1 max-h-64 overflow-y-auto">
+                      {pinnedFiles.map((path) => (
+                        <Row
+                          key={path}
+                          path={path}
+                          missing={missing.has(path)}
+                          fixed
+                          onOpen={onOpenRecent}
+                          onToggle={togglePinned}
+                        />
+                      ))}
+                    </ul>
+                  </>
                 )}
-              </ul>
+
+                {history.length > 0 && (
+                  <>
+                    <h2
+                      className={cn(
+                        "text-[10px] font-medium tracking-wide text-muted-foreground uppercase",
+                        pinnedFiles.length > 0 && "mt-5",
+                      )}
+                    >
+                      {t("welcome.history")}
+                    </h2>
+                    <ul className="mt-1 max-h-64 overflow-y-auto">
+                      {(fullHistory ? history : history.slice(0, HISTORY_SHOWN)).map(
+                        (path) => (
+                          <Row
+                            key={path}
+                            path={path}
+                            missing={missing.has(path)}
+                            fixed={false}
+                            onOpen={onOpenRecent}
+                            onToggle={togglePinned}
+                          />
+                        ),
+                      )}
+                      {/* The rest of the list, for a history with more in it
+                          than the page has room for — the File menu's own
+                          "More", in the one place a reader is already looking
+                          at the list. */}
+                      {!fullHistory && history.length > HISTORY_SHOWN && (
+                        <li>
+                          <button
+                            type="button"
+                            onClick={() => setFullHistory(true)}
+                            className={cn(
+                              LINK,
+                              "flex w-full items-center rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
+                            )}
+                          >
+                            {t("welcome.more")}
+                          </button>
+                        </li>
+                      )}
+                    </ul>
+                  </>
+                )}
+              </>
             )}
           </section>
         </div>
