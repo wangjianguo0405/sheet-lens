@@ -141,6 +141,8 @@ export default function App() {
   const [sheetBarWidth, setSheetBarWidth] = useState<number | null>(null);
   /** The row's own box, so a drag can start from the length it has now. */
   const sheetBarRef = useRef<HTMLDivElement>(null);
+  /** The search panel's box, so Escape can tell whose key it was. */
+  const searchPanelRef = useRef<HTMLDivElement>(null);
   /**
    * Which side panel a drag is sizing, so one set of listeners serves all of
    * them — they differ only in which way the pointer's delta counts, how far
@@ -570,7 +572,17 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.ctrlKey && !event.metaKey) {
-        if (event.key === "Escape") setSearchOpen(false);
+        if (event.key === "Escape") {
+          // Escape puts the panel away only from the panel's own row — the
+          // search field is where it is asked for. Everywhere else the key is
+          // the sheet's or a field's: it takes the marquee off a copy, closes
+          // a cell's text, and none of that is meant to take the panel with
+          // it. Ctrl+F is the shortcut that closes it from anywhere.
+          const target = event.target;
+          if (target instanceof Node && searchPanelRef.current?.contains(target)) {
+            setSearchOpen(false);
+          }
+        }
         return;
       }
       const key = event.key.toLowerCase();
@@ -844,7 +856,7 @@ export default function App() {
                     onPointerDown={(event) => startPanelDrag("search", event)}
                     className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
                   />
-                  <div className="shrink-0" style={{ width: searchWidth }}>
+                  <div ref={searchPanelRef} className="shrink-0" style={{ width: searchWidth }}>
                     <SearchPanel
                       path={active.info.path}
                       sheet={active.sheet}
