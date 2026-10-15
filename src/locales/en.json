@@ -86,7 +86,9 @@
     "count_other": "{{count}} sheets",
     "none": "No sheets match.",
     "tabColor": "Sheet tab colour",
-    "tabColorNone": "No colour"
+    "tabColorNone": "No colour",
+    "moreLeft": "Show the hidden sheet tabs to the left",
+    "moreRight": "Show the hidden sheet tabs to the right"
   },
   "formulaBar": {
     "expand": "Expand",
