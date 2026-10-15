@@ -186,7 +186,7 @@ impl std::hash::Hash for CellStyle {
 }
 
 impl CellStyle {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.horizontal.is_none()
             && self.vertical.is_none()
             && self.indent == 0
@@ -316,7 +316,7 @@ impl Styles {
 
 /// Stores `style` once and returns its index, so the payload carries each
 /// distinct style a single time.
-fn intern(
+pub(crate) fn intern(
     styles: &mut Vec<CellStyle>,
     ids: &mut HashMap<CellStyle, u32>,
     style: CellStyle,
@@ -404,7 +404,7 @@ pub struct RichRun {
 }
 
 impl SheetLayout {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             rows: 0,
             cols: 0,
@@ -458,6 +458,8 @@ struct Styles {
     fills: Vec<Option<String>>,
     /// Custom `numFmtId` -> format code. Built-in ids are looked up separately.
     num_formats: HashMap<u32, String>,
+    /// The workbook's `<dxfs>`: what each conditional-format rule paints.
+    dxfs: Vec<crate::cond::Patch>,
 }
 
 /// Workbook-wide parse results. The styles and theme tables are shared by every
@@ -473,9 +475,22 @@ pub struct Cache {
     /// out. Nearly every string in every sheet is shared, so this is read once
     /// per workbook rather than once per sheet.
     rich_strings: HashMap<String, Vec<RichRun>>,
+    /// The same table in the order the sheet's cells index it. Only a formula
+    /// being evaluated needs to look a string up by number — everything drawn
+    /// carries its text already.
+    shared_strings: Vec<String>,
 }
 
 impl Cache {
+    /// What an `dxfId` in a conditional-format rule points at.
+    pub(crate) fn patches(&self) -> &[crate::cond::Patch] {
+        &self.styles.dxfs
+    }
+
+    pub(crate) fn shared_strings(&self) -> &[String] {
+        &self.shared_strings
+    }
+
     pub fn load(&mut self, path: &str) -> Result<(), String> {
         if self.loaded {
             return Ok(());
@@ -489,6 +504,7 @@ impl Cache {
         // this is a lookup on failure rather than an error.
         if let Ok(xml) = read_entry(&mut zip, "xl/sharedStrings.xml") {
             self.rich_strings = rich_strings(&xml, &self.theme);
+            self.shared_strings = shared_strings(&xml);
         }
         self.loaded = true;
         Ok(())
@@ -562,8 +578,12 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     let workbook = read_entry(&mut zip, "xl/workbook.xml")?;
     let rels = read_entry(&mut zip, "xl/_rels/workbook.xml.rels")?;
     let part = sheet_part(&workbook, &rels, sheet)?;
-    let entry = zip.by_name(&part).map_err(|e| e.to_string())?;
-    let mut layout = parse_sheet(BufReader::new(entry), &cache.styles)?;
+    // The sheet is read whole rather than streamed straight out of the archive,
+    // because a conditional format asks a question that spans the sheet — what
+    // does the cell three columns over hold — and only the walk itself can stay
+    // local to one row.
+    let sheet_xml = read_entry(&mut zip, &part)?;
+    let mut layout = parse_sheet(sheet_xml.as_bytes(), &cache.styles)?;
     // A sheet with no `_xlnm.Print_Area` still gets shaded by Excel, which falls
     // back to the range it would print. Leaving this `None` painted those sheets
     // white to the edge while every other sheet in the same workbook greyed out
@@ -573,6 +593,8 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     // simply looks up whatever text it is about to draw.
     layout.rich_text = cache.rich_strings.clone();
     read_drawings(&mut zip, cache, &part, &mut layout);
+    // Last, so that the extent a rule is clamped to is the finished one.
+    crate::cond::apply(&sheet_xml, cache, &mut layout);
     Ok(layout)
 }
 
@@ -690,6 +712,54 @@ pub(crate) fn entity_text(reference: &BytesRef) -> Option<char> {
         "quot" => Some('"'),
         _ => None,
     }
+}
+
+/// The shared strings in the order the sheets index them into.
+///
+/// A cell that carries a shared string holds its *number*, so anything that has
+/// to compare a cell's text — a conditional format's formula — needs the table
+/// itself and not just the runs above.
+fn shared_strings(xml: &str) -> Vec<String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    let mut in_text = false;
+    let mut in_phonetic = false;
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
+                match element.local_name().as_ref() {
+                    b"si" => out.push(String::new()),
+                    // A phonetic reading spells the same text out again in
+                    // `<t>` elements of its own and is no part of the string.
+                    b"rPh" => in_phonetic = true,
+                    b"t" => in_text = true,
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(text)) if in_text && !in_phonetic => {
+                if let (Some(slot), Ok(text)) = (out.last_mut(), text.xml_content(XmlVersion::default()))
+                {
+                    slot.push_str(&text);
+                }
+            }
+            Ok(Event::GeneralRef(reference)) if in_text && !in_phonetic => {
+                if let (Some(slot), Some(ch)) = (out.last_mut(), entity_text(&reference)) {
+                    slot.push(ch);
+                }
+            }
+            Ok(Event::End(element)) => match element.local_name().as_ref() {
+                b"t" => in_text = false,
+                b"rPh" => in_phonetic = false,
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The shared strings that are split into coloured runs, keyed by the text they
@@ -1046,11 +1116,16 @@ fn read_styles<R: Read + Seek>(
             _ => {}
         }
     }
+    // The `dxfs` are what the sheet's conditional formats paint, and they are
+    // read in a walk of their own: a differential format is its own small schema,
+    // and folding it into this one would mean carrying its state through every
+    // branch above.
+    styles.dxfs = crate::cond::dxfs(&xml, theme);
     styles
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Side {
+pub(crate) enum Side {
     Top,
     Right,
     Bottom,
@@ -1106,7 +1181,11 @@ fn builtin_date_format(id: u32) -> Option<&'static str> {
 
 /// Records one side's style and returns which side is open, so a nested
 /// `<color>` knows where to land.
-fn set_edge(element: &BytesStart, border: Option<&mut CellBorder>, name: &[u8]) -> Option<Side> {
+pub(crate) fn set_edge(
+    element: &BytesStart,
+    border: Option<&mut CellBorder>,
+    name: &[u8],
+) -> Option<Side> {
     let side = match name {
         b"top" => Side::Top,
         b"right" => Side::Right,
@@ -1126,7 +1205,7 @@ fn set_edge(element: &BytesStart, border: Option<&mut CellBorder>, name: &[u8]) 
     Some(side)
 }
 
-fn color_edge(
+pub(crate) fn color_edge(
     element: &BytesStart,
     border: Option<&mut CellBorder>,
     side: Option<Side>,
@@ -1297,7 +1376,7 @@ fn parse_theme(xml: &str) -> HashMap<String, String> {
 /// Resolves a `<color …/>` however it names its colour: `rgb`, `theme`,
 /// `indexed`, or `auto`. The theme and indexed forms are what real documents
 /// lean on, and reading only `rgb` left most of their colours unresolved.
-fn color_of(element: &BytesStart, theme: &[Option<String>]) -> Option<String> {
+pub(crate) fn color_of(element: &BytesStart, theme: &[Option<String>]) -> Option<String> {
     if let Some(rgb) = attr(element, b"rgb").as_deref().and_then(parse_color) {
         return Some(tint(rgb, attr(element, b"tint")));
     }
@@ -1307,10 +1386,11 @@ fn color_of(element: &BytesStart, theme: &[Option<String>]) -> Option<String> {
     if let Some(index) = attr(element, b"theme").and_then(|v| v.parse::<usize>().ok()) {
         return match theme.get(index).and_then(|slot| slot.clone()) {
             Some(base) => Some(tint(base, attr(element, b"tint"))),
-            // Without a parsed theme, slot 1 is the text colour and 0 the page.
+            // Without a parsed theme, slot 1 is the text colour and 0 the page —
+            // and the tint applies to those two just the same.
             None => match index {
-                1 => Some(BLACK.to_owned()),
-                0 => Some(WHITE.to_owned()),
+                1 => Some(tint(BLACK.to_owned(), attr(element, b"tint"))),
+                0 => Some(tint(WHITE.to_owned(), attr(element, b"tint"))),
                 _ => None,
             },
         };
@@ -1683,7 +1763,7 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
 }
 
 /// Parses an A1 range such as `A1:C1` or a single cell such as `B7`.
-fn parse_range(reference: &str) -> Option<MergeRect> {
+pub(crate) fn parse_range(reference: &str) -> Option<MergeRect> {
     let (start, end) = reference.split_once(':').unwrap_or((reference, reference));
     let (row1, col1) = parse_cell(start)?;
     let (row2, col2) = parse_cell(end)?;
@@ -1699,7 +1779,7 @@ fn parse_range(reference: &str) -> Option<MergeRect> {
 }
 
 /// Parses `B7` into zero-based `(row, col)`, tolerating `$` anchors.
-fn parse_cell(reference: &str) -> Option<(u32, u32)> {
+pub(crate) fn parse_cell(reference: &str) -> Option<(u32, u32)> {
     let mut col = 0u32;
     let mut digits = String::new();
     for ch in reference.chars() {
