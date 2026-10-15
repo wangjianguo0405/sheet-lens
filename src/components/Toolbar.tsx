@@ -11,7 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import { MarkPalette } from "@/components/MarkPalette";
+import { ColorPalette } from "@/components/ColorPalette";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -259,7 +259,7 @@ export function Toolbar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-[13.5rem]">
-            <MarkPalette variant="dropdown" current={markColor} onPick={onMark} />
+            <ColorPalette variant="dropdown" current={markColor} onPick={onMark} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

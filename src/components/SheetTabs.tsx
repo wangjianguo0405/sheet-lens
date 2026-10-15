@@ -10,6 +10,15 @@ import {
   ContextMenuRadioItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ColorPalette } from "@/components/ColorPalette";
 import type { SheetInfo } from "@/lib/excel";
 import { cn } from "@/lib/utils";
 

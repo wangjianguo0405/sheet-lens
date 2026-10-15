@@ -66,10 +66,11 @@
     "copyName": "复制文件名",
     "copyPath": "复制文件路径"
   },
-  "mark": {
-    "clear": "无填充",
+  "palette": {
+    "theme": "主题颜色",
     "standard": "标准色",
-    "soft": "浅色"
+    "recent": "最近使用的颜色",
+    "clear": "无填充"
   },
   "sheets": {
     "filter": "筛选工作表",

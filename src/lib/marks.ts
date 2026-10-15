@@ -8,58 +8,12 @@
  * the cursors.
  */
 import { areasOf, type Area, type Selection } from "@/lib/selection";
+import { DEFAULT_COLOR, isPaletteColor } from "@/lib/palette";
 
 /** One cell's mark: a fill colour, keyed off the sheet and the cell. */
 export type Marks = Map<string, string>;
 
-/**
- * Excel's own Standard Colours row, so the palette is the one a reader already
- * knows rather than a set invented here.
- */
-export const MARK_STANDARD = [
-  "#C00000",
-  "#FF0000",
-  "#FFC000",
-  "#FFFF00",
-  "#92D050",
-  "#00B050",
-  "#00B0F0",
-  "#0070C0",
-  "#002060",
-  "#7030A0",
-];
-
-/**
- * The same idea in light tints. Excel's standard row is for the file's own
- * formatting, where the fill is the point; a review mark sits *under* text that
- * still has to be read, so these are the ones to reach for when the strong
- * colours swallow the cell.
- */
-export const MARK_SOFT = [
-  "#FFC7CE",
-  "#FCE4D6",
-  "#FFEB9C",
-  "#FFF2CC",
-  "#E2EFDA",
-  "#C6EFCE",
-  "#DDEBF7",
-  "#BDD7EE",
-  "#E4DFEC",
-  "#E7E6E6",
-];
-
-/** What the paint bucket starts out holding, and fills with on its own. */
-export const DEFAULT_MARK = "#FFEB9C";
-
 const STORAGE_KEY = "sheetlens.markColor";
-
-/** Whether a stored value is one of the palette's, rather than anything at all. */
-function isMarkColor(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    (MARK_STANDARD.includes(value) || MARK_SOFT.includes(value))
-  );
-}
 
 /**
  * The colour the bucket last held.
@@ -72,11 +26,11 @@ function isMarkColor(value: unknown): value is string {
 export function initialMarkColor(): string {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (isMarkColor(stored)) return stored;
+    if (isPaletteColor(stored)) return stored;
   } catch {
     // A webview that refuses storage still gets the default.
   }
-  return DEFAULT_MARK;
+  return DEFAULT_COLOR;
 }
 
 export function storeMarkColor(fill: string): void {
