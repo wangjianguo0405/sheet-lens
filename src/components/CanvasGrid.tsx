@@ -11,12 +11,15 @@ import {
 import {
   ContextMenu,
   ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { FilterButton } from "@/components/FilterButton";
 import { ColorPalette } from "@/components/ColorPalette";
 import { ShapeLayer, type ShapeDebugFacts } from "@/components/ShapeLayer";
 import { canvasTheme } from "@/lib/canvasTheme";
+import { useTranslation } from "react-i18next";
 import {
   paintBase,
   paintOverlay,
@@ -745,13 +748,56 @@ export function CanvasGrid({
     return { rows: displayRows, index };
   }, [displayRows]);
 
+  const { t } = useTranslation();
+
   /**
-   * The rows and columns the file hides. Excel draws none of them and skips the
+   * What the reader has hidden or shown this session, laid over the file's own
+   * answer. Nothing is written back — reopening the workbook shows exactly what
+   * Excel shows — so these live and die with the sheet on screen.
+   */
+  const [hiddenOverride, setHiddenOverride] = useState<{
+    rows: Map<number, boolean>;
+    cols: Map<number, boolean>;
+  }>({ rows: new Map(), cols: new Map() });
+
+  /** The header the context menu was opened on, when it was one. */
+  const [menuTarget, setMenuTarget] = useState<
+    { kind: "row"; index: number } | { kind: "col"; index: number } | null
+  >(null);
+
+  /**
+   * The rows and columns the sheet hides. Excel draws none of them and skips the
    * number, so the gap is the only sign it gives; both take no room at all,
    * which is what puts everything after them where Excel has it.
    */
-  const hiddenRows = useMemo(() => new Set(layout?.hiddenRows ?? []), [layout]);
-  const hiddenCols = useMemo(() => new Set(layout?.hiddenCols ?? []), [layout]);
+  const hiddenRows = useMemo(() => {
+    const set = new Set(layout?.hiddenRows ?? []);
+    for (const [row, hidden] of hiddenOverride.rows) {
+      if (hidden) set.add(row);
+      else set.delete(row);
+    }
+    return set;
+  }, [layout, hiddenOverride.rows]);
+
+  const hiddenCols = useMemo(() => {
+    const set = new Set(layout?.hiddenCols ?? []);
+    for (const [col, hidden] of hiddenOverride.cols) {
+      if (hidden) set.add(col);
+      else set.delete(col);
+    }
+    return set;
+  }, [layout, hiddenOverride.cols]);
+
+  /**
+   * Columns the file hid that the reader has since asked to see. The file keeps
+   * no width for them — Excel writes `width="0"` beside the flag — so these
+   * come back at the sheet's own default, which is what Excel puts back.
+   */
+  const revealedCols = useMemo(() => {
+    const set = new Set<number>();
+    for (const [col, hidden] of hiddenOverride.cols) if (!hidden) set.add(col);
+    return set;
+  }, [hiddenOverride.cols]);
 
   /** How many rows the view shows — a filtered view shows fewer. */
   const displayRowCount = rowView ? rowView.rows.length : sheetRowsGuess;
@@ -790,9 +836,13 @@ export function CanvasGrid({
         // width is the honest answer, not the file's.
         if (index >= sheetColsGuess) return baseColW;
         if (hiddenCols.has(index)) return 0;
-        return colOverrides.get(index) ?? baseColW;
+        const own = colOverrides.get(index);
+        if (own !== undefined && own > 0) return own;
+        // The file's width for a column it hid is the zero beside the flag, so
+        // one the reader has brought back takes the sheet's own default.
+        return revealedCols.has(index) ? baseColW : (own ?? baseColW);
       }),
-    [colCount, sheetColsGuess, colOverrides, baseColW, hiddenCols],
+    [colCount, sheetColsGuess, colOverrides, baseColW, hiddenCols, revealedCols],
   );
 
   const rows = useMemo(
@@ -1202,6 +1252,9 @@ export function CanvasGrid({
         setFontSize(parsed.fontSizePx);
         setShowGrid(parsed.showGridLines);
         seeded.current = sheetIdentity(path, sheet.name);
+        // Row and column numbers mean a different thing on the next sheet, so
+        // what the reader hid here does not carry over.
+        setHiddenOverride({ rows: new Map(), cols: new Map() });
         // What the reader has dragged or fitted since wins over the file's own
         // sizes, which are only where this sheet started.
         const saved = views.get(path)?.get(sheet.name);
@@ -2348,6 +2401,7 @@ export function CanvasGrid({
     const hit = hitAt(event.clientX, event.clientY);
     if (!hit) return;
     if (hit.kind === "cell") {
+      setMenuTarget(null);
       if (!selectionCovers(selection, hit.row, hit.col)) select(hit.row, hit.col);
       return;
     }
@@ -2356,14 +2410,46 @@ export function CanvasGrid({
     // right-clicking any part of it.
     const area = activeArea(selection);
     if (hit.kind === "rowHeader") {
+      setMenuTarget({ kind: "row", index: hit.row });
       const covered =
         area.kind === "row" && hit.row >= area.row && hit.row < area.row + area.rows;
       if (!covered) onSelect(rowsBetween(hit.row, hit.row));
       return;
     }
+    setMenuTarget({ kind: "col", index: hit.col });
     const covered =
       area.kind === "column" && hit.col >= area.col && hit.col < area.col + area.cols;
     if (!covered) onSelect(colsBetween(hit.col, hit.col));
+  };
+
+  /**
+   * The rows or columns Hide acts on: the run the reader has selected when the
+   * pointer is inside it, and otherwise the single header it landed on.
+   */
+  const headerSpan = (target: NonNullable<typeof menuTarget>): [number, number] => {
+    const area = activeArea(selection);
+    if (target.kind === "row" && area.kind === "row") {
+      return [area.row, area.row + area.rows - 1];
+    }
+    if (target.kind === "col" && area.kind === "column") {
+      return [area.col, area.col + area.cols - 1];
+    }
+    return [target.index, target.index];
+  };
+
+  /**
+   * Hides or shows a run, for this session only. The selection is left where it
+   * is, so Hide followed by Unhide on the same run puts it straight back the way
+   * Excel does.
+   */
+  const setHeaderHidden = (target: NonNullable<typeof menuTarget>, hidden: boolean) => {
+    const [from, to] = headerSpan(target);
+    const key = target.kind === "row" ? "rows" : "cols";
+    setHiddenOverride((current) => {
+      const next = new Map(current[key]);
+      for (let index = from; index <= to; index += 1) next.set(index, hidden);
+      return { ...current, [key]: next };
+    });
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -3074,6 +3160,17 @@ export function CanvasGrid({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="min-w-[13.5rem]">
+            {menuTarget && (
+              <>
+                <ContextMenuItem onSelect={() => setHeaderHidden(menuTarget, true)}>
+                  {t("grid.hide")}
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => setHeaderHidden(menuTarget, false)}>
+                  {t("grid.unhide")}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+              </>
+            )}
             <ColorPalette variant="context" current={markColor} onPick={onMark} />
           </ContextMenuContent>
         </ContextMenu>

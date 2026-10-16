@@ -143,7 +143,9 @@
   "grid": {
     "resizeColumn": "Resize column {{column}}",
     "resizeColumnHint": "Drag to resize, double-click to fit",
-    "resizeRow": "Resize row {{row}}"
+    "resizeRow": "Resize row {{row}}",
+    "hide": "Hide",
+    "unhide": "Unhide"
   },
   "update": {
     "title": "Software update",

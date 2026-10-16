@@ -141,7 +141,9 @@
   "grid": {
     "resizeColumn": "调整列 {{column}} 的宽度",
     "resizeColumnHint": "拖动调整宽度，双击自适应",
-    "resizeRow": "调整第 {{row}} 行的高度"
+    "resizeRow": "调整第 {{row}} 行的高度",
+    "hide": "隐藏",
+    "unhide": "取消隐藏"
   },
   "update": {
     "title": "软件更新",
