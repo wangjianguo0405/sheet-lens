@@ -125,10 +125,22 @@ export function lineMetrics(font: string, sizePx: number): LineMetrics {
 }
 
 /**
+ * The value as Excel draws it in a cell that does not wrap: the line breaks are
+ * not there at all — not a break, and not a space either, so the text runs on
+ * across them. `measureText` charges a space for `\n`, so a value like this has
+ * to lose them before anything measures it. Pinned against Excel by rendering
+ * `ABC\nDEF` in an unwrapped cell: it comes out exactly as wide as `ABCDEF`,
+ * where `ABC DEF` is a space wider (`MS PGothic` 11pt and 20pt alike).
+ */
+export function flatText(text: string): string {
+  return text.replace(/\n/g, "");
+}
+
+/**
  * The lines a cell's text occupies. A wrapped cell (`whitespace-pre-wrap
  * break-words`) breaks at spaces and, where a single word cannot fit, inside
- * the word; an unwrapped one is a single line — the DOM renderer clipped it at
- * the cell edge, so only the first `\n`-separated line is ever seen.
+ * the word, and a break in the value is a line of its own; an unwrapped one is
+ * a single line of the whole value, its breaks drawn as nothing.
  *
  * Spaces are preserved rather than collapsed, which is what `pre-wrap` means
  * and what these documents rely on for their indentation runs.
@@ -139,7 +151,7 @@ export function layoutLines(
   maxWidth: number,
   wrap: boolean,
 ): string[] {
-  if (!wrap) return [text.split("\n", 1)[0] ?? ""];
+  if (!wrap) return [flatText(text)];
   if (maxWidth <= 0) return [""];
 
   const lines: string[] = [];
