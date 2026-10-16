@@ -133,6 +133,10 @@ pub struct CellStyle {
     pub indent: u8,
     pub wrap: bool,
     pub bold: bool,
+    pub italic: bool,
+    pub strike: bool,
+    /// `single` or `double`; absent when the font has no underline.
+    pub underline: Option<&'static str>,
     /// Only set when the cell's font differs from the workbook default, which
     /// is the difference between a 22pt title and body text.
     pub size_px: Option<f64>,
@@ -160,6 +164,9 @@ impl PartialEq for CellStyle {
             && self.indent == other.indent
             && self.wrap == other.wrap
             && self.bold == other.bold
+            && self.italic == other.italic
+            && self.strike == other.strike
+            && self.underline == other.underline
             && self.size_px == other.size_px
             && self.family == other.family
             && self.color == other.color
@@ -177,6 +184,9 @@ impl std::hash::Hash for CellStyle {
         self.indent.hash(state);
         self.wrap.hash(state);
         self.bold.hash(state);
+        self.italic.hash(state);
+        self.strike.hash(state);
+        self.underline.hash(state);
         self.size_px.map(f64::to_bits).hash(state);
         self.family.hash(state);
         self.color.hash(state);
@@ -192,6 +202,9 @@ impl CellStyle {
             && self.indent == 0
             && !self.wrap
             && !self.bold
+            && !self.italic
+            && !self.strike
+            && self.underline.is_none()
             && self.size_px.is_none()
             && self.family.is_none()
             && self.color.is_none()
@@ -283,7 +296,7 @@ impl Styles {
     /// The viewer's style for one `cellXfs` entry, or `None` when the entry
     /// says nothing this grid would draw differently.
     fn cell_style(&self, index: usize, default_font_px: f64) -> Option<CellStyle> {
-        let entry = self.xfs.get(index)?;
+        let entry = self.resolved(self.xfs.get(index)?);
         let font = self.fonts.get(entry.font_id);
         let size_px = font
             .and_then(|font| font.size_pt)
@@ -299,6 +312,9 @@ impl Styles {
             indent: entry.align.indent,
             wrap: entry.align.wrap,
             bold: font.is_some_and(|font| font.bold),
+            italic: font.is_some_and(|font| font.italic),
+            strike: font.is_some_and(|font| font.strike),
+            underline: font.and_then(|font| font.underline),
             size_px,
             family,
             color: font.and_then(|font| font.color.clone()),
@@ -311,6 +327,41 @@ impl Styles {
             border: self.borders.get(entry.border_id).and_then(|b| b.clone()),
         };
         (!style.is_empty()).then_some(style)
+    }
+
+    /// A cell format with the properties it does not apply taken from the named
+    /// style it points at.
+    ///
+    /// Excel's inheritance is one level deeper than cell → row → column: every
+    /// `cellXfs` entry carries an `xfId` into `cellStyleXfs`, plus an `apply…`
+    /// flag per property saying whether its own value is the one to use. With
+    /// the flag off, the ids written beside it are leftovers from whatever the
+    /// format was built on, and reading those draws the cell in the wrong font.
+    ///
+    /// Only an explicit `apply…="0"` inherits — see `Xf` for what a missing
+    /// flag means.
+    fn resolved(&self, entry: &Xf) -> Xf {
+        let Some(named) = self.style_xfs.get(entry.style_id) else {
+            return entry.clone();
+        };
+        let pick = |apply: Option<bool>, own: usize, named: usize| match apply {
+            Some(false) => named,
+            _ => own,
+        };
+        Xf {
+            align: match entry.apply_align {
+                Some(false) => named.align,
+                _ => entry.align,
+            },
+            border_id: pick(entry.apply_border, entry.border_id, named.border_id),
+            font_id: pick(entry.apply_font, entry.font_id, named.font_id),
+            fill_id: pick(entry.apply_fill, entry.fill_id, named.fill_id),
+            num_fmt_id: match entry.apply_number {
+                Some(false) => named.num_fmt_id,
+                _ => entry.num_fmt_id,
+            },
+            ..entry.clone()
+        }
     }
 }
 
@@ -435,6 +486,11 @@ struct FontInfo {
     name: Option<String>,
     size_pt: Option<f64>,
     bold: bool,
+    italic: bool,
+    strike: bool,
+    /// `single` or `double`. The two accounting forms draw the same line, only
+    /// spanning the cell rather than the text, and land on one of these.
+    underline: Option<&'static str>,
     color: Option<String>,
 }
 
@@ -446,12 +502,27 @@ struct Xf {
     font_id: usize,
     fill_id: usize,
     num_fmt_id: u32,
+    /// `xfId`: the named style in `cellStyleXfs` this format inherits from.
+    style_id: usize,
+    /// One `apply…` flag per property, kept as `None` when the file writes no
+    /// such attribute — which is not the same as writing `apply…="0"`. Only the
+    /// zero gives the property up to the named style; an entry that says
+    /// nothing is using the ids beside it, which is how every producer that is
+    /// not Excel writes its formats.
+    apply_font: Option<bool>,
+    apply_fill: Option<bool>,
+    apply_border: Option<bool>,
+    apply_number: Option<bool>,
+    apply_align: Option<bool>,
 }
 
 /// Everything this viewer needs out of `xl/styles.xml`.
 #[derive(Default)]
 struct Styles {
     xfs: Vec<Xf>,
+    /// `cellStyleXfs`: the workbook's named styles, which a cell format borrows
+    /// the properties it does not apply from.
+    style_xfs: Vec<Xf>,
     borders: Vec<Option<CellBorder>>,
     fonts: Vec<FontInfo>,
     /// Background colour per `<fill>` entry; `None` for patterns and gradients.
@@ -969,8 +1040,12 @@ fn read_styles<R: Read + Seek>(
     let Ok(xml) = read_entry(zip, "xl/styles.xml") else {
         return Styles::default();
     };
+    parse_styles(&xml, theme)
+}
 
-    let mut reader = XmlReader::from_str(&xml);
+/// Walks `xl/styles.xml` — the split that lets the walk be tested on a string.
+fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
+    let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
     let mut styles = Styles::default();
 
@@ -979,12 +1054,14 @@ fn read_styles<R: Read + Seek>(
     let mut in_fills = false;
     let mut in_num_fmts = false;
     let mut in_cell_xfs = false;
+    let mut in_named_xfs = false;
     let mut border: Option<CellBorder> = None;
     let mut edge: Option<Side> = None;
     let mut font: Option<FontInfo> = None;
     let mut fill: Option<String> = None;
     let mut fill_is_solid = false;
     let mut xf: Option<Xf> = None;
+    let mut named_xf: Option<Xf> = None;
 
     loop {
         buf.clear();
@@ -1015,6 +1092,9 @@ fn read_styles<R: Read + Seek>(
                 b"numFmts" => in_num_fmts = true,
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
                 b"font" if in_fonts => font = Some(FontInfo::default()),
+                b"b" | b"i" | b"u" | b"strike" if in_fonts => {
+                    read_font_prop(&element, font.as_mut())
+                }
                 b"sz" if in_fonts => {
                     if let Some(slot) = font.as_mut() {
                         slot.size_pt = num_attr(&element, b"val");
@@ -1030,10 +1110,20 @@ fn read_styles<R: Read + Seek>(
                         slot.color = color_of(&element, theme);
                     }
                 }
+                b"cellStyleXfs" => in_named_xfs = true,
                 b"cellXfs" => in_cell_xfs = true,
                 b"xf" if in_cell_xfs => xf = Some(new_xf(&element)),
+                // A named style's own entry, which a cell format inherits from.
+                // Its properties are read the same way; only where they land
+                // differs.
+                b"xf" if in_named_xfs => named_xf = Some(new_xf(&element)),
                 b"alignment" if in_cell_xfs => {
                     if let Some(slot) = xf.as_mut() {
+                        read_alignment(&element, &mut slot.align);
+                    }
+                }
+                b"alignment" if in_named_xfs => {
+                    if let Some(slot) = named_xf.as_mut() {
                         read_alignment(&element, &mut slot.align);
                     }
                 }
@@ -1058,10 +1148,8 @@ fn read_styles<R: Read + Seek>(
                 }
                 b"font" if in_fonts => styles.fonts.push(FontInfo::default()),
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
-                b"b" if in_fonts => {
-                    if let Some(slot) = font.as_mut() {
-                        slot.bold = !matches!(attr(&element, b"val").as_deref(), Some("0" | "false"));
-                    }
+                b"b" | b"i" | b"u" | b"strike" if in_fonts => {
+                    read_font_prop(&element, font.as_mut())
                 }
                 b"sz" if in_fonts => {
                     if let Some(slot) = font.as_mut() {
@@ -1080,8 +1168,14 @@ fn read_styles<R: Read + Seek>(
                     }
                 }
                 b"xf" if in_cell_xfs => styles.xfs.push(new_xf(&element)),
+                b"xf" if in_named_xfs => styles.style_xfs.push(new_xf(&element)),
                 b"alignment" if in_cell_xfs => {
                     if let Some(slot) = xf.as_mut() {
+                        read_alignment(&element, &mut slot.align);
+                    }
+                }
+                b"alignment" if in_named_xfs => {
+                    if let Some(slot) = named_xf.as_mut() {
                         read_alignment(&element, &mut slot.align);
                     }
                 }
@@ -1104,10 +1198,16 @@ fn read_styles<R: Read + Seek>(
                 b"fills" => in_fills = false,
                 b"fill" if in_fills => styles.fills.push(fill.take()),
                 b"font" if in_fonts => styles.fonts.push(font.take().unwrap_or_default()),
+                b"cellStyleXfs" => in_named_xfs = false,
                 b"cellXfs" => in_cell_xfs = false,
                 b"xf" if in_cell_xfs => {
                     if let Some(slot) = xf.take() {
                         styles.xfs.push(slot);
+                    }
+                }
+                b"xf" if in_named_xfs => {
+                    if let Some(slot) = named_xf.take() {
+                        styles.style_xfs.push(slot);
                     }
                 }
                 _ => {}
@@ -1120,7 +1220,7 @@ fn read_styles<R: Read + Seek>(
     // read in a walk of their own: a differential format is its own small schema,
     // and folding it into this one would mean carrying its state through every
     // branch above.
-    styles.dxfs = crate::cond::dxfs(&xml, theme);
+    styles.dxfs = crate::cond::dxfs(xml, theme);
     styles
 }
 
@@ -1143,6 +1243,43 @@ fn record_num_format(element: &BytesStart, styles: &mut Styles) {
     }
 }
 
+/// An `apply…` flag, kept as `None` when the file writes no such attribute —
+/// which is not the same as writing one that is off.
+fn flag_attr(element: &BytesStart, name: &[u8]) -> Option<bool> {
+    attr(element, name).map(|value| value == "1" || value == "true")
+}
+
+/// `<b/>`, `<i/>`, `<strike/>` and `<u val="…"/>` — the font properties whose
+/// mere presence means "on" and whose `val` can say otherwise.
+///
+/// 44 of 60 workbooks in the corpus use `<i/>` and 42 use `<u/>`, and neither
+/// was read: every italic and every underlined cell drew plain. `val` is
+/// spelled out only to turn one *off* or to pick the double line, so the
+/// default is on.
+fn read_font_prop(element: &BytesStart, font: Option<&mut FontInfo>) {
+    let Some(font) = font else { return };
+    match element.local_name().as_ref() {
+        b"b" | b"i" | b"strike" => {
+            let on = !matches!(attr(element, b"val").as_deref(), Some("0" | "false"));
+            match element.local_name().as_ref() {
+                b"b" => font.bold = on,
+                b"i" => font.italic = on,
+                _ => font.strike = on,
+            }
+        }
+        b"u" => {
+            // The two accounting forms draw the same line, spanning the cell
+            // rather than the text; they land on single and double.
+            font.underline = match attr(element, b"val").as_deref() {
+                Some("none") => None,
+                Some("double" | "doubleAccounting") => Some("double"),
+                _ => Some("single"),
+            };
+        }
+        _ => {}
+    }
+}
+
 fn new_xf(element: &BytesStart) -> Xf {
     Xf {
         align: Align::default(),
@@ -1158,6 +1295,14 @@ fn new_xf(element: &BytesStart) -> Xf {
         num_fmt_id: attr(element, b"numFmtId")
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(0),
+        style_id: attr(element, b"xfId")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0),
+        apply_font: flag_attr(element, b"applyFont"),
+        apply_fill: flag_attr(element, b"applyFill"),
+        apply_border: flag_attr(element, b"applyBorder"),
+        apply_number: flag_attr(element, b"applyNumberFormat"),
+        apply_align: flag_attr(element, b"applyAlignment"),
     }
 }
 
@@ -2088,6 +2233,123 @@ mod tests {
         assert_eq!(title.fill.as_deref(), Some("#DEEBF7"));
         // A cell that declares no fill carries none.
         assert!(style_at(&layout, 2, 0).is_none());
+    }
+
+    /// Excel's styling runs one level deeper than cell → row → column: every
+    /// `cellXfs` entry carries an `xfId` into `cellStyleXfs` and an `apply…`
+    /// flag per property. A format that says `applyFont="0"` is asking for the
+    /// named style's font and leaving its own `fontId` behind as a leftover —
+    /// which is how a heading built on a named style came out as body text.
+    ///
+    /// Each property is decided on its own, and the two directions are told
+    /// apart by their values: the named style is bold 22pt on red, and every
+    /// entry below that declares its own carries the plain font and green.
+    #[test]
+    fn a_cell_format_borrows_the_properties_of_the_named_style_it_points_at() {
+        let xml = r#"<styleSheet>
+            <fonts count="2">
+                <font><sz val="11"/><name val="Calibri"/></font>
+                <font><b/><sz val="22"/><name val="Calibri"/></font>
+            </fonts>
+            <fills count="3">
+                <fill><patternFill patternType="none"/></fill>
+                <fill><patternFill patternType="solid"><fgColor rgb="FFFF0000"/></patternFill></fill>
+                <fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill>
+            </fills>
+            <borders count="1"><border/></borders>
+            <cellStyleXfs count="2">
+                <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+                <xf numFmtId="0" fontId="1" fillId="1" borderId="0"/>
+            </cellStyleXfs>
+            <cellXfs count="5">
+                <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+                <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="1" applyFont="0" applyFill="0"/>
+                <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="1"/>
+                <xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="1" applyFont="0" applyFill="1"/>
+                <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="1" applyFont="1" applyFill="0"/>
+            </cellXfs>
+        </styleSheet>"#;
+        let styles = parse_styles(xml, &[]);
+        let default_font_px = points_to_font_px(11.0);
+        let style = |index: usize| {
+            styles
+                .cell_style(index, default_font_px)
+                .expect("a styled entry")
+        };
+
+        // Both declined, so both come from the named style.
+        let borrowed = style(1);
+        assert!(borrowed.bold);
+        assert_eq!(borrowed.size_px, Some(29.33));
+        assert_eq!(borrowed.fill.as_deref(), Some("#FF0000"));
+
+        // No flag at all: the entry's own ids stand. This is how a producer
+        // that is not Excel writes its formats, and inheriting here would empty
+        // most of a workbook's styling.
+        let own = style(2);
+        assert!(own.bold, "its own font is the 22pt one");
+        assert_eq!(own.fill.as_deref(), Some("#00FF00"));
+
+        // One of each on the same entry — the font is declined and the fill is
+        // not — so the two must resolve in opposite directions.
+        let mixed = style(3);
+        assert!(mixed.bold, "the named style's bold font");
+        assert_eq!(mixed.fill.as_deref(), Some("#00FF00"), "its own fill");
+
+        let other_way = style(4);
+        assert!(other_way.bold, "its own bold font");
+        assert_eq!(other_way.fill.as_deref(), Some("#FF0000"), "the named fill");
+    }
+
+    /// `<i/>`, `<u/>` and `<strike/>` are the three font properties nothing
+    /// read — 44, 42 and 23 of the 60 corpus workbooks use them, and every one
+    /// of those cells drew plain. Presence is "on"; `val` is written only to
+    /// turn one *off* or to pick the double underline.
+    #[test]
+    fn reads_the_font_properties_that_are_on_by_presence() {
+        let xml = r#"<styleSheet>
+            <fonts count="5">
+                <font><sz val="11"/><name val="Calibri"/></font>
+                <font><i/></font>
+                <font><u/></font>
+                <font><u val="double"/><strike/></font>
+                <font><b val="0"/><i val="0"/><u val="none"/></font>
+            </fonts>
+            <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+            <borders count="1"><border/></borders>
+            <cellXfs count="5">
+                <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+                <xf numFmtId="0" fontId="1" fillId="0" borderId="0"/>
+                <xf numFmtId="0" fontId="2" fillId="0" borderId="0"/>
+                <xf numFmtId="0" fontId="3" fillId="0" borderId="0"/>
+                <xf numFmtId="0" fontId="4" fillId="0" borderId="0"/>
+            </cellXfs>
+        </styleSheet>"#;
+        let styles = parse_styles(xml, &[]);
+        let default_font_px = points_to_font_px(11.0);
+        let style = |index: usize| {
+            styles
+                .cell_style(index, default_font_px)
+                .expect("a styled entry")
+        };
+
+        let italic = style(1);
+        assert!(italic.italic);
+        assert!(!italic.strike);
+        assert_eq!(italic.underline, None);
+
+        let underlined = style(2);
+        assert_eq!(underlined.underline, Some("single"));
+        assert!(!underlined.italic);
+
+        // `val` picks the double line, and the two elements are independent.
+        let doubled = style(3);
+        assert_eq!(doubled.underline, Some("double"));
+        assert!(doubled.strike);
+
+        // Turning all three off leaves nothing to draw, which is what proves
+        // the zeroes were read — an unread `<b val="0"/>` would leave it bold.
+        assert!(styles.cell_style(4, default_font_px).is_none());
     }
 
     #[test]

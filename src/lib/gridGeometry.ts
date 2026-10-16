@@ -58,6 +58,81 @@ export const CELL_PAD_LEFT = 3;
 export const CELL_PAD_RIGHT = 2;
 
 /**
+ * Where Excel draws a font's underline and strikethrough, as fractions of the
+ * font size.
+ *
+ * These are the font's own metrics — `post.underlinePosition` and
+ * `underlineThickness`, `OS/2.yStrikeoutPosition` and `yStrikeoutSize`. No part
+ * of a workbook carries them and no browser API exposes them, so they were read
+ * off Excel's own vector PDF (`ExportAsFixedFormat`) for the four families
+ * these documents use, at 72pt where one point is many pixels:
+ *
+ *   family      underline (below baseline / thick)   strike (above baseline / thick)
+ *   Meiryo UI   7.20pt / 3.60pt                      26.76pt / 3.84pt
+ *   MS PGothic  7.44 / 2.52                          18.60 / 3.60
+ *   Yu Gothic   7.20 / 3.60                          30.12 / 3.36
+ *   Calibri     8.16 / 4.68                          17.99 / 4.68
+ *
+ * The underline barely moves between them (0.100–0.113 em) but the strike does
+ * (0.25–0.42 em, nearly double), so one constant would sit visibly wrong on a
+ * font at either end. A double underline is two lines and Excel spaces them
+ * differently per font again, hence a pair of offsets rather than a gap.
+ */
+export interface Decoration {
+  /** Below the baseline: the offset to each line's top, then its thickness. */
+  underline: number;
+  underlineThickness: number;
+  /** The two lines of a double underline, top of each below the baseline. */
+  double: [number, number];
+  doubleThickness: number;
+  /** Above the baseline: the strike's centre line, then its thickness. */
+  strike: number;
+  strikeThickness: number;
+}
+
+const MEIRYO: Decoration = {
+  underline: 0.1, underlineThickness: 0.05,
+  double: [0.028, 0.15], doubleThickness: 0.06,
+  strike: 0.372, strikeThickness: 0.053,
+};
+const MS_PGOTHIC: Decoration = {
+  underline: 0.1033, underlineThickness: 0.035,
+  double: [0.018, 0.1], doubleThickness: 0.04,
+  strike: 0.2583, strikeThickness: 0.05,
+};
+const YU_GOTHIC: Decoration = {
+  underline: 0.1, underlineThickness: 0.05,
+  double: [0.1, 0.2], doubleThickness: 0.05,
+  strike: 0.4183, strikeThickness: 0.0467,
+};
+const CALIBRI: Decoration = {
+  underline: 0.1133, underlineThickness: 0.065,
+  double: [0.0367, 0.1917], doubleThickness: 0.0767,
+  strike: 0.2499, strikeThickness: 0.065,
+};
+
+/** The four families' median, for one the table does not know. */
+export const DECORATION_FALLBACK: Decoration = {
+  underline: 0.104, underlineThickness: 0.05,
+  double: [0.03, 0.15], doubleThickness: 0.055,
+  strike: 0.324, strikeThickness: 0.054,
+};
+
+/**
+ * The metrics for a font family, matched loosely: `NFKC` folds the full-width
+ * forms these files write (`ＭＳ Ｐゴシック`) onto the half-width ones, and the
+ * spaces come out so either spelling lands on the same entry.
+ */
+export function decorationFor(family: string | null): Decoration {
+  const name = (family ?? "").normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  if (name.includes("meiryo")) return MEIRYO;
+  if (name.includes("mspgothic") || name.includes("mspゴシック")) return MS_PGOTHIC;
+  if (name.includes("yugothic") || name.includes("游ゴシック")) return YU_GOTHIC;
+  if (name.includes("calibri")) return CALIBRI;
+  return DECORATION_FALLBACK;
+}
+
+/**
  * Excel's selection ink. A single cell is marked with a thin green rule drawn
  * inside it and left unfilled; a whole row or column is the opposite — a faint
  * wash across the cells with no per-cell outline, since outlining every cell
