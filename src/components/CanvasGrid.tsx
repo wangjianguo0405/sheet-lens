@@ -2483,33 +2483,46 @@ export function CanvasGrid({
     }
     // A press inside what is selected leaves it alone — a run of whole rows, or
     // a block of cells whose rows the heading then acts on — so a whole stretch
-    // can be hidden or coloured at once by right-clicking any part of it.
+    // can be coloured at once by right-clicking any part of it. A press
+    // anywhere else takes the whole heading, which is what makes the colour
+    // land on the row rather than on one cell of it.
     if (hit.kind === "rowHeader") {
       aimMenuAt({ kind: "row", index: hit.row });
-      if (!headerSpan("row", hit.row)) onSelect(rowsBetween(hit.row, hit.row));
+      const span = headerSpan("row");
+      if (!span || hit.row < span[0] || hit.row > span[1]) {
+        onSelect(rowsBetween(hit.row, hit.row));
+      }
       return;
     }
     aimMenuAt({ kind: "col", index: hit.col });
-    if (!headerSpan("col", hit.col)) onSelect(colsBetween(hit.col, hit.col));
+    const span = headerSpan("col");
+    if (!span || hit.col < span[0] || hit.col > span[1]) {
+      onSelect(colsBetween(hit.col, hit.col));
+    }
   };
 
   /**
    * The rows or columns a heading acts on: everything the selection reaches
-   * along that axis, or null when it reaches none of them — which is what makes
-   * a right-click take the single heading it landed on instead.
+   * along that axis, or null when it reaches none — which is what makes a
+   * right-click take the single heading it landed on instead.
    *
-   * The selection need not be a run of whole rows. A block of cells hides every
-   * row it spans, the way Excel does it, and reading only a run of whole rows
-   * was why a block selected by dragging across cells collapsed to one row. The
-   * other way round says nothing: a column selection reaches every row there is.
+   * Where inside that stretch the pointer landed does not matter, and requiring
+   * it to be inside was the bug: the heading under the pointer is not always the
+   * one the reader meant — the sheet may have scrolled, or the pointer may have
+   * drifted a column — and the command then acted on that one column, over the
+   * three that were plainly selected on screen.
+   *
+   * The selection need not be a run of whole rows either. A block of cells
+   * hides every row it spans, the way Excel does it. The other way round says
+   * nothing: a column selection reaches every row there is.
    */
-  const headerSpan = (kind: "row" | "col", index: number): [number, number] | null => {
+  const headerSpan = (kind: "row" | "col"): [number, number] | null => {
     const rows = kind === "row";
     let from = Number.POSITIVE_INFINITY;
     let to = Number.NEGATIVE_INFINITY;
     for (const area of areasOf(selection)) {
       const span = spanOfArea(area, rows);
-      if (!span || index < span[0] || index > span[1]) continue;
+      if (!span) continue;
       from = Math.min(from, span[0]);
       to = Math.max(to, span[1]);
     }
@@ -2525,7 +2538,7 @@ export function CanvasGrid({
     const target = menuTargetRef.current;
     if (!target) return;
     const rows = target.kind === "row";
-    let [from, to] = headerSpan(target.kind, target.index) ?? [target.index, target.index];
+    let [from, to] = headerSpan(target.kind) ?? [target.index, target.index];
     if (!hidden) {
       /**
        * Showing takes in the hidden run that touches the selection. A hidden
