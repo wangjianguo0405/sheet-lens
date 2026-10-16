@@ -100,6 +100,10 @@ pub struct Align {
     /// right-aligned, indented number a whole unit too close to the border.
     pub indent: u8,
     pub wrap: bool,
+    /// `<alignment shrinkToFit>`: Excel scales the font down until the cell's
+    /// one line fits. The standard makes it inapplicable to a cell holding
+    /// several lines, so a wrapping cell ignores it.
+    pub shrink: bool,
 }
 
 /// One side of a cell's border, already reduced to what CSS needs.
@@ -132,6 +136,7 @@ pub struct CellStyle {
     /// Indent levels; the renderer turns each into three spaces of the font.
     pub indent: u8,
     pub wrap: bool,
+    pub shrink: bool,
     pub bold: bool,
     pub italic: bool,
     pub strike: bool,
@@ -163,6 +168,7 @@ impl PartialEq for CellStyle {
             && self.vertical == other.vertical
             && self.indent == other.indent
             && self.wrap == other.wrap
+            && self.shrink == other.shrink
             && self.bold == other.bold
             && self.italic == other.italic
             && self.strike == other.strike
@@ -183,6 +189,7 @@ impl std::hash::Hash for CellStyle {
         self.vertical.hash(state);
         self.indent.hash(state);
         self.wrap.hash(state);
+        self.shrink.hash(state);
         self.bold.hash(state);
         self.italic.hash(state);
         self.strike.hash(state);
@@ -201,6 +208,7 @@ impl CellStyle {
             && self.vertical.is_none()
             && self.indent == 0
             && !self.wrap
+            && !self.shrink
             && !self.bold
             && !self.italic
             && !self.strike
@@ -311,6 +319,7 @@ impl Styles {
             vertical: entry.align.vertical,
             indent: entry.align.indent,
             wrap: entry.align.wrap,
+            shrink: entry.align.shrink,
             bold: font.is_some_and(|font| font.bold),
             italic: font.is_some_and(|font| font.italic),
             strike: font.is_some_and(|font| font.strike),
@@ -1634,6 +1643,9 @@ fn read_alignment(element: &BytesStart, slot: &mut Align) {
     if let Some(value) = attr(element, b"wrapText") {
         slot.wrap = value == "1" || value == "true";
     }
+    if let Some(value) = attr(element, b"shrinkToFit") {
+        slot.shrink = value == "1" || value == "true";
+    }
     if let Some(value) = attr(element, b"indent") {
         slot.indent = value.trim().parse::<u8>().unwrap_or(0);
     }
@@ -2125,7 +2137,7 @@ mod tests {
     #[test]
     fn reads_the_indent_level_of_an_alignment() {
         let mut reader = XmlReader::from_str(
-            r#"<alignment horizontal="right" vertical="center" indent="1"/>"#,
+            r#"<alignment horizontal="right" vertical="center" indent="1" shrinkToFit="1"/>"#,
         );
         let mut buf = Vec::new();
         let mut align = Align::default();
@@ -2143,6 +2155,7 @@ mod tests {
         assert_eq!(align.horizontal, Some("right"));
         assert_eq!(align.vertical, Some("middle"));
         assert_eq!(align.indent, 1);
+        assert!(align.shrink);
     }
 
     /// Center Across Selection has to reach the grid as itself. Collapsing it
