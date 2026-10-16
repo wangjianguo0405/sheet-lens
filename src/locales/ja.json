@@ -143,8 +143,8 @@
     "resizeColumn": "列 {{column}} の幅を変更",
     "resizeColumnHint": "ドラッグで幅を変更、ダブルクリックで自動調整",
     "resizeRow": "行 {{row}} の高さを変更",
-    "hide": "非表示(H)",
-    "unhide": "再表示(U)"
+    "hide": "非表示(&H)",
+    "unhide": "再表示(&U)"
   },
   "update": {
     "title": "ソフトウェア更新",
