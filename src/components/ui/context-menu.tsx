@@ -50,8 +50,13 @@ function ContextMenuLabel({
 
 function ContextMenuItem({
   className,
+  children,
+  icon,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Item>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.Item> & {
+  /** What the icon column holds. Left out, the column is kept and left empty. */
+  icon?: React.ReactNode
+}) {
   return (
     <ContextMenuPrimitive.Item
       data-slot="context-menu-item"
@@ -60,7 +65,17 @@ function ContextMenuItem({
         className
       )}
       {...props}
-    />
+    >
+      {/* Excel's menus hold a column for the icon whether or not an item has
+          one, which is what keeps every label starting at the same place. */}
+      <span
+        data-slot="menu-item-icon"
+        className="flex size-4 shrink-0 items-center justify-center"
+      >
+        {icon}
+      </span>
+      {children}
+    </ContextMenuPrimitive.Item>
   )
 }
 
@@ -128,8 +143,11 @@ function ContextMenuSub({
 function ContextMenuSubTrigger({
   className,
   children,
+  icon,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.SubTrigger>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubTrigger> & {
+  icon?: React.ReactNode
+}) {
   return (
     <ContextMenuPrimitive.SubTrigger
       data-slot="context-menu-sub-trigger"
@@ -139,6 +157,12 @@ function ContextMenuSubTrigger({
       )}
       {...props}
     >
+      <span
+        data-slot="menu-item-icon"
+        className="flex size-4 shrink-0 items-center justify-center"
+      >
+        {icon}
+      </span>
       {children}
       <ChevronRightIcon className="ml-auto" />
     </ContextMenuPrimitive.SubTrigger>
