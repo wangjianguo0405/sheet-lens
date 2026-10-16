@@ -67,7 +67,8 @@
     "new": "新しいタブ",
     "openAnother": "別のブックを開く",
     "copyName": "ファイル名をコピー",
-    "copyPath": "ファイルパスをコピー"
+    "copyPath": "ファイルパスをコピー",
+    "list": "開いているファイル"
   },
   "palette": {
     "theme": "テーマの色",
