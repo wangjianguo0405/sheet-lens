@@ -125,6 +125,11 @@ export function rangeBetween(
   };
 }
 
+/** Whether two spans on one axis share a cell. */
+function overlap(a: number, aLen: number, b: number, bLen: number): boolean {
+  return a < b + bLen && b < a + aLen;
+}
+
 /** Whether one area reaches a cell. */
 function areaCovers(area: Area, row: number, col: number): boolean {
   switch (area.kind) {
@@ -154,6 +159,34 @@ function areaCovers(area: Area, row: number, col: number): boolean {
 export function selectionCovers(selection: Selection, row: number, col: number): boolean {
   if (selection.kind !== "areas") return areaCovers(selection, row, col);
   return selection.areas.some((area) => areaCovers(area, row, col));
+}
+
+/**
+ * Whether the selection reaches a cell through a whole row or column.
+ *
+ * A band of whole rows or columns is drawn straight across whatever it crosses,
+ * so Excel tints the part of a merged region that lies inside it and leaves the
+ * rest of that region alone — selecting column K against a `J:L` merge lights
+ * the K strip and neither J nor L. A selection of cells does not behave that
+ * way at all: a merged region is one cell there, and it lights whole.
+ */
+export function selectionBandCovers(selection: Selection, row: number, col: number): boolean {
+  return areasOf(selection).some(
+    (area) =>
+      (area.kind === "row" || area.kind === "column") && areaCovers(area, row, col),
+  );
+}
+
+/** Whether a whole row or column of the selection crosses a block at all. */
+export function selectionBandCrosses(
+  selection: Selection,
+  box: { row: number; col: number; rows: number; cols: number },
+): boolean {
+  return areasOf(selection).some((area) => {
+    if (area.kind === "row") return overlap(area.row, area.rows, box.row, box.rows);
+    if (area.kind === "column") return overlap(area.col, area.cols, box.col, box.cols);
+    return false;
+  });
 }
 
 /**

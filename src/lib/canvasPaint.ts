@@ -64,6 +64,8 @@ import {
 import {
   activeArea,
   areasOf,
+  selectionBandCovers,
+  selectionBandCrosses,
   selectionCovers,
   type Selection,
 } from "@/lib/selection";
@@ -1188,9 +1190,12 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
     const h = spanAt(view.rows.offsets, display);
     for (let c = view.colStart; c < view.colEnd; c += 1) {
       if (!selectionCovers(view.selection, sheetRow, c)) continue;
-      // A merged region's cells are not cells and are handled below; a
-      // Center-Across run's are, so a selected row lights every one of them.
-      if (inRegion(view, view.mergeView.covered, sheetRow, c)) continue;
+      // A merged region's cells are not cells and are handled below — except
+      // under a band of whole rows or columns, which Excel draws straight over
+      // what it crosses. A Center-Across run's cells are cells either way, so a
+      // selected row lights every one of them.
+      const band = selectionBandCovers(view.selection, sheetRow, c);
+      if (!band && inRegion(view, view.mergeView.covered, sheetRow, c)) continue;
       const x = ox + view.cols.offsets[c];
       const w = spanAt(view.cols.offsets, c);
       if (active && active.row === sheetRow && active.col === c) {
@@ -1201,12 +1206,14 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
     }
   }
 
-  // A merged region is one cell, and Excel keeps it at its anchor: it lights up
-  // whole when the selection holds that top-left, and not when the selection
-  // merely crosses the region. Selecting column K leaves a `J:L` merge alone —
-  // Excel's own window shows it unchanged, where the plain cells of K go blue.
-  // A Center-Across run is not merged and was washed cell by cell above.
+  // A merged region is one cell, and a selection of cells keeps it at its
+  // anchor: it lights whole when that top-left is held, and not when the
+  // selection merely crosses the region. A band of whole rows or columns is not
+  // that — it was drawn over its own part of the region above, and the rest of
+  // the region is none of its business. A Center-Across run is not merged and
+  // was washed cell by cell above as well.
   for (const rect of view.mergeView.shown) {
+    if (selectionBandCrosses(view.selection, rect)) continue;
     if (!selectionCovers(view.selection, rect.row, rect.col)) continue;
     const display = view.displayOfRow(rect.row);
     if (display < 0) continue;
