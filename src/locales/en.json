@@ -145,8 +145,8 @@
     "resizeColumn": "Resize column {{column}}",
     "resizeColumnHint": "Drag to resize, double-click to fit",
     "resizeRow": "Resize row {{row}}",
-    "hide": "Hide",
-    "unhide": "Unhide"
+    "hide": "Hide (H)",
+    "unhide": "Unhide (U)"
   },
   "update": {
     "title": "Software update",
