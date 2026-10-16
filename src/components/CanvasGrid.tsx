@@ -192,6 +192,9 @@ function Accelerated({ label }: { label: string }) {
   );
 }
 
+/** The heading a context menu was opened on, or none when it was a cell. */
+type MenuTarget = { kind: "row"; index: number } | { kind: "col"; index: number } | null;
+
 /**
  * The rows — or the columns — an area covers, or null when it runs the other
  * way. A column reaches every row there is and a row every column, so neither
@@ -814,10 +817,21 @@ export function CanvasGrid({
     cols: Map<number, boolean>;
   }>({ rows: new Map(), cols: new Map() });
 
-  /** The header the context menu was opened on, when it was one. */
-  const [menuTarget, setMenuTarget] = useState<
-    { kind: "row"; index: number } | { kind: "col"; index: number } | null
-  >(null);
+  /**
+   * The header the context menu was opened on, when it was one.
+   *
+   * Kept in a ref beside the state: the state is what the menu draws from, but
+   * the action must read the target the pointer chose, not whichever render the
+   * item's handler closed over — and a target that outlived its menu sent the
+   * next command wherever the last right-click had been.
+   */
+  const [menuTarget, setMenuTarget] = useState<MenuTarget>(null);
+  const menuTargetRef = useRef<MenuTarget>(null);
+
+  const aimMenuAt = (target: MenuTarget) => {
+    menuTargetRef.current = target;
+    setMenuTarget(target);
+  };
 
   /**
    * The rows and columns the sheet hides. Excel draws none of them and skips the
@@ -2458,9 +2472,12 @@ export function CanvasGrid({
    */
   const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     const hit = hitAt(event.clientX, event.clientY);
-    if (!hit) return;
+    if (!hit) {
+      aimMenuAt(null);
+      return;
+    }
     if (hit.kind === "cell") {
-      setMenuTarget(null);
+      aimMenuAt(null);
       if (!selectionCovers(selection, hit.row, hit.col)) select(hit.row, hit.col);
       return;
     }
@@ -2468,11 +2485,11 @@ export function CanvasGrid({
     // a block of cells whose rows the heading then acts on — so a whole stretch
     // can be hidden or coloured at once by right-clicking any part of it.
     if (hit.kind === "rowHeader") {
-      setMenuTarget({ kind: "row", index: hit.row });
+      aimMenuAt({ kind: "row", index: hit.row });
       if (!headerSpan("row", hit.row)) onSelect(rowsBetween(hit.row, hit.row));
       return;
     }
-    setMenuTarget({ kind: "col", index: hit.col });
+    aimMenuAt({ kind: "col", index: hit.col });
     if (!headerSpan("col", hit.col)) onSelect(colsBetween(hit.col, hit.col));
   };
 
@@ -2504,9 +2521,23 @@ export function CanvasGrid({
    * is, so Hide followed by Unhide on the same run puts it straight back the way
    * Excel does.
    */
-  const setHeaderHidden = (target: NonNullable<typeof menuTarget>, hidden: boolean) => {
-    const [from, to] = headerSpan(target.kind, target.index) ?? [target.index, target.index];
-    const key = target.kind === "row" ? "rows" : "cols";
+  const setHeaderHidden = (hidden: boolean) => {
+    const target = menuTargetRef.current;
+    if (!target) return;
+    const rows = target.kind === "row";
+    let [from, to] = headerSpan(target.kind, target.index) ?? [target.index, target.index];
+    if (!hidden) {
+      /**
+       * Showing takes in the hidden run that touches the selection. A hidden
+       * row has no height, so there is no way to point at one: the only heading
+       * the pointer can reach is the row beside it, and acting on that alone
+       * left the run impossible to bring back.
+       */
+      const set = rows ? hiddenRows : hiddenCols;
+      while (from > 0 && set.has(from - 1)) from -= 1;
+      while (set.has(to + 1)) to += 1;
+    }
+    const key = rows ? "rows" : "cols";
     setHiddenOverride((current) => {
       const next = new Map(current[key]);
       for (let index = from; index <= to; index += 1) next.set(index, hidden);
@@ -3221,7 +3252,13 @@ export function CanvasGrid({
           itself, so the menu opens wherever on the grid it was pressed, and the
           colour it carries lands on what was under the pointer.
         */}
-        <ContextMenu>
+        <ContextMenu
+          onOpenChange={(open) => {
+            // The target belongs to the menu that opened on it, and to nothing
+            // after that.
+            if (!open) aimMenuAt(null);
+          }}
+        >
           <ContextMenuTrigger asChild>
             <div
               ref={viewportRef}
@@ -3246,13 +3283,13 @@ export function CanvasGrid({
               <>
                 <ContextMenuItem
                   data-accelerator={acceleratorOf(t("grid.hide"))}
-                  onSelect={() => setHeaderHidden(menuTarget, true)}
+                  onSelect={() => setHeaderHidden(true)}
                 >
                   <Accelerated label={t("grid.hide")} />
                 </ContextMenuItem>
                 <ContextMenuItem
                   data-accelerator={acceleratorOf(t("grid.unhide"))}
-                  onSelect={() => setHeaderHidden(menuTarget, false)}
+                  onSelect={() => setHeaderHidden(false)}
                 >
                   <Accelerated label={t("grid.unhide")} />
                 </ContextMenuItem>
