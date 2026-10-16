@@ -13,6 +13,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { FilterButton } from "@/components/FilterButton";
@@ -3180,7 +3183,12 @@ export function CanvasGrid({
                 <ContextMenuSeparator />
               </>
             )}
-            <ColorPalette variant="context" current={markColor} onPick={onMark} />
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>{t("palette.fill")}</ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <ColorPalette variant="context" current={markColor} onPick={onMark} />
+              </ContextMenuSubContent>
+            </ContextMenuSub>
           </ContextMenuContent>
         </ContextMenu>
 

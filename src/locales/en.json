@@ -73,7 +73,8 @@
     "theme": "Theme colours",
     "standard": "Standard colours",
     "recent": "Recent colours",
-    "clear": "No Fill"
+    "clear": "No Fill",
+    "fill": "Fill colour"
   },
   "sheets": {
     "filter": "Filter sheets",
