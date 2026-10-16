@@ -192,6 +192,26 @@ function Accelerated({ label }: { label: string }) {
   );
 }
 
+/**
+ * The rows — or the columns — an area covers, or null when it runs the other
+ * way. A column reaches every row there is and a row every column, so neither
+ * can say which heading the other axis should act on.
+ */
+function spanOfArea(area: Area, rows: boolean): [number, number] | null {
+  switch (area.kind) {
+    case "cell":
+      return rows ? [area.row, area.row] : [area.col, area.col];
+    case "row":
+      return rows ? [area.row, area.row + area.rows - 1] : null;
+    case "column":
+      return rows ? null : [area.col, area.col + area.cols - 1];
+    case "range":
+      return rows
+        ? [area.row, area.row + area.rows - 1]
+        : [area.col, area.col + area.cols - 1];
+  }
+}
+
 interface GridProps {
   path: string;
   sheet: SheetInfo;
@@ -2444,36 +2464,39 @@ export function CanvasGrid({
       if (!selectionCovers(selection, hit.row, hit.col)) select(hit.row, hit.col);
       return;
     }
-    // A press anywhere inside a run of rows or columns leaves the run alone, the
-    // way a press inside a block does, so a whole run can be coloured at once by
-    // right-clicking any part of it.
-    const area = activeArea(selection);
+    // A press inside what is selected leaves it alone — a run of whole rows, or
+    // a block of cells whose rows the heading then acts on — so a whole stretch
+    // can be hidden or coloured at once by right-clicking any part of it.
     if (hit.kind === "rowHeader") {
       setMenuTarget({ kind: "row", index: hit.row });
-      const covered =
-        area.kind === "row" && hit.row >= area.row && hit.row < area.row + area.rows;
-      if (!covered) onSelect(rowsBetween(hit.row, hit.row));
+      if (!headerSpan("row", hit.row)) onSelect(rowsBetween(hit.row, hit.row));
       return;
     }
     setMenuTarget({ kind: "col", index: hit.col });
-    const covered =
-      area.kind === "column" && hit.col >= area.col && hit.col < area.col + area.cols;
-    if (!covered) onSelect(colsBetween(hit.col, hit.col));
+    if (!headerSpan("col", hit.col)) onSelect(colsBetween(hit.col, hit.col));
   };
 
   /**
-   * The rows or columns Hide acts on: the run the reader has selected when the
-   * pointer is inside it, and otherwise the single header it landed on.
+   * The rows or columns a heading acts on: everything the selection reaches
+   * along that axis, or null when it reaches none of them — which is what makes
+   * a right-click take the single heading it landed on instead.
+   *
+   * The selection need not be a run of whole rows. A block of cells hides every
+   * row it spans, the way Excel does it, and reading only a run of whole rows
+   * was why a block selected by dragging across cells collapsed to one row. The
+   * other way round says nothing: a column selection reaches every row there is.
    */
-  const headerSpan = (target: NonNullable<typeof menuTarget>): [number, number] => {
-    const area = activeArea(selection);
-    if (target.kind === "row" && area.kind === "row") {
-      return [area.row, area.row + area.rows - 1];
+  const headerSpan = (kind: "row" | "col", index: number): [number, number] | null => {
+    const rows = kind === "row";
+    let from = Number.POSITIVE_INFINITY;
+    let to = Number.NEGATIVE_INFINITY;
+    for (const area of areasOf(selection)) {
+      const span = spanOfArea(area, rows);
+      if (!span || index < span[0] || index > span[1]) continue;
+      from = Math.min(from, span[0]);
+      to = Math.max(to, span[1]);
     }
-    if (target.kind === "col" && area.kind === "column") {
-      return [area.col, area.col + area.cols - 1];
-    }
-    return [target.index, target.index];
+    return from <= to ? [from, to] : null;
   };
 
   /**
@@ -2482,7 +2505,7 @@ export function CanvasGrid({
    * Excel does.
    */
   const setHeaderHidden = (target: NonNullable<typeof menuTarget>, hidden: boolean) => {
-    const [from, to] = headerSpan(target);
+    const [from, to] = headerSpan(target.kind, target.index) ?? [target.index, target.index];
     const key = target.kind === "row" ? "rows" : "cols";
     setHiddenOverride((current) => {
       const next = new Map(current[key]);
