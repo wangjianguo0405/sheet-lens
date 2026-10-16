@@ -1865,18 +1865,23 @@ export function CanvasGrid({
       col < sheetCols &&
       styleAtFast(row, col)?.horizontal === "centerContinuous" &&
       mergeAtFast(row, col) === null;
+    const textAt = (row: number, col: number) => cellAt(row, col)?.text ?? "";
     for (let row = lo; row <= hi; row += 1) {
       if (row < 0 || row >= sheetRows || displayOfRow(row) < 0) continue;
       for (let col = range.colStart; col < range.colEnd; col += 1) {
         if (!joinable(row, col)) continue;
-        if (joinable(row, col - 1)) continue;
+        const text = textAt(row, col) || null;
+        /**
+         * A run is the cell holding the text and the empty cells after it, and
+         * it stops at the next cell with a value of its own — which is why two
+         * labels side by side stay two runs. Reading it as one unbroken stretch
+         * of the same alignment ran `変更項番` across J..L and then on across
+         * the `変更者` columns beside it, centring it over all six.
+         */
+        if (text === null && joinable(row, col - 1)) continue;
         let end = col;
-        while (joinable(row, end + 1)) end += 1;
+        while (joinable(row, end + 1) && textAt(row, end + 1) === "") end += 1;
         if (end === col) continue;
-        let text: string | null = null;
-        for (let c = col; c <= end && text === null; c += 1) {
-          text = cellAt(row, c)?.text ?? null;
-        }
         shownRuns.push({ row, col, rows: 1, cols: end - col + 1, text });
         for (let c = col; c <= end; c += 1) coveredRuns.add(cellKey(sheetCols, row, c));
       }
