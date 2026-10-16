@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Plus, X } from "lucide-react";
+import { Check, ChevronDown, Plus, RotateCw, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -271,6 +271,7 @@ export function FileTabs({
               <ContextMenuContent className="min-w-44">
                 <ContextMenuItem
                   className="text-xs"
+                  icon={<RotateCw />}
                   onSelect={() => onReload(tab.path)}
                 >
                   {t("tabs.reload")}
@@ -411,8 +412,13 @@ function Row({
 }) {
   const keep = (event: ReactMouseEvent) => event.stopPropagation();
   return (
-    <DropdownMenuItem className="text-xs" onSelect={onSelect}>
-      <Check className={cn("size-3.5 shrink-0", !current && "invisible")} />
+    <DropdownMenuItem
+      className="text-xs"
+      // The tick sits in the icon column, which is held open for every line
+      // whether or not it is the one showing.
+      icon={current ? <Check /> : null}
+      onSelect={onSelect}
+    >
       <span className="min-w-0 flex-1 truncate" title={title ?? label}>
         {label}
       </span>

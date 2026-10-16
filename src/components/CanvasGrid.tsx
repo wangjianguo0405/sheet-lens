@@ -8,6 +8,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { Eye, EyeOff } from "lucide-react";
+
 import {
   ContextMenu,
   ContextMenuContent,
@@ -3286,12 +3288,14 @@ export function CanvasGrid({
               <>
                 <ContextMenuItem
                   data-accelerator={acceleratorOf(t("grid.hide"))}
+                  icon={<EyeOff />}
                   onSelect={() => setHeaderHidden(true)}
                 >
                   <Accelerated label={t("grid.hide")} />
                 </ContextMenuItem>
                 <ContextMenuItem
                   data-accelerator={acceleratorOf(t("grid.unhide"))}
+                  icon={<Eye />}
                   onSelect={() => setHeaderHidden(false)}
                 >
                   <Accelerated label={t("grid.unhide")} />

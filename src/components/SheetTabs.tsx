@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Ellipsis } from "lucide-react";
+import { ChevronLeft, ChevronRight, Ellipsis, Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -623,6 +623,7 @@ export function SheetTabs({
           <DropdownMenuItem
             data-accelerator={acceleratorOf(t("sheets.unhide"))}
             disabled={hiddenCount === 0}
+            icon={<Eye />}
             onSelect={() => onUnhide(anchorOf(tabMenu.current))}
             className="text-xs"
           >
@@ -631,6 +632,7 @@ export function SheetTabs({
           <DropdownMenuItem
             data-accelerator={acceleratorOf(t("sheets.hide"))}
             disabled={sheets.length <= 1}
+            icon={<EyeOff />}
             onSelect={() => {
               if (menu !== null) onHide(menu.sheet);
             }}

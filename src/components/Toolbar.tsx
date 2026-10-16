@@ -182,8 +182,11 @@ export function Toolbar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className={MENU_WIDTH}>
-          <DropdownMenuItem className="text-xs" onSelect={onOpen}>
-            <FolderOpen className="size-3.5" />
+          <DropdownMenuItem
+            className="text-xs"
+            icon={<FolderOpen />}
+            onSelect={onOpen}
+          >
             {t("toolbar.open")}
             <DropdownMenuShortcut>Ctrl+O</DropdownMenuShortcut>
           </DropdownMenuItem>

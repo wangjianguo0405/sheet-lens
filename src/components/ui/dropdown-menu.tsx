@@ -59,10 +59,14 @@ function DropdownMenuItem({
   className,
   inset,
   variant = "default",
+  children,
+  icon,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & {
   inset?: boolean
   variant?: "default" | "destructive"
+  /** What the icon column holds. Left out, the column is kept and left empty. */
+  icon?: React.ReactNode
 }) {
   return (
     <DropdownMenuPrimitive.Item
@@ -74,7 +78,17 @@ function DropdownMenuItem({
         className
       )}
       {...props}
-    />
+    >
+      {/* Held open whether or not an item has an icon, so a menu whose entries
+          only some of which are drawn keeps one column of labels. */}
+      <span
+        data-slot="menu-item-icon"
+        className="flex size-4 shrink-0 items-center justify-center"
+      >
+        {icon}
+      </span>
+      {children}
+    </DropdownMenuPrimitive.Item>
   )
 }
 
@@ -214,9 +228,11 @@ function DropdownMenuSubTrigger({
   className,
   inset,
   children,
+  icon,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubTrigger> & {
   inset?: boolean
+  icon?: React.ReactNode
 }) {
   return (
     <DropdownMenuPrimitive.SubTrigger
@@ -228,6 +244,12 @@ function DropdownMenuSubTrigger({
       )}
       {...props}
     >
+      <span
+        data-slot="menu-item-icon"
+        className="flex size-4 shrink-0 items-center justify-center"
+      >
+        {icon}
+      </span>
       {children}
       <ChevronRightIcon className="ml-auto" />
     </DropdownMenuPrimitive.SubTrigger>
