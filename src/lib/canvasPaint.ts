@@ -68,6 +68,7 @@ import {
 } from "@/lib/selection";
 import {
   cellFontStack,
+  flatText,
   fontString,
   layoutLines,
   lineMetrics,
@@ -420,7 +421,13 @@ function paintText(
   const font = cellFont(view, style);
   const sizePx = style?.sizePx ?? view.workbookFontSizePx;
   const wrap = style?.wrap ?? false;
-  const lines = layoutLines(font, text, available, wrap);
+  /**
+   * An unwrapped value has no breaks in it as far as Excel is concerned, so it
+   * is measured, laid out and drawn without them. The runs lose the same ones,
+   * which keeps every offset below pointing at the character it colours.
+   */
+  const content = wrap ? text : flatText(text);
+  const lines = layoutLines(font, content, available, wrap);
   const metrics = lineMetrics(font, sizePx);
   const blockHeight = lines.length * metrics.lineHeight;
 
@@ -471,7 +478,10 @@ function paintText(
   // CSS centres the leading, so the baseline sits below the half-leading.
   const halfLeading = (metrics.lineHeight - (metrics.ascent + metrics.descent)) / 2;
   const base = textColor(style, kind, view.theme);
-  const spans = runs && runs.length > 0 ? runSpans(runs) : null;
+  const spans =
+    runs && runs.length > 0
+      ? runSpans(wrap ? runs : runs.map((run) => ({ ...run, text: flatText(run.text) })))
+      : null;
   /**
    * Where the next line's text sits in the source. The lines come back in order
    * and contiguous, so the next occurrence from here is the right one — a wrapped
@@ -482,7 +492,7 @@ function paintText(
 
   for (let i = 0; i < lines.length; i += 1) {
     const source = lines[i];
-    const start = source === "" ? cursor : Math.max(cursor, text.indexOf(source, cursor));
+    const start = source === "" ? cursor : Math.max(cursor, content.indexOf(source, cursor));
     cursor = start + source.length;
     if (source === "") continue;
     const baseline = top + i * metrics.lineHeight + halfLeading + metrics.ascent;
@@ -502,7 +512,7 @@ function paintText(
       const from = Math.max(start, span.start);
       const to = Math.min(start + source.length, span.end);
       if (to <= from) continue;
-      const piece = text.slice(from, to);
+      const piece = content.slice(from, to);
       ctx.fillStyle = span.color ?? base;
       ctx.fillText(piece, at, baseline);
       at += textWidth(font, piece);
@@ -1015,7 +1025,9 @@ export function valueWidth(
   const style = view.styleAt(sheetRow, col);
   if (text === "" || style?.wrap) return w;
   if (horizontalOf(style, cell?.kind) !== "left") return w;
-  const needed = textWidth(cellFont(view, style), text) + padLeft + padRight;
+  // Only the reach of what is drawn: a break in an unwrapped value is not a
+  // space, so it does not widen the room the value spills into.
+  const needed = textWidth(cellFont(view, style), flatText(text)) + padLeft + padRight;
   if (needed <= w) return w;
 
   // Only as far as the value reaches: Excel runs the *drawing* box on to the
