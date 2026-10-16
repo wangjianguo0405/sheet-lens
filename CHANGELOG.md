@@ -12,6 +12,26 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.17] - 2026-10-16
+
+A workbook's own hidden sheets are respected, and the file tabs grow the two things a full strip needs: a list of what is open, and a way to read a file again.
+
+### Added
+
+- The sheets a workbook hides are left out, as Excel leaves them out: no tab, nothing to click in the sheet list (it is listed there, greyed, and says so), and no search hits — a hidden sheet cannot be activated at all, and a hit is a place the cursor is about to go. A workbook opens on the first sheet it shows
+- Hide and Unhide on a sheet tab's right-click menu, with the accelerator letters Excel names them by. Unhide opens the list of hidden sheets to pick one from; hiding the sheet on screen moves to the tab that takes its place, and the last sheet still shown cannot be hidden. Nothing is written back to the file: what the reader hides is theirs, and lasts as long as the workbook is open
+- A chevron at the right end of the file tabs, for reaching a file that no longer fits across the strip. It appears the moment the tabs stop fitting — the same condition Chrome and Firefox put theirs under — and lists every open file in strip order, with the start page last; the one showing is ticked, and each line carries a × that closes it without closing the list
+- A file tab can read its workbook again, from its right-click menu. That is for the file that changed underneath us, which Excel being open on it is the usual cause of. What the tab remembered *about the file* goes — the sheets that no longer exist, and a cursor or a current sheet pointing at one — while everything the reader put on it stays
+- The menus keep a column at the left for an icon, as Excel's do, so the labels line up whether or not an entry has one. Hide and Unhide are a closed and an open eye, and reading a file again is a circular arrow
+
+### Improved
+
+- Opening a workbook, or pressing "+", scrolls the new tab into view — and the "+" no longer scrolls out of reach when the strip is full, since it stands beside the tabs rather than at the end of them
+
+### Fixed
+
+- A middle-click on a file tab closes it again once the strip has a scrollbar. The browser had been reading that press as the start of its own auto-scroll and swallowing the gesture, which is why it worked until the tabs filled up
+
 ## [0.3.16] - 2026-10-16
 
 Rows and columns can be hidden while you read, and the decoration a cell's own font carries — italic, underline, strikethrough — is drawn.
