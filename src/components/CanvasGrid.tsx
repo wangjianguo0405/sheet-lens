@@ -2007,7 +2007,7 @@ export function CanvasGrid({
             field.style.paddingRight = `${(CELL_PAD_RIGHT + 1) * view.zoom}px`;
             field.style.paddingBottom = "0px";
             field.style.font =
-              `${style?.bold ? "700 " : ""}${size}px ` +
+              `${style?.italic ? "italic " : ""}${style?.bold ? "700 " : ""}${size}px ` +
               cellFontStack(style?.family ?? null, view.workbookFontFamily);
             field.style.color = style?.color ?? "";
             // What the canvas painted under the text, in the canvas's own
@@ -2471,6 +2471,7 @@ export function CanvasGrid({
             cellFontStack(style?.family ?? null, fontFamily),
             sizePx,
             style?.bold ?? false,
+            style?.italic ?? false,
           );
           // And it wraps in the whole of itself, not in its first column, or
           // its text would be counted as far more lines than it comes to.
@@ -2879,6 +2880,7 @@ export function CanvasGrid({
       cellFontStack(style?.family ?? null, fontFamily),
       sizePx,
       style?.bold ?? false,
+      style?.italic ?? false,
     );
     const available = spanAt(cols.offsets, col) - CELL_PAD_LEFT - CELL_PAD_RIGHT;
     if (available <= 0) return text;

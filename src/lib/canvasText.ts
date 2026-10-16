@@ -40,17 +40,18 @@ export function cellFontStack(
 
 const FONTS = new Map<string, string>();
 
-/** The CSS `font` shorthand for a stack. Weight is left out when normal. */
+/** The CSS `font` shorthand for a stack. Weight and slant are left out when normal. */
 export function fontString(
   stack: string,
   sizePx: number,
   bold: boolean,
+  italic = false,
 ): string {
-  const key = `${bold ? 1 : 0}\u0000${sizePx}\u0000${stack}`;
+  const key = `${bold ? 1 : 0}${italic ? 1 : 0}\u0000${sizePx}\u0000${stack}`;
   const known = FONTS.get(key);
   if (known !== undefined) return known;
 
-  const font = `${bold ? "600 " : ""}${sizePx}px ${stack}`;
+  const font = `${italic ? "italic " : ""}${bold ? "600 " : ""}${sizePx}px ${stack}`;
   if (FONTS.size < CACHE_LIMIT) FONTS.set(key, font);
   return font;
 }

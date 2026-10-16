@@ -46,6 +46,7 @@ import {
   CELL_PAD_LEFT,
   CELL_PAD_RIGHT,
   COL_HEADER_H,
+  decorationFor,
   FILTERED_INK,
   GUTTER_TINT,
   OUTSIDE_PRINT,
@@ -57,6 +58,7 @@ import {
   resolvedEdges,
   cellKey,
   spanAt,
+  type Decoration,
   type Metrics,
 } from "@/lib/gridGeometry";
 import {
@@ -391,7 +393,52 @@ function cellFont(view: GridView, style: CellStyle | null): string {
     cellFontStack(style?.family ?? null, view.workbookFontFamily),
     style?.sizePx ?? view.workbookFontSizePx,
     style?.bold ?? false,
+    style?.italic ?? false,
   );
+}
+
+/** The family the cell's stack starts with, whose metrics the decorations use. */
+function cellFontFamily(view: GridView, style: CellStyle | null): string | null {
+  return style?.family ?? view.workbookFontFamily;
+}
+
+/**
+ * A cell's underline and strikethrough.
+ *
+ * Canvas has no `text-decoration`, so the geometry comes from the font's own
+ * metrics — measured off Excel's own PDF, see `decorationFor`. Both rules span
+ * the line's ink rather than the cell.
+ */
+function paintDecoration(
+  ctx: CanvasRenderingContext2D,
+  style: CellStyle | null,
+  metrics: Decoration,
+  left: number,
+  width: number,
+  baseline: number,
+  sizePx: number,
+  color: string,
+): void {
+  const underline = style?.underline ?? null;
+  if (!underline && !style?.strike) return;
+  ctx.fillStyle = color;
+  if (style?.strike) {
+    const thickness = metrics.strikeThickness * sizePx;
+    // The measured offset is the struck line's centre.
+    ctx.fillRect(left, baseline - metrics.strike * sizePx - thickness / 2, width, thickness);
+  }
+  if (underline === "single") {
+    ctx.fillRect(
+      left,
+      baseline + metrics.underline * sizePx,
+      width,
+      metrics.underlineThickness * sizePx,
+    );
+  } else if (underline === "double") {
+    const thickness = metrics.doubleThickness * sizePx;
+    ctx.fillRect(left, baseline + metrics.double[0] * sizePx, width, thickness);
+    ctx.fillRect(left, baseline + metrics.double[1] * sizePx, width, thickness);
+  }
 }
 
 /**
@@ -489,6 +536,7 @@ function paintText(
    * line's end is simply skipped over.
    */
   let cursor = 0;
+  const decoration = decorationFor(cellFontFamily(view, style));
 
   for (let i = 0; i < lines.length; i += 1) {
     const source = lines[i];
@@ -497,27 +545,34 @@ function paintText(
     if (source === "") continue;
     const baseline = top + i * metrics.lineHeight + halfLeading + metrics.ascent;
 
+    /**
+     * The line's own ink — where it starts and how far it reaches — which is
+     * what an underline and a strike span, not the cell.
+     */
+    const width = textWidth(font, source);
+    const left = align === "right" ? x - width : align === "center" ? x - width / 2 : x;
+
     if (!spans) {
       ctx.fillStyle = base;
       ctx.fillText(source, x, baseline);
-      continue;
+    } else {
+      // A line with runs is drawn piece by piece, from its own left edge — the
+      // alignment positions the line, the runs only colour it.
+      ctx.textAlign = "left";
+      let at = left;
+      for (const span of spans) {
+        const from = Math.max(start, span.start);
+        const to = Math.min(start + source.length, span.end);
+        if (to <= from) continue;
+        const piece = content.slice(from, to);
+        ctx.fillStyle = span.color ?? base;
+        ctx.fillText(piece, at, baseline);
+        at += textWidth(font, piece);
+      }
+      ctx.textAlign = align;
     }
 
-    // A line with runs is drawn piece by piece, from its own left edge — the
-    // alignment positions the line, the runs only colour it.
-    const width = textWidth(font, source);
-    let at = align === "right" ? x - width : align === "center" ? x - width / 2 : x;
-    ctx.textAlign = "left";
-    for (const span of spans) {
-      const from = Math.max(start, span.start);
-      const to = Math.min(start + source.length, span.end);
-      if (to <= from) continue;
-      const piece = content.slice(from, to);
-      ctx.fillStyle = span.color ?? base;
-      ctx.fillText(piece, at, baseline);
-      at += textWidth(font, piece);
-    }
-    ctx.textAlign = align;
+    paintDecoration(ctx, style, decoration, left, width, baseline, sizePx, base);
   }
 
   if (needsClip) ctx.restore();

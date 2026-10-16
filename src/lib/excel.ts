@@ -66,6 +66,10 @@ export interface CellStyle {
   indent: number;
   wrap: boolean;
   bold: boolean;
+  italic: boolean;
+  strike: boolean;
+  /** `single` or `double`; null when the font carries no underline. */
+  underline: "single" | "double" | null;
   /** Set only when the cell's font differs from the workbook default. */
   sizePx: number | null;
   /** Likewise, and it is what an `indent` is measured in. */
