@@ -458,16 +458,71 @@ pub struct SheetLayout {
     pub rich_text: HashMap<String, Vec<RichRun>>,
 }
 
-/// One coloured run of a cell's rich text.
+/// One run of a cell's rich text.
 ///
 /// A cell shows the concatenation of its runs, so the text is nothing new; what
-/// a run adds is a colour for part of it, which is how a document makes one word
-/// inside a sentence red.
+/// a run adds is formatting for part of it, which is how a document makes one
+/// word inside a sentence red, or bold, or a size larger.
 #[derive(Serialize, Clone)]
 pub struct RichRun {
     pub text: String,
     /// `#rrggbb`, or `None` when the run takes the cell's own colour.
     pub color: Option<String>,
+    /// What the run's own `<rPr>` says. `None` when the run has none, which
+    /// means the whole of the cell's font — see `RichFont`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<RichFont>,
+}
+
+/// A run's `<rPr>`: the font the run draws in, where it differs from the cell's.
+///
+/// The two halves of this inherit differently, and Excel settles both from its
+/// own files:
+///
+/// - `bold`/`italic`/`strike`/`underline` are what the run *is*, and an absent
+///   one means off rather than the cell's. Writing a rich cell whose first three
+///   characters are bold leaves the rest of the cell's font alone and gives the
+///   *other* run an `<rPr>` naming the font without `<b/>`, and that run draws
+///   plain even though the cell's font is bold. `rt.xlsx` row 1 in the fixture,
+///   and its row 11 (a bold cell with the run turned back off) show the same
+///   thing from both sides. `Some(false)` is an rPr that spells the off out —
+///   which is what a run has to say to be plain inside a bold cell it shares
+///   with a bold one — and is kept apart from `None` so that an rPr saying
+///   nothing at all can still be dropped.
+/// - `family`/`size_px` are overrides, and stay `None` when the rPr omits them.
+///   Excel writes both on every rPr it produces, so no Excel file can tell the
+///   difference; inheriting is what a hand-written `<rPr><i/></rPr>` means, and
+///   the alternative — the workbook default — would draw it at the wrong size.
+#[derive(Serialize, Clone, Default, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RichFont {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strike: Option<bool>,
+    /// `single`, `double`, or `none` for an rPr that spells the absence out;
+    /// `None` means the rPr did not mention it at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub underline: Option<&'static str>,
+}
+
+impl RichFont {
+    /// True when the rPr says nothing the cell would not already draw, which is
+    /// what lets a restated font be dropped rather than kept.
+    fn is_empty(&self) -> bool {
+        self.family.is_none()
+            && self.size_px.is_none()
+            && self.bold.is_none()
+            && self.italic.is_none()
+            && self.strike.is_none()
+            && self.underline.is_none()
+    }
 }
 
 impl SheetLayout {
@@ -851,16 +906,58 @@ fn shared_strings(xml: &str) -> Vec<String> {
     out
 }
 
-/// The shared strings that are split into coloured runs, keyed by the text they
-/// spell out.
+/// Records a run's colour, which is written as `<color …/>` beside the font
+/// properties of its `<rPr>`.
+fn set_run_color(element: &BytesStart, run: Option<&mut RichRun>, theme: &[Option<String>]) {
+    if let (Some(run), Some(color)) = (run, color_of(element, theme)) {
+        run.color = Some(color);
+    }
+}
+
+/// Records one property of a run's `<rPr>` — the run's own font, as distinct from
+/// the cell's. Unknown names are ignored, and so is a property that arrives with
+/// no `<rPr>` open.
+fn read_run_font(element: &BytesStart, font: Option<&mut RichFont>) {
+    let Some(font) = font else { return };
+    match element.local_name().as_ref() {
+        b"rFont" => font.family = attr(element, b"val"),
+        b"sz" => {
+            font.size_px = attr(element, b"val")
+                .and_then(|v| v.parse::<f64>().ok())
+                .map(points_to_font_px);
+        }
+        b"b" | b"i" | b"strike" => {
+            let on = !matches!(attr(element, b"val").as_deref(), Some("0" | "false"));
+            match element.local_name().as_ref() {
+                b"b" => font.bold = Some(on),
+                b"i" => font.italic = Some(on),
+                _ => font.strike = Some(on),
+            }
+        }
+        b"u" => {
+            // The two accounting forms draw the same line, spanning the cell
+            // rather than the text; they land on single and double. An explicit
+            // `none` is a value of its own — a run inside an underlined cell has
+            // to be able to say that it draws no line.
+            font.underline = Some(match attr(element, b"val").as_deref() {
+                Some("none") => "none",
+                Some("double" | "doubleAccounting") => "double",
+                _ => "single",
+            });
+        }
+        _ => {}
+    }
+}
+
+/// The shared strings that are split into runs, keyed by the text they spell out.
 ///
 /// A cell shows the concatenation of its runs either way, so the text is nothing
-/// new; what a run adds is a colour for part of it — how one word inside a
-/// sentence comes out red. Keying by the whole string is what lets the renderer
-/// find a cell's runs without the sheet having to record anything per cell, and
-/// it costs nothing: the runs already spell the key out.
+/// new; what a run adds is formatting for part of it — how one word inside a
+/// sentence comes out red, or bold, or underlined. Keying by the whole string is
+/// what lets the renderer find a cell's runs without the sheet having to record
+/// anything per cell, and it costs nothing: the runs already spell the key out.
 ///
-/// Only strings whose runs really carry a colour are kept. A run that merely
+/// Only strings whose runs really say something are kept. A run that merely
 /// restates the cell's own colour draws exactly like the plain text, and keeping
 /// those would put most of the workbook in the table.
 fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<RichRun>> {
@@ -869,6 +966,8 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<Rich
     let mut buf = Vec::new();
     let mut runs: Option<Vec<RichRun>> = None;
     let mut run: Option<RichRun> = None;
+    // The `<rPr>` being read, which belongs to the run that is open.
+    let mut font: Option<RichFont> = None;
     let mut in_text = false;
 
     loop {
@@ -880,23 +979,21 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<Rich
                     run = Some(RichRun {
                         text: String::new(),
                         color: None,
+                        font: None,
                     });
                 }
+                b"rPr" => font = Some(RichFont::default()),
                 b"t" => in_text = true,
-                b"color" => {
-                    if let (Some(run), Some(color)) = (run.as_mut(), color_of(&element, theme)) {
-                        run.color = Some(color);
-                    }
-                }
-                _ => {}
+                b"color" => set_run_color(&element, run.as_mut(), theme),
+                _ => read_run_font(&element, font.as_mut()),
             },
-            // `<color …/>` is how a run names its colour, and an empty element
-            // never gets a start/end pair.
-            Ok(Event::Empty(element)) if element.local_name().as_ref() == b"color" => {
-                if let (Some(run), Some(color)) = (run.as_mut(), color_of(&element, theme)) {
-                    run.color = Some(color);
-                }
-            }
+            // A font property and a run's colour are written as empty elements,
+            // which never get a start/end pair — but `<b></b>` is the same
+            // property spelled the long way, hence both arms.
+            Ok(Event::Empty(element)) => match element.local_name().as_ref() {
+                b"color" => set_run_color(&element, run.as_mut(), theme),
+                _ => read_run_font(&element, font.as_mut()),
+            },
             // An entity arrives as its own event, so the text around it has to be
             // stitched back together here or the run loses those characters and
             // stops matching the cell it belongs to.
@@ -916,6 +1013,11 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<Rich
             }
             Ok(Event::End(element)) => match element.local_name().as_ref() {
                 b"t" => in_text = false,
+                b"rPr" => {
+                    if let (Some(run), Some(font)) = (run.as_mut(), font.take()) {
+                        run.font = (!font.is_empty()).then_some(font);
+                    }
+                }
                 b"r" => {
                     if let (Some(list), Some(run)) = (runs.as_mut(), run.take()) {
                         list.push(run);
@@ -923,7 +1025,7 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<Rich
                 }
                 b"si" => {
                     if let Some(list) = runs.take() {
-                        if list.iter().any(|run| run.color.is_some()) {
+                        if list.iter().any(|run| run.color.is_some() || run.font.is_some()) {
                             let text: String = list.iter().map(|run| run.text.as_str()).collect();
                             out.insert(text, list);
                         }
@@ -2560,6 +2662,43 @@ mod tests {
         assert_eq!(list[2].color, None);
     }
 
+    /// A run's own `<rPr>` is read, and a string distinguished only by its font
+    /// keeps its runs — the corpus writes far more of those than of coloured
+    /// ones: `顧客管理 ▼` makes the marker bold and the breadcrumbs underline
+    /// their links.
+    #[test]
+    fn reads_the_font_a_run_names() {
+        let xml = r#"<sst>
+            <si><t>plain</t></si>
+            <si><r><t>a</t></r><r><rPr><b/><i/><u/><strike/><rFont val="MS Gothic"/><sz val="18"/></rPr><t>b</t></r></si>
+            <si><r><rPr><u val="double"/></rPr><t>c</t></r></si>
+            <si><r><rPr><b val="0"/><u val="none"/></rPr><t>d</t></r></si>
+        </sst>"#;
+        let runs = rich_strings(xml, &[]);
+        assert_eq!(runs.len(), 3, "a string with no formatting is not worth a table entry");
+
+        let loaded = runs.get("ab").expect("keyed by the whole text");
+        assert_eq!(loaded[0].font, None, "a run with no rPr takes the cell's font");
+        let font = loaded[1].font.as_ref().expect("the second run names a font");
+        assert_eq!(font.family.as_deref(), Some("MS Gothic"));
+        assert_eq!(font.size_px, Some(24.0), "18pt is 24px");
+        assert_eq!(font.bold, Some(true));
+        assert_eq!(font.italic, Some(true));
+        assert_eq!(font.strike, Some(true));
+        assert_eq!(font.underline, Some("single"));
+
+        // An rPr that turns both off has to survive as a decision of its own:
+        // dropped, the run would inherit a bold, underlined cell's formatting.
+        let off = runs.get("d").and_then(|list| list[0].font.clone()).expect("kept");
+        assert_eq!(off.bold, Some(false));
+        assert_eq!(off.underline, Some("none"));
+
+        assert_eq!(
+            runs.get("c").and_then(|list| list[0].font.as_ref()).and_then(|f| f.underline),
+            Some("double")
+        );
+    }
+
     /// The style pass has to reach the end of the sheet.
     ///
     /// It used to stop at a ceiling on the number of styled cells it would keep,
@@ -2610,14 +2749,30 @@ mod tests {
             println!("--- {} : {} rich strings", sheet.name, layout.rich_text.len());
             for (text, runs) in layout.rich_text.iter().take(5) {
                 let head: String = text.chars().take(28).collect();
-                let colours: Vec<&str> = runs.iter().filter_map(|run| run.color.as_deref()).collect();
                 println!(
-                    "    {:?}… — {} runs, {} chars, colours {:?}",
+                    "    {:?}… — {} runs, {} chars",
                     head,
                     runs.len(),
-                    text.chars().count(),
-                    colours
+                    text.chars().count()
                 );
+                for run in runs {
+                    let what: Vec<&str> = [
+                        run.font.as_ref().and_then(|f| f.family.as_deref()),
+                        run.font.as_ref().and_then(|f| f.underline),
+                        run.font.as_ref().is_some_and(|f| f.bold == Some(true)).then_some("bold"),
+                        run.font.as_ref().is_some_and(|f| f.italic == Some(true)).then_some("italic"),
+                        run.font.as_ref().is_some_and(|f| f.strike == Some(true)).then_some("strike"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                    println!(
+                        "        {:?} — colour {:?}, {:?}",
+                        run.text.chars().take(20).collect::<String>(),
+                        run.color.as_deref(),
+                        what
+                    );
+                }
             }
 
             let cells = book

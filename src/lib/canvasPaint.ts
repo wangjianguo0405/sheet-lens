@@ -77,6 +77,7 @@ import {
   lineMetrics,
   runSpans,
   textWidth,
+  type RunSpan,
 } from "@/lib/canvasText";
 
 /** One visible row: its sheet row, and the display index its offset comes from. */
@@ -416,26 +417,29 @@ function cellFontFamily(view: GridView, style: CellStyle | null): string | null 
 }
 
 /**
- * A cell's underline and strikethrough.
+ * The underline and strikethrough a cell — or one run of its text — draws.
  *
  * Canvas has no `text-decoration`, so the geometry comes from the font's own
  * metrics — measured off Excel's own PDF, see `decorationFor`. Both rules span
- * the line's ink rather than the cell.
+ * the ink they belong to rather than the cell, which is what lets a run inside a
+ * sentence be underlined on its own.
  */
 function paintDecoration(
   ctx: CanvasRenderingContext2D,
-  style: CellStyle | null,
   metrics: Decoration,
   left: number,
   width: number,
   baseline: number,
   sizePx: number,
   color: string,
+  /** The cell's style, or a run's own font — whichever is drawing this piece. */
+  source: { underline?: string | null; strike?: boolean } | null,
 ): void {
-  const underline = style?.underline ?? null;
-  if (!underline && !style?.strike) return;
+  const underline = source?.underline ?? null;
+  const strike = source?.strike ?? false;
+  if (underline !== "single" && underline !== "double" && !strike) return;
   ctx.fillStyle = color;
-  if (style?.strike) {
+  if (strike) {
     const thickness = metrics.strikeThickness * sizePx;
     // The measured offset is the struck line's centre.
     ctx.fillRect(left, baseline - metrics.strike * sizePx - thickness / 2, width, thickness);
@@ -478,8 +482,6 @@ function paintText(
   const available = box.w - padLeft - padRight;
   if (available <= 0) return;
 
-  let font = cellFont(view, style);
-  let sizePx = style?.sizePx ?? view.workbookFontSizePx;
   const wrap = style?.wrap ?? false;
   /**
    * An unwrapped value has no breaks in it as far as Excel is concerned, so it
@@ -487,7 +489,57 @@ function paintText(
    * which keeps every offset below pointing at the character it colours.
    */
   const content = wrap ? text : flatText(text);
-  const lines = layoutLines(font, content, available, wrap);
+  const spans =
+    runs && runs.length > 0
+      ? runSpans(wrap ? runs : runs.map((run) => ({ ...run, text: flatText(run.text) })))
+      : null;
+
+  const cellStack = cellFontStackFor(view, style);
+  const cellPx = style?.sizePx ?? view.workbookFontSizePx;
+  const cellBold = style?.bold ?? false;
+  const cellItalic = style?.italic ?? false;
+  /**
+   * Shrink to fit scales whatever the cell draws, so the factor stands above the
+   * cell's own size and every run's at once — a run that keeps its size while the
+   * rest shrinks would overflow by exactly the difference.
+   */
+  let scale = 1;
+  const piecePx = (span: RunSpan | null): number => (span?.font?.sizePx ?? cellPx) * scale;
+  /**
+   * The font one run draws in: what its `<rPr>` states, and the cell's font for
+   * everything it leaves out — including the run that has no `<rPr>` at all, and
+   * which therefore takes the cell's font whole.
+   */
+  const pieceFont = (span: RunSpan | null): string => {
+    const run = span?.font ?? null;
+    if (!run) return fontString(cellStack, piecePx(null), cellBold, cellItalic);
+    return fontString(
+      cellFontStack(run.family ?? style?.family ?? null, view.workbookFontFamily),
+      piecePx(span),
+      run.bold ?? false,
+      run.italic ?? false,
+    );
+  };
+  /**
+   * The width of a slice of the source, each run measured in its own font. Lines
+   * are laid out and placed with this rather than with the cell's font alone: a
+   * word in a larger font has to wrap where Excel wraps it and, in a centred or
+   * right-aligned cell, start where Excel starts it.
+   */
+  const widthOf = (from: number, to: number): number => {
+    if (!spans) return textWidth(pieceFont(null), content.slice(from, to));
+    let total = 0;
+    for (const span of spans) {
+      const start = Math.max(from, span.start);
+      const end = Math.min(to, span.end);
+      if (end > start) total += textWidth(pieceFont(span), content.slice(start, end));
+    }
+    return total;
+  };
+
+  // `widthOf` is the measure the layout uses, so the font here is only the one
+  // it would have used — the cell's own, before any shrink.
+  const lines = layoutLines(cellFont(view, style), content, available, wrap, widthOf);
   /**
    * Shrink to fit: Excel scales the whole font down until the cell's line fits.
    * That is the one line it has, because the standard makes the setting
@@ -497,16 +549,14 @@ function paintText(
    * there, and a second pass covers the rounding.
    */
   if (style?.shrink && lines.length === 1 && lines[0] !== "") {
-    const stack = cellFontStackFor(view, style);
-    const bold = style?.bold ?? false;
-    const italic = style?.italic ?? false;
     for (let pass = 0; pass < 3; pass += 1) {
-      const width = textWidth(fontString(stack, sizePx, bold, italic), lines[0]);
+      const width = widthOf(0, lines[0].length);
       if (width <= available) break;
-      sizePx *= available / width;
+      scale *= available / width;
     }
-    font = fontString(stack, sizePx, bold, italic);
   }
+  const sizePx = piecePx(null);
+  const font = pieceFont(null);
   const metrics = lineMetrics(font, sizePx);
   const blockHeight = lines.length * metrics.lineHeight;
 
@@ -538,14 +588,31 @@ function paintText(
   ctx.textBaseline = "alphabetic";
 
   /**
+   * Where each line's text sits in the source, and how wide its ink is.
+   *
+   * The lines come back in order and contiguous, so the next occurrence from
+   * here is the right one — a wrapped break is a prefix of what it cut, and the
+   * whitespace the layout trimmed off a line's end is simply skipped over. The
+   * offsets are needed before anything is drawn, because a line wider than the
+   * cell is what decides whether the whole block has to be clipped.
+   */
+  const lineStarts: number[] = [];
+  const lineWidths: number[] = [];
+  let cursor = 0;
+  for (const source of lines) {
+    const start = source === "" ? cursor : Math.max(cursor, content.indexOf(source, cursor));
+    cursor = start + source.length;
+    lineStarts.push(start);
+    lineWidths.push(source === "" ? 0 : widthOf(start, cursor));
+  }
+
+  /**
    * Excel clips a value with no room left at the edge of the room it does have —
    * it does not mark the cut with an ellipsis. The clip is only set up when
    * something actually overflows: `clip()` is not cheap and this runs for every
    * cell on screen.
    */
-  const tooWide = wrap
-    ? false
-    : lines.some((line) => line !== "" && textWidth(font, line) > available);
+  const tooWide = wrap ? false : lineWidths.some((width) => width > available);
   const needsClip = blockHeight > box.h || tooWide;
   if (needsClip) {
     ctx.save();
@@ -557,54 +624,60 @@ function paintText(
   // CSS centres the leading, so the baseline sits below the half-leading.
   const halfLeading = (metrics.lineHeight - (metrics.ascent + metrics.descent)) / 2;
   const base = textColor(style, kind, view.theme);
-  const spans =
-    runs && runs.length > 0
-      ? runSpans(wrap ? runs : runs.map((run) => ({ ...run, text: flatText(run.text) })))
-      : null;
-  /**
-   * Where the next line's text sits in the source. The lines come back in order
-   * and contiguous, so the next occurrence from here is the right one — a wrapped
-   * break is a prefix of what it cut, and the workspace the layout trimmed off a
-   * line's end is simply skipped over.
-   */
-  let cursor = 0;
-  const decoration = decorationFor(cellFontFamily(view, style));
+  const cellDecoration = decorationFor(cellFontFamily(view, style));
 
   for (let i = 0; i < lines.length; i += 1) {
     const source = lines[i];
-    const start = source === "" ? cursor : Math.max(cursor, content.indexOf(source, cursor));
-    cursor = start + source.length;
     if (source === "") continue;
+    const start = lineStarts[i];
     const baseline = top + i * metrics.lineHeight + halfLeading + metrics.ascent;
 
     /**
      * The line's own ink — where it starts and how far it reaches — which is
      * what an underline and a strike span, not the cell.
      */
-    const width = textWidth(font, source);
+    const width = lineWidths[i];
     const left = align === "right" ? x - width : align === "center" ? x - width / 2 : x;
 
     if (!spans) {
       ctx.fillStyle = base;
       ctx.fillText(source, x, baseline);
-    } else {
-      // A line with runs is drawn piece by piece, from its own left edge — the
-      // alignment positions the line, the runs only colour it.
-      ctx.textAlign = "left";
-      let at = left;
-      for (const span of spans) {
-        const from = Math.max(start, span.start);
-        const to = Math.min(start + source.length, span.end);
-        if (to <= from) continue;
-        const piece = content.slice(from, to);
-        ctx.fillStyle = span.color ?? base;
-        ctx.fillText(piece, at, baseline);
-        at += textWidth(font, piece);
-      }
-      ctx.textAlign = align;
+      paintDecoration(ctx, cellDecoration, left, width, baseline, sizePx, base, style);
+      continue;
     }
 
-    paintDecoration(ctx, style, decoration, left, width, baseline, sizePx, base);
+    /**
+     * A line with runs is drawn piece by piece, from its own left edge — the
+     * alignment positions the line, the runs only colour and set the font of
+     * their own part. Each piece draws its own underline and strike, so a run
+     * turned plain inside an underlined cell loses the line under itself only.
+     */
+    ctx.textAlign = "left";
+    let at = left;
+    for (const span of spans) {
+      const from = Math.max(start, span.start);
+      const to = Math.min(start + source.length, span.end);
+      if (to <= from) continue;
+      const piece = content.slice(from, to);
+      const runFont = pieceFont(span);
+      const pieceWidth = textWidth(runFont, piece);
+      ctx.font = runFont;
+      ctx.fillStyle = span.color ?? base;
+      ctx.fillText(piece, at, baseline);
+      paintDecoration(
+        ctx,
+        decorationFor(span.font?.family ?? style?.family ?? null),
+        at,
+        pieceWidth,
+        baseline,
+        piecePx(span),
+        span.color ?? base,
+        span.font ? span.font : style,
+      );
+      at += pieceWidth;
+    }
+    ctx.font = font;
+    ctx.textAlign = align;
   }
 
   if (needsClip) ctx.restore();

@@ -13,6 +13,7 @@
  */
 
 import { CJK_FALLBACK, LINE_HEIGHT, measureContext } from "@/lib/gridGeometry";
+import type { RichFont, RichRun } from "@/lib/excel";
 
 const STACKS = new Map<string, string>();
 
@@ -145,50 +146,63 @@ export function flatText(text: string): string {
  *
  * Spaces are preserved rather than collapsed, which is what `pre-wrap` means
  * and what these documents rely on for their indentation runs.
+ *
+ * `measure` overrides how a slice of the value is measured, for text whose runs
+ * carry fonts of their own — a word in a larger font has to wrap where Excel
+ * wraps it, not where the cell's own font would have.
  */
 export function layoutLines(
   font: string,
   text: string,
   maxWidth: number,
   wrap: boolean,
+  measure?: (from: number, to: number) => number,
 ): string[] {
   if (!wrap) return [flatText(text)];
   if (maxWidth <= 0) return [""];
 
+  const width = measure ?? ((from: number, to: number) => textWidth(font, text.slice(from, to)));
   const lines: string[] = [];
+  /** Where the line being built starts in `text`, which is what `measure` takes. */
+  let pos = 0;
   for (const paragraph of text.split("\n")) {
+    const end = pos + paragraph.length;
     if (paragraph === "") {
       lines.push("");
+      pos = end + 1;
       continue;
     }
     let line = "";
     // Split keeps the separators so the spaces can be re-emitted verbatim.
     for (const chunk of paragraph.split(/(?<=\s)/)) {
-      if (textWidth(font, line + chunk) <= maxWidth) {
+      if (width(pos, pos + line.length + chunk.length) <= maxWidth) {
         line += chunk;
         continue;
       }
       if (line !== "") {
         lines.push(line.replace(/\s+$/, ""));
+        pos += line.length;
         line = "";
       }
       // The chunk alone may still be too wide — break it mid-word, as
       // `break-words` does.
       let rest = chunk;
-      while (rest !== "" && textWidth(font, rest) > maxWidth) {
+      while (rest !== "" && width(pos, pos + rest.length) > maxWidth) {
         let lo = 1;
         let hi = rest.length;
         while (lo < hi) {
           const mid = (lo + hi + 1) >> 1;
-          if (textWidth(font, rest.slice(0, mid)) <= maxWidth) lo = mid;
+          if (width(pos, pos + mid) <= maxWidth) lo = mid;
           else hi = mid - 1;
         }
         lines.push(rest.slice(0, lo));
         rest = rest.slice(lo);
+        pos += lo;
       }
       line = rest;
     }
     lines.push(line.replace(/\s+$/, ""));
+    pos = end + 1;
   }
   return lines;
 }
@@ -198,20 +212,23 @@ export interface RunSpan {
   start: number;
   end: number;
   color: string | null;
+  /** The run's own font, or null when its whole font comes from the cell. */
+  font: RichFont | null;
 }
 
 /**
- * Where each run sits inside the string they concatenate to.
+ * Where each run sits inside the string they concatenate to, and what it draws
+ * with.
  *
- * Drawing a line in its runs' colours means knowing which part of the source
- * each line came from, and the runs are laid out along that same source, so this
- * is the map from one to the other.
+ * Drawing a line in its runs' own fonts and colours means knowing which part of
+ * the source each line came from, and the runs are laid out along that same
+ * source, so this is the map from one to the other.
  */
-export function runSpans(runs: { text: string; color: string | null }[]): RunSpan[] {
+export function runSpans(runs: RichRun[]): RunSpan[] {
   const spans: RunSpan[] = [];
   let at = 0;
   for (const run of runs) {
-    spans.push({ start: at, end: at + run.text.length, color: run.color });
+    spans.push({ start: at, end: at + run.text.length, color: run.color, font: run.font ?? null });
     at += run.text.length;
   }
   return spans;
