@@ -2485,7 +2485,16 @@ export function CanvasGrid({
     } else if (hit.kind === "colHeader") {
       rangeDrag.current = { kind: "column", col: hit.col, dragged: false };
     } else {
-      rangeDrag.current = { kind: "cell", row: hit.row, col: hit.col, dragged: false };
+      // Armed at the region's own top-left, as a click is: a block dragged out
+      // of a merged cell has to start where Excel says it started, or the
+      // region the pointer went down inside is left out of it.
+      const merge = mergeAt(hit.row, hit.col);
+      rangeDrag.current = {
+        kind: "cell",
+        row: merge ? merge.row : hit.row,
+        col: merge ? merge.col : hit.col,
+        dragged: false,
+      };
     }
     dragPointer.current = { x: event.clientX, y: event.clientY };
     // Ctrl pulls a block out *beside* what is selected rather than over it, so

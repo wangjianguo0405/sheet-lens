@@ -65,7 +65,6 @@ import {
   activeArea,
   areasOf,
   selectionCovers,
-  selectionIntersects,
   type Selection,
 } from "@/lib/selection";
 import {
@@ -1202,11 +1201,13 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
     }
   }
 
-  // A merged region lights up whole when the selection touches any of it. A
-  // Center-Across run does not: it is not merged, and its cells were washed
-  // one by one above.
+  // A merged region is one cell, and Excel keeps it at its anchor: it lights up
+  // whole when the selection holds that top-left, and not when the selection
+  // merely crosses the region. Selecting column K leaves a `J:L` merge alone —
+  // Excel's own window shows it unchanged, where the plain cells of K go blue.
+  // A Center-Across run is not merged and was washed cell by cell above.
   for (const rect of view.mergeView.shown) {
-    if (!selectionIntersects(view.selection, rect)) continue;
+    if (!selectionCovers(view.selection, rect.row, rect.col)) continue;
     const display = view.displayOfRow(rect.row);
     if (display < 0) continue;
     const x = ox + view.cols.offsets[rect.col];

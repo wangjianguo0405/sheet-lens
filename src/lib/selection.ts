@@ -125,11 +125,6 @@ export function rangeBetween(
   };
 }
 
-/** Whether two spans on one axis share a cell. */
-function overlap(a: number, aLen: number, b: number, bLen: number): boolean {
-  return a < b + bLen && b < a + aLen;
-}
-
 /** Whether one area reaches a cell. */
 function areaCovers(area: Area, row: number, col: number): boolean {
   switch (area.kind) {
@@ -150,38 +145,6 @@ function areaCovers(area: Area, row: number, col: number): boolean {
 }
 
 /**
- * Whether one area reaches any cell of a block.
- *
- * A merged region is one cell to Excel, so it lights up whole as soon as the
- * selection touches part of it. Comparing the selection's own corner against the
- * block — which is all a single cell needs — leaves every merged region inside a
- * dragged block unlit.
- */
-function areaIntersects(
-  area: Area,
-  box: { row: number; col: number; rows: number; cols: number },
-): boolean {
-  switch (area.kind) {
-    case "row":
-      return overlap(area.row, area.rows, box.row, box.rows);
-    case "column":
-      return overlap(area.col, area.cols, box.col, box.cols);
-    case "cell":
-      return (
-        area.row >= box.row &&
-        area.row < box.row + box.rows &&
-        area.col >= box.col &&
-        area.col < box.col + box.cols
-      );
-    case "range":
-      return (
-        overlap(area.row, area.rows, box.row, box.rows) &&
-        overlap(area.col, area.cols, box.col, box.cols)
-      );
-  }
-}
-
-/**
  * Whether the selection reaches a cell, anywhere in it.
  *
  * The one-area case is answered without a loop: this is asked once per cell of
@@ -191,15 +154,6 @@ function areaIntersects(
 export function selectionCovers(selection: Selection, row: number, col: number): boolean {
   if (selection.kind !== "areas") return areaCovers(selection, row, col);
   return selection.areas.some((area) => areaCovers(area, row, col));
-}
-
-/** Whether the selection reaches any cell of a block, anywhere in it. */
-export function selectionIntersects(
-  selection: Selection,
-  box: { row: number; col: number; rows: number; cols: number },
-): boolean {
-  if (selection.kind !== "areas") return areaIntersects(selection, box);
-  return selection.areas.some((area) => areaIntersects(area, box));
 }
 
 /**
