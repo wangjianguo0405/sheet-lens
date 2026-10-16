@@ -67,7 +67,8 @@
     "new": "New tab",
     "openAnother": "Open another workbook",
     "copyName": "Copy file name",
-    "copyPath": "Copy file path"
+    "copyPath": "Copy file path",
+    "list": "Open files"
   },
   "palette": {
     "theme": "Theme colours",
