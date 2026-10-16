@@ -387,10 +387,15 @@ function pads(
   };
 }
 
+/** The stack a cell's text draws in, which its font is built from. */
+function cellFontStackFor(view: GridView, style: CellStyle | null): string {
+  return cellFontStack(style?.family ?? null, view.workbookFontFamily);
+}
+
 /** The cell's font, as the paint passes and the fitting both need it. */
 function cellFont(view: GridView, style: CellStyle | null): string {
   return fontString(
-    cellFontStack(style?.family ?? null, view.workbookFontFamily),
+    cellFontStackFor(view, style),
     style?.sizePx ?? view.workbookFontSizePx,
     style?.bold ?? false,
     style?.italic ?? false,
@@ -465,8 +470,8 @@ function paintText(
   const available = box.w - padLeft - padRight;
   if (available <= 0) return;
 
-  const font = cellFont(view, style);
-  const sizePx = style?.sizePx ?? view.workbookFontSizePx;
+  let font = cellFont(view, style);
+  let sizePx = style?.sizePx ?? view.workbookFontSizePx;
   const wrap = style?.wrap ?? false;
   /**
    * An unwrapped value has no breaks in it as far as Excel is concerned, so it
@@ -475,6 +480,25 @@ function paintText(
    */
   const content = wrap ? text : flatText(text);
   const lines = layoutLines(font, content, available, wrap);
+  /**
+   * Shrink to fit: Excel scales the whole font down until the cell's line fits.
+   * That is the one line it has, because the standard makes the setting
+   * inapplicable to a cell holding several. Measured off Excel's own PDF — 14pt
+   * text in an 8-character column lands at 8.52pt, 7.44, 5.64, 4.20, 2.64 as it
+   * gets longer — so the factor is a plain ratio of what is needed to what is
+   * there, and a second pass covers the rounding.
+   */
+  if (style?.shrink && lines.length === 1 && lines[0] !== "") {
+    const stack = cellFontStackFor(view, style);
+    const bold = style?.bold ?? false;
+    const italic = style?.italic ?? false;
+    for (let pass = 0; pass < 3; pass += 1) {
+      const width = textWidth(fontString(stack, sizePx, bold, italic), lines[0]);
+      if (width <= available) break;
+      sizePx *= available / width;
+    }
+    font = fontString(stack, sizePx, bold, italic);
+  }
   const metrics = lineMetrics(font, sizePx);
   const blockHeight = lines.length * metrics.lineHeight;
 
@@ -1078,7 +1102,8 @@ export function valueWidth(
   const cell = view.cellAt(sheetRow, col);
   const text = cell?.text ?? "";
   const style = view.styleAt(sheetRow, col);
-  if (text === "" || style?.wrap) return w;
+  // A cell that shrinks to fit never reaches past its own edge.
+  if (text === "" || style?.wrap || style?.shrink) return w;
   if (horizontalOf(style, cell?.kind) !== "left") return w;
   // Only the reach of what is drawn: a break in an unwrapped value is not a
   // space, so it does not widen the room the value spills into.

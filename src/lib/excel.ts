@@ -65,6 +65,8 @@ export interface CellStyle {
   /** Indent levels; one is three spaces of the cell's font (ECMA-376 §18.8.1). */
   indent: number;
   wrap: boolean;
+  /** Excel's shrink-to-fit: the font is scaled down until the cell's line fits. */
+  shrink: boolean;
   bold: boolean;
   italic: boolean;
   strike: boolean;

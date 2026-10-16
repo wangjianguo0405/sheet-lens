@@ -2882,6 +2882,9 @@ export function CanvasGrid({
       style?.bold ?? false,
       style?.italic ?? false,
     );
+    // A cell that shrinks to fit shows all of itself, so there is nothing the
+    // hover could be answering.
+    if (style?.shrink) return null;
     const available = spanAt(cols.offsets, col) - CELL_PAD_LEFT - CELL_PAD_RIGHT;
     if (available <= 0) return text;
     if (style?.wrap) {
