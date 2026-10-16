@@ -153,6 +153,15 @@ export interface SheetView {
    * as it was left. Closing the workbook is what puts the file's own back.
    */
   sizes?: { col: Map<number, number>; row: Map<number, number> };
+  /**
+   * The rows and columns the reader has hidden or shown.
+   *
+   * The same kind of state as the sizes above, and for the same reason: nothing
+   * is written to the workbook, so leaving a sheet — for another one, or for
+   * another workbook and back — has to return it as it was left, and closing
+   * the workbook is what puts the file's own answer back.
+   */
+  hidden?: { rows: Map<number, boolean>; cols: Map<number, boolean> };
 }
 
 /** Those positions, by workbook path and then by sheet name. */
@@ -1252,12 +1261,11 @@ export function CanvasGrid({
         setFontSize(parsed.fontSizePx);
         setShowGrid(parsed.showGridLines);
         seeded.current = sheetIdentity(path, sheet.name);
-        // Row and column numbers mean a different thing on the next sheet, so
-        // what the reader hid here does not carry over.
-        setHiddenOverride({ rows: new Map(), cols: new Map() });
         // What the reader has dragged or fitted since wins over the file's own
-        // sizes, which are only where this sheet started.
+        // sizes, which are only where this sheet started. Same for what they
+        // hid: the sheet comes back as it was left, not as the file has it.
         const saved = views.get(path)?.get(sheet.name);
+        setHiddenOverride(saved?.hidden ?? { rows: new Map(), cols: new Map() });
         setColOverrides(saved?.sizes?.col ?? toOverrides(parsed.colWidthsChars, colPx));
         setRowOverrides(saved?.sizes?.row ?? toOverrides(parsed.rowHeightsPx));
 
@@ -1310,9 +1318,10 @@ export function CanvasGrid({
     bySheet.set(sheet.name, {
       ...view,
       sizes: { col: colOverrides, row: rowOverrides },
+      hidden: hiddenOverride,
     });
     views.set(path, bySheet);
-  }, [views, path, sheet.name, colOverrides, rowOverrides]);
+  }, [views, path, sheet.name, colOverrides, rowOverrides, hiddenOverride]);
 
   /** Moves the scroller to a sheet-space offset, through the paint refs. */
   const setScrollTo = useCallback((top: number, left: number) => {
