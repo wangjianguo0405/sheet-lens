@@ -197,6 +197,13 @@ function spanOfArea(area: Area, rows: boolean): [number, number] | null {
 interface GridProps {
   path: string;
   sheet: SheetInfo;
+  /**
+   * Bumped when the workbook has been read again from disk. The path is the
+   * same file either way, so this is what tells the grid that what it holds —
+   * the layout, and the blocks of cells fetched under this path — is from the
+   * workbook as it used to be.
+   */
+  revision: number;
   selection: Selection;
   /**
    * Where each sheet of each open workbook was left scrolled, keyed by
@@ -422,6 +429,7 @@ function describePaint(timing: PaintTimings): string {
 export function CanvasGrid({
   path,
   sheet,
+  revision,
   selection,
   views,
   onSelect,
@@ -523,6 +531,8 @@ export function CanvasGrid({
   }, [path, sheet.name]);
 
   const cache = useRef(new Map<string, Cell[][]>());
+  /** The revision the blocks in `cache` were read at, for a workbook re-read. */
+  const cachedRevision = useRef(revision);
   const pending = useRef(new Set<string>());
   const drag = useRef<ResizeDrag | null>(null);
   /** Which workbook and sheet the sizes in state belong to; see the effect on them. */
@@ -1279,6 +1289,18 @@ export function CanvasGrid({
   // --- the sheet's layout, once per switch ---
   useEffect(() => {
     drag.current = null;
+    /**
+     * A workbook that has been read again is another workbook wearing the same
+     * path, so the blocks fetched from the old one are dropped before the sheet
+     * is asked for. The next paint finds them missing and fetches them — the
+     * fetcher runs off the view, and the view is what it has either way.
+     */
+    if (cachedRevision.current !== revision) {
+      cachedRevision.current = revision;
+      for (const key of [...cache.current.keys()]) {
+        if (key.startsWith(`${path}${SEP}`)) cache.current.delete(key);
+      }
+    }
     // Which workbook and sheet the sizes now in state belong to, so nothing
     // writes them under another sheet's name before this one's layout lands.
     seeded.current = null;
@@ -1339,7 +1361,7 @@ export function CanvasGrid({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setScrollTo is stable
-  }, [path, sheet.name, views]);
+  }, [path, sheet.name, revision, views]);
 
   /**
    * Keeps what the reader has dragged or fitted on the sheet it was done to.

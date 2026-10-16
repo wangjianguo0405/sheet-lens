@@ -6,6 +6,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -44,6 +45,8 @@ interface FileTabsProps {
   active: string | null;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
+  /** Reads a workbook again from disk, for a file that has changed under us. */
+  onReload: (path: string) => void;
   /** A tab dragged to another place in the strip: both are indices into `tabs`. */
   onReorder: (from: number, to: number) => void;
   /** Whether the start page has a tab of its own at the moment. */
@@ -66,6 +69,7 @@ export function FileTabs({
   active,
   onSelect,
   onClose,
+  onReload,
   onReorder,
   homeOpen,
   atHome,
@@ -261,8 +265,17 @@ export function FileTabs({
               {/* The name and the path are the two things worth having somewhere
                   else — a bug report, a chat message — and neither is easy to get
                   at otherwise, since the tab shows only the name and truncates
-                  even that. */}
+                  even that. Above them sits the one thing a tab can *do*: read its
+                  file again, for the workbook that changed underneath us — which
+                  Excel being open on it is the usual cause of. */}
               <ContextMenuContent className="min-w-44">
+                <ContextMenuItem
+                  className="text-xs"
+                  onSelect={() => onReload(tab.path)}
+                >
+                  {t("tabs.reload")}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
                 <ContextMenuItem
                   className="text-xs"
                   onSelect={() => void copyText(tab.fileName)}

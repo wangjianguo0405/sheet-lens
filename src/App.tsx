@@ -87,6 +87,13 @@ interface Tab {
   defaultView: ViewMode;
   /** The sheets switched away from that default, by name. */
   views: Record<string, ViewMode>;
+  /**
+   * How many times this workbook has been read from disk: 0 when it was opened,
+   * and one more each time it is reloaded. The path cannot say this — it is the
+   * same file — so this is what tells the grid its layout and its blocks of
+   * cells come from the workbook as it used to be.
+   */
+  revision: number;
 }
 
 const EXCEL_EXTENSIONS = ["xlsx", "xlsm", "xls", "xlsb", "ods"];
@@ -269,6 +276,7 @@ export default function App() {
                   sheetHidden: new Map(),
                   defaultView: initialView(info),
                   views: {},
+                  revision: 0,
                 },
               ],
         );
@@ -376,6 +384,53 @@ export default function App() {
     },
     [tabs, activePath],
   );
+
+  /**
+   * Reads a workbook again from disk, for the file that changed underneath us —
+   * Excel had it open, or something else wrote it.
+   *
+   * Only what the tab *remembered about the file* is thrown away: the sheets
+   * that no longer exist, and a cursor or a current sheet that points at one.
+   * What the reader put there themselves — the marks, the tab colours, the
+   * sheets they hid, the widths they dragged, where each sheet was left scrolled
+   * — is theirs, and survives the file being read again.
+   */
+  const reloadTab = useCallback(async (path: string) => {
+    try {
+      const info = await openWorkbook(path);
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.info.path !== path) return tab;
+          const names = new Set(info.sheets.map((sheet) => sheet.name));
+          const cursors = Object.fromEntries(
+            Object.entries(tab.cursors).filter(([name]) => names.has(name)),
+          );
+          // The sheet showing is kept unless the file has taken it away or now
+          // hides it — either way there is no tab for it to be current on.
+          const here = info.sheets.find((sheet) => sheet.name === tab.sheet);
+          const sheet =
+            here && !isHidden(tab, here)
+              ? here.name
+              : (info.sheets.find((one) => !isHidden(tab, one))?.name ??
+                info.sheets[0]?.name ??
+                "");
+          return {
+            ...tab,
+            info,
+            cursors,
+            sheet,
+            // Which view the workbook opens in is read from the file, so a file
+            // that has changed its print areas changes its answer too.
+            defaultView: initialView(info),
+            revision: tab.revision + 1,
+          };
+        }),
+      );
+      setError(null);
+    } catch (reason: unknown) {
+      setError(`${path} — ${String(reason)}`);
+    }
+  }, []);
 
   /**
    * File ▸ Close, which is the tab's × for whichever workbook is showing. It is
@@ -867,6 +922,7 @@ export default function App() {
           active={activePath}
           onSelect={selectTab}
           onClose={closeTab}
+          onReload={(path) => void reloadTab(path)}
           onReorder={handleReorderTabs}
           homeOpen={homeOpen}
           atHome={homeOpen && activePath === null}
@@ -922,6 +978,7 @@ export default function App() {
                   <CanvasGrid
                     path={active.info.path}
                     sheet={activeSheet}
+                    revision={active.revision}
                     views={views.current}
                     selection={selection}
                     marks={active.marks}

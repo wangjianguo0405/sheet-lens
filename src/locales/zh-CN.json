@@ -68,7 +68,8 @@
     "openAnother": "打开其他工作簿",
     "copyName": "复制文件名",
     "copyPath": "复制文件路径",
-    "list": "已打开的文件"
+    "list": "已打开的文件",
+    "reload": "重新加载"
   },
   "palette": {
     "theme": "主题颜色",
