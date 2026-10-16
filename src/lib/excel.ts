@@ -98,16 +98,36 @@ export interface Block {
 }
 
 /**
- * One coloured run of a cell's rich text.
+ * One run of a cell's rich text.
  *
  * A cell shows the concatenation of its runs, so the text says nothing new; what
- * a run adds is a colour for part of it, which is how a document makes one word
- * inside a sentence red.
+ * a run adds is formatting for part of it, which is how a document makes one word
+ * inside a sentence red, or bold, or a size larger.
  */
 export interface RichRun {
   text: string;
   /** `#rrggbb`, or null when the run takes the cell's own colour. */
   color: string | null;
+  /** The run's own `<rPr>`, or absent when it has none — see `RichFont`. */
+  font?: RichFont | null;
+}
+
+/**
+ * What a run's `<rPr>` says, where it differs from the cell's font.
+ *
+ * The two halves inherit differently, and the parser settles both from Excel's
+ * own files: `bold`, `italic`, `strike` and `underline` are what the run *is*, so
+ * an absent one means off rather than "the cell's"; `family` and `sizePx` are
+ * overrides that the cell's font fills in when the rPr omits them.
+ */
+export interface RichFont {
+  family?: string | null;
+  sizePx?: number | null;
+  bold?: boolean;
+  italic?: boolean;
+  strike?: boolean;
+  /** `single`, `double`, or `none` for an rPr that spells the absence out. */
+  underline?: "single" | "double" | "none" | null;
 }
 
 export interface AutoFilter {
