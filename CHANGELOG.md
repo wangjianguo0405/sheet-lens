@@ -12,6 +12,31 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.16] - 2026-10-16
+
+Rows and columns can be hidden while you read, and the decoration a cell's own font carries — italic, underline, strikethrough — is drawn.
+
+### Added
+
+- Hide and Unhide on a row or column heading, from its right-click menu, with the accelerator letters Excel names them by. What is hidden this way is the reader's, not the file's: nothing is written back, and a sheet comes up as it was left for as long as it is open
+- Rows and columns the file itself hides are respected. A hidden row now takes no room and its number is not drawn, so the numbering jumps exactly where Excel's does
+- Italic, underline and strikethrough are drawn. 44 of the 60 workbooks sampled use italic and 42 use underline, and every one of those cells drew plain; the rules' geometry differs by font family and was read off Excel's own PDF
+- A cell set to shrink its text to fit does. Excel scales the whole font down until the line fits the column, and a cell holding more than one line keeps its size, as the standard says
+- Rich text draws in each run's own font. A word inside a sentence can be bold, italic, underlined, struck, another family or a size larger, and what a run says overrides the cell's own decoration — which is what leaves only the link inside a breadcrumb underlined
+
+### Improved
+
+- The right-click menu offers Fill colour as a menu item opening onto the theme palette, the standard one, the recent swatches and No Fill, the way Excel's does, rather than listing the swatches bare
+
+### Fixed
+
+- Right-clicking a heading acts on the selection. The command took the single heading the pointer happened to be over, and the sheet moves under the pointer as the view is kept in step with the selection, so a right-click aimed at J could land on N and hide one column of three
+- Hide takes every row or column the selection spans — including a block dragged across cells, which used to collapse to the one row the menu was opened on — and Unhide reaches the hidden run beside the selection, since a hidden row has no heading to point at. The heading a menu was opened on is forgotten when it closes, instead of outliving it into the next command
+- A merged region lights up only from its anchor cell, and a whole column's band is drawn across the merges it crosses rather than leaving them alone. Excel treats a merge as one cell, living where its text is
+- A Center-Across run ends at the next cell holding a value. Two labels side by side were centred as one across the pair
+- Hiding a row survives a sheet switch
+- A line break in a value that does not wrap is drawn as nothing, as Excel draws it. A cover row written as two lines lost its second line
+
 ## [0.3.15] - 2026-10-15
 
 The things a workbook keeps out of sight are marked: the rows a rule colours,
