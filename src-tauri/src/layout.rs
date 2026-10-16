@@ -660,6 +660,41 @@ impl Cache {
 /// runs to megabytes.
 const SHEET_HEAD_BYTES: u64 = 8192;
 
+/// The sheets the workbook keeps out of sight: `<sheet state="hidden">`.
+///
+/// Excel hides the tab, and its own Unhide list is the only way back, so a
+/// viewer that drew these would show a workbook that does not look like the one
+/// Excel opens. `state="veryHidden"` is hidden the same way here — Excel keeps
+/// those out of its Unhide list because a macro is usually what put them there,
+/// and nothing in the corpus uses the value.
+pub fn hidden_sheets(path: &str) -> HashSet<String> {
+    let Ok(file) = File::open(path) else {
+        return HashSet::new();
+    };
+    let Ok(mut zip) = ZipArchive::new(BufReader::new(file)) else {
+        return HashSet::new();
+    };
+    let Ok(workbook) = read_entry(&mut zip, "xl/workbook.xml") else {
+        return HashSet::new();
+    };
+    hidden_in_workbook(&workbook)
+}
+
+/// The names `workbook.xml` marks as hidden. Split out from the read so the rule
+/// can be tested on the XML alone.
+fn hidden_in_workbook(xml: &str) -> HashSet<String> {
+    let mut hidden = HashSet::new();
+    for element in scan(xml, b"sheet") {
+        let (Some(name), Some(state)) = (element.get("name"), element.get("state")) else {
+            continue;
+        };
+        if state != "visible" {
+            hidden.insert(name.clone());
+        }
+    }
+    hidden
+}
+
 /// Every sheet's tab colour, keyed by sheet name.
 ///
 /// Read once at open, before any layout: the tab strip draws all of them at
@@ -2697,6 +2732,24 @@ mod tests {
             runs.get("c").and_then(|list| list[0].font.as_ref()).and_then(|f| f.underline),
             Some("double")
         );
+    }
+
+    /// The tabs a file keeps out of sight: the flag is `state`, and a sheet
+    /// that says nothing is shown — which is what makes the attribute worth
+    /// reading rather than assuming.
+    #[test]
+    fn reads_the_sheets_the_workbook_hides() {
+        let xml = r#"<workbook><sheets>
+            <sheet name="表紙" sheetId="1" r:id="rId1"/>
+            <sheet name="DFD" sheetId="2" state="hidden" r:id="rId2"/>
+            <sheet name="入力規則" sheetId="3" state="veryHidden" r:id="rId3"/>
+            <sheet name="入出力定義" sheetId="4" state="visible" r:id="rId4"/>
+        </sheets></workbook>"#;
+        let hidden = hidden_in_workbook(xml);
+        assert!(hidden.contains("DFD"));
+        assert!(hidden.contains("入力規則"), "veryHidden is hidden too");
+        assert!(!hidden.contains("表紙"), "no state at all means shown");
+        assert!(!hidden.contains("入出力定義"), "and so does saying visible");
     }
 
     /// The style pass has to reach the end of the sheet.

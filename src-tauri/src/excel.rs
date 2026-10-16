@@ -27,6 +27,9 @@ pub struct SheetInfo {
     /// The sheet tab's own colour (`<tabColor>`), as `#RRGGBB`. Excel shows it
     /// as a strip under the tab, and a tab with none has none.
     pub tab_color: Option<String>,
+    /// Whether the file hides the sheet (`<sheet state="hidden">`). Excel draws
+    /// no tab for one of these and reaches it only through Unhide.
+    pub hidden: bool,
     /// Whether the sheet defines a `_xlnm.Print_Area` of its own. A workbook
     /// with none anywhere opens in the ordinary view rather than under the page
     /// shading, so this is read before any layout is.
@@ -99,6 +102,9 @@ pub fn load(path: &str) -> Result<Book, String> {
     // Same pass, same reason: which view the workbook opens in is decided from
     // this before anything is drawn.
     let print_areas = layout::print_area_sheets(path);
+    // And which sheets the file keeps off the tab strip, which the strip needs
+    // before it draws a single tab.
+    let hidden = layout::hidden_sheets(path);
 
     for name in names {
         let range = workbook
@@ -111,6 +117,7 @@ pub fn load(path: &str) -> Result<Book, String> {
             rows: rows as u32,
             cols: cols as u32,
             tab_color: tab_colors.get(&name).cloned(),
+            hidden: hidden.contains(&name),
             print_area: print_areas.contains(&name),
         });
         sheets.insert(name, Sheet { range, origin });
@@ -521,6 +528,11 @@ impl Book {
             if sheet.is_some_and(|only| only != info.name) {
                 continue;
             }
+            // A hidden sheet is not searched: Excel cannot take you to one, and
+            // a hit is a place the grid is about to put the cursor.
+            if info.hidden {
+                continue;
+            }
             let Some(data) = self.sheets.get(&info.name) else {
                 continue;
             };
@@ -906,6 +918,7 @@ mod tests {
                     rows: rows as u32,
                     cols: cols as u32,
                     tab_color: None,
+                    hidden: false,
                     print_area: false,
                 }],
             },
@@ -966,6 +979,7 @@ mod tests {
                     rows: rows as u32,
                     cols: cols as u32,
                     tab_color: None,
+                    hidden: false,
                     print_area: false,
                 }],
             },
@@ -1086,6 +1100,52 @@ mod tests {
         assert!(scoped.iter().all(|h| h.sheet == "変更履歴"));
 
         assert!(book.search(None, &Matcher::new("", false, false)).is_empty());
+    }
+
+    /// A hidden sheet is not searched. Excel cannot put the cursor on one — the
+    /// sheet cannot even be activated — and a hit is exactly a place the grid is
+    /// about to go.
+    #[test]
+    fn search_leaves_the_hidden_sheets_alone() {
+        let range = |text: &str| -> Range<Data> {
+            Range::from_sparse(vec![calamine::Cell::new((0, 0), Data::String(text.to_owned()))])
+        };
+        let info = |name: &str, hidden: bool| SheetInfo {
+            name: name.to_owned(),
+            rows: 1,
+            cols: 1,
+            tab_color: None,
+            hidden,
+            print_area: false,
+        };
+        let book = Book {
+            info: WorkbookInfo {
+                path: "fixture".to_owned(),
+                file_name: "fixture".to_owned(),
+                sheets: vec![info("表示", false), info("非表示", true)],
+            },
+            sheets: HashMap::from([
+                (
+                    "表示".to_owned(),
+                    Sheet { range: range("さがす"), origin: (0, 0) },
+                ),
+                (
+                    "非表示".to_owned(),
+                    Sheet { range: range("さがす"), origin: (0, 0) },
+                ),
+            ]),
+            layouts: HashMap::new(),
+            layout_cache: layout::Cache::default(),
+        };
+
+        let hits = book.search(None, &Matcher::new("さがす", false, false));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].sheet, "表示");
+        // Named outright it is still not read: the search panel can be pointed
+        // at a sheet, and the answer is not a cursor on a hidden one.
+        assert!(book
+            .search(Some("非表示"), &Matcher::new("さがす", false, false))
+            .is_empty());
     }
 
     #[test]

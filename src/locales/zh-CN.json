@@ -88,7 +88,12 @@
     "tabColor": "工作表标签颜色",
     "tabColorNone": "无颜色",
     "moreLeft": "显示左侧隐藏的工作表标签",
-    "moreRight": "显示右侧隐藏的工作表标签"
+    "moreRight": "显示右侧隐藏的工作表标签",
+    "hide": "隐藏(&H)",
+    "unhide": "取消隐藏(&U)",
+    "unhideTitle": "取消隐藏工作表",
+    "unhideGo": "取消隐藏",
+    "hidden": "已隐藏"
   },
   "formulaBar": {
     "expand": "展开",

@@ -5,19 +5,24 @@ import { useTranslation } from "react-i18next";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Accelerated";
 import { ColorPalette } from "@/components/ColorPalette";
+import { type UnhideAnchor } from "@/components/UnhideDialog";
 import type { SheetInfo } from "@/lib/excel";
 import { cn } from "@/lib/utils";
 
 interface SheetTabsProps {
+  /** The sheets the strip draws: the workbook's own order, less the hidden. */
   sheets: SheetInfo[];
   active: string;
   onSelect: (name: string) => void;
@@ -29,12 +34,32 @@ interface SheetTabsProps {
   colors: Map<string, string>;
   /** Sets one sheet's tab colour, or takes the reader's off it when null. */
   onColor: (sheet: string, color: string | null) => void;
+  /** Takes a sheet off the strip, for as long as the workbook is open. */
+  onHide: (sheet: string) => void;
+  /**
+   * Opens the dialog that offers the hidden sheets back, told where this menu
+   * stood so the dialog can take its place.
+   */
+  onUnhide: (at: UnhideAnchor | null) => void;
+  /** How many sheets are off the strip, which is what Unhide has to offer. */
+  hiddenCount: number;
   /** Drawn at the right end of the row: the sheet's own scrollbar. */
   trailing?: ReactNode;
 }
 
 /**
- * The sheet name, in whichever of black and white survives the tab's colour —
+ * Where a menu stands, as the point a dialog replacing it hangs from: its left
+ * edge, and its foot measured up from the window's own foot — the two the
+ * dialog's fixed positioning wants.
+ */
+function anchorOf(node: HTMLElement | null): UnhideAnchor | null {
+  if (!node) return null;
+  const box = node.getBoundingClientRect();
+  return { left: box.left, bottom: window.innerHeight - box.bottom };
+}
+
+/**
+ * Excel's sheet name, in whichever of black and white survives the tab's colour —
  * which is what Excel does, and what decides whether 入出力定義's light green
  * takes black type or 変更履歴's blue takes white. The weights are the usual
  * luma ones, so a colour lands on the side its brightness says.
@@ -73,6 +98,9 @@ export function SheetTabs({
   onSelect,
   colors,
   onColor,
+  onHide,
+  onUnhide,
+  hiddenCount,
   trailing,
 }: SheetTabsProps) {
   const { t } = useTranslation();
@@ -105,6 +133,8 @@ export function SheetTabs({
    * may not choose the side it opens on.
    */
   const [listMenu, setListMenu] = useState<{ x: number; y: number } | null>(null);
+  /** The tab's own menu, measured to place the dialog Unhide opens. */
+  const tabMenu = useRef<HTMLDivElement>(null);
 
   const sync = useCallback(() => {
     const node = strip.current;
@@ -576,11 +606,39 @@ export function SheetTabs({
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent
+          ref={tabMenu}
           side="top"
           align="start"
           sideOffset={3}
           className="min-w-44"
+          onKeyDown={pickByAccelerator}
         >
+          {/*
+            Excel's two sheet commands, above the colour, and in its order:
+            Unhide is greyed until there is something to bring back, and Hide
+            until there is a sheet it could take away — hiding the only one
+            still on the strip would leave the workbook with nothing to show,
+            which Excel refuses outright.
+          */}
+          <DropdownMenuItem
+            data-accelerator={acceleratorOf(t("sheets.unhide"))}
+            disabled={hiddenCount === 0}
+            onSelect={() => onUnhide(anchorOf(tabMenu.current))}
+            className="text-xs"
+          >
+            <Accelerated label={t("sheets.unhide")} />
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            data-accelerator={acceleratorOf(t("sheets.hide"))}
+            disabled={sheets.length <= 1}
+            onSelect={() => {
+              if (menu !== null) onHide(menu.sheet);
+            }}
+            className="text-xs"
+          >
+            <Accelerated label={t("sheets.hide")} />
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="text-xs">
               {t("sheets.tabColor")}

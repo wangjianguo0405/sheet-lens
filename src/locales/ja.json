@@ -88,7 +88,12 @@
     "tabColor": "シート見出しの色",
     "tabColorNone": "色なし",
     "moreLeft": "左に隠れているシート見出しを表示",
-    "moreRight": "右に隠れているシート見出しを表示"
+    "moreRight": "右に隠れているシート見出しを表示",
+    "hide": "非表示(&H)",
+    "unhide": "再表示(&U)",
+    "unhideTitle": "シートの再表示",
+    "unhideGo": "再表示",
+    "hidden": "非表示"
   },
   "formulaBar": {
     "expand": "展開",
