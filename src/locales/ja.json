@@ -68,7 +68,8 @@
     "openAnother": "別のブックを開く",
     "copyName": "ファイル名をコピー",
     "copyPath": "ファイルパスをコピー",
-    "list": "開いているファイル"
+    "list": "開いているファイル",
+    "reload": "再読み込み"
   },
   "palette": {
     "theme": "テーマの色",

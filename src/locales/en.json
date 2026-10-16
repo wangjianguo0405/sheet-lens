@@ -68,7 +68,8 @@
     "openAnother": "Open another workbook",
     "copyName": "Copy file name",
     "copyPath": "Copy file path",
-    "list": "Open files"
+    "list": "Open files",
+    "reload": "Reload"
   },
   "palette": {
     "theme": "Theme colours",
