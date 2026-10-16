@@ -14,6 +14,12 @@ export interface SheetInfo {
   /** The tab's own colour, or null where Excel shows none. */
   tabColor?: string | null;
   /**
+   * Whether the file hides the sheet. Excel draws no tab for one of these and
+   * cannot put the cursor on one either, so it is left out of the strip, the
+   * sheet list's reach and the search.
+   */
+  hidden: boolean;
+  /**
    * Whether the sheet defines a print area of its own. A workbook where none
    * does opens in the ordinary view rather than under the page shading, which
    * would otherwise be drawn around a page nobody asked for.

@@ -89,7 +89,12 @@
     "tabColor": "Sheet tab colour",
     "tabColorNone": "No colour",
     "moreLeft": "Show the hidden sheet tabs to the left",
-    "moreRight": "Show the hidden sheet tabs to the right"
+    "moreRight": "Show the hidden sheet tabs to the right",
+    "hide": "Hide (&H)",
+    "unhide": "Unhide (&U)",
+    "unhideTitle": "Unhide sheet",
+    "unhideGo": "Unhide",
+    "hidden": "Hidden"
   },
   "formulaBar": {
     "expand": "Expand",

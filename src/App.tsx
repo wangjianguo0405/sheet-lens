@@ -15,6 +15,7 @@ import { SheetTabs } from "@/components/SheetTabs";
 import { StatusBar } from "@/components/StatusBar";
 import { Toolbar } from "@/components/Toolbar";
 import { UpdateDialog } from "@/components/UpdateDialog";
+import { UnhideDialog, type UnhideAnchor } from "@/components/UnhideDialog";
 import { Welcome } from "@/components/Welcome";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -47,6 +48,7 @@ import {
   openWorkbook,
   type Cell,
   type SearchHit,
+  type SheetInfo,
   type WorkbookInfo,
 } from "@/lib/excel";
 
@@ -69,6 +71,14 @@ interface Tab {
    */
   tabColors: Map<string, string>;
   /**
+   * Which sheets the reader has hidden or brought back, over the file's own
+   * answer — the map holds a decision for the sheets they have touched and
+   * nothing for the rest, which keeps the file's `state="hidden"` in charge of
+   * what nobody has overruled. Like the tab colours, they last as long as the
+   * tab: Excel writes the flag into the workbook, and nothing here does.
+   */
+  sheetHidden: Map<string, boolean>;
+  /**
    * The view every sheet of this workbook opens in — the page view when the
    * file sets a print area anywhere, since a workbook that is printed is read
    * with an eye on the page. Only a default: each sheet is then switched on its
@@ -80,6 +90,19 @@ interface Tab {
 }
 
 const EXCEL_EXTENSIONS = ["xlsx", "xlsm", "xls", "xlsb", "ods"];
+
+/**
+ * Whether one sheet is off the tab strip: what the file says, unless the reader
+ * has already answered for that sheet.
+ */
+function isHidden(tab: Tab, sheet: SheetInfo): boolean {
+  return tab.sheetHidden.get(sheet.name) ?? sheet.hidden;
+}
+
+/** The sheets a tab's strip draws, in the workbook's own order. */
+function shownSheets(tab: Tab): SheetInfo[] {
+  return tab.info.sheets.filter((sheet) => !isHidden(tab, sheet));
+}
 
 const DEFAULT_SHEET_LIST_W = 240;
 const MIN_SHEET_LIST_W = 160;
@@ -122,6 +145,13 @@ export default function App() {
   const [activePath, setActivePath] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [gotoOpen, setGotoOpen] = useState(false);
+  /** The sheet dialog Excel opens from a tab's own menu — see `SheetTabs`. */
+  const [unhideOpen, setUnhideOpen] = useState(false);
+  /**
+   * Where the menu that opens it stood, so the dialog can take its place rather
+   * than the centred spot the shared dialog would put it in.
+   */
+  const [unhideAt, setUnhideAt] = useState<UnhideAnchor | null>(null);
   const [detail, setDetail] = useState<Cell | null>(null);
   /** What the grid actually shows, which can exceed calamine's range. */
   const [extent, setExtent] = useState<{ rows: number; cols: number } | null>(
@@ -200,6 +230,13 @@ export default function App() {
     return active.info.sheets.find((sheet) => sheet.name === active.sheet) ?? null;
   }, [active]);
 
+  /** The tabs the strip draws, and the sheets Unhide offers, in sheet order. */
+  const shown = useMemo(() => (active ? shownSheets(active) : []), [active]);
+  const hiddenNames = useMemo(
+    () => (active ? active.info.sheets.filter((s) => isHidden(active, s)).map((s) => s.name) : []),
+    [active],
+  );
+
   const selection = active?.cursors[active.sheet] ?? ORIGIN;
 
   /** What the sheet on screen is drawn in: its own switch, or the default. */
@@ -219,10 +256,17 @@ export default function App() {
                 ...prev,
                 {
                   info,
-                  sheet: info.sheets[0]?.name ?? "",
+                  // A workbook opens on the first sheet it shows: one it
+                  // hides has no tab to be current, which is the sheet Excel
+                  // would be on too.
+                  sheet:
+                    info.sheets.find((sheet) => !sheet.hidden)?.name ??
+                    info.sheets[0]?.name ??
+                    "",
                   cursors: {},
                   marks: new Map(),
                   tabColors: new Map(),
+                  sheetHidden: new Map(),
                   defaultView: initialView(info),
                   views: {},
                 },
@@ -432,6 +476,50 @@ export default function App() {
     [active],
   );
 
+  /**
+   * Hides a sheet, or brings one back, for as long as the tab is open — the
+   * file's own flag is never touched, and the sheet comes back as the workbook
+   * has it when the workbook is opened again.
+   *
+   * Hiding the sheet on screen moves to the tab that takes its place: the next
+   * one still shown, or the one before it when it was the last. That is where
+   * Excel's own selection lands, measured by hiding a middle tab and an end one
+   * and reading `ActiveSheet` back.
+   */
+  const applySheetHidden = useCallback(
+    (sheet: string, hidden: boolean) => {
+      if (!active) return;
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.info.path !== active.info.path) return tab;
+          const sheetHidden = new Map(tab.sheetHidden);
+          sheetHidden.set(sheet, hidden);
+          if (!hidden || tab.sheet !== sheet) return { ...tab, sheetHidden };
+
+          const shownHere = new Set(shownSheets({ ...tab, sheetHidden }).map((one) => one.name));
+          const at = tab.info.sheets.findIndex((one) => one.name === sheet);
+          const next =
+            tab.info.sheets.slice(at + 1).find((one) => shownHere.has(one.name)) ??
+            [...tab.info.sheets.slice(0, at)].reverse().find((one) => shownHere.has(one.name));
+          return { ...tab, sheetHidden, sheet: next?.name ?? tab.sheet };
+        }),
+      );
+    },
+    [active],
+  );
+
+  /**
+   * Bringing a sheet back makes it the current one, as Excel's Unhide does —
+   * you asked to see it, so it is what the window shows.
+   */
+  const handleUnhideSheet = useCallback(
+    (name: string) => {
+      applySheetHidden(name, false);
+      updateActive({ sheet: name });
+    },
+    [applySheetHidden, updateActive],
+  );
+
   const handleSheetSelect = useCallback(
     (name: string) => updateActive({ sheet: name }),
     [updateActive],
@@ -484,12 +572,14 @@ export default function App() {
 
   /**
    * Ctrl+PageUp/PageDown steps along the workbook's sheets in tab order, and
-   * stops at either end rather than wrapping — which is what Excel does.
+   * stops at either end rather than wrapping — which is what Excel does. It
+   * steps over the hidden ones: they are not on the strip, and Excel's own
+   * keys walk what is on it.
    */
   const handleSheetStep = useCallback(
     (delta: number) => {
       if (!active) return;
-      const names = active.info.sheets.map((sheet) => sheet.name);
+      const names = shownSheets(active).map((sheet) => sheet.name);
       const at = names.indexOf(active.sheet);
       if (at < 0) return;
       const next = at + delta;
@@ -808,6 +898,7 @@ export default function App() {
                   <div className="shrink-0" style={{ width: sheetListWidth }}>
                     <SheetList
                       sheets={active.info.sheets}
+                      hidden={new Set(hiddenNames)}
                       active={active.sheet}
                       onSelect={handleSheetSelect}
                     />
@@ -858,11 +949,17 @@ export default function App() {
                 </div>
                 {panels.tabs && (
                   <SheetTabs
-                    sheets={active.info.sheets}
+                    sheets={shown}
                     active={active.sheet}
                     onSelect={handleSheetSelect}
                     colors={active.tabColors}
                     onColor={applyTabColor}
+                    onHide={(name) => applySheetHidden(name, true)}
+                    onUnhide={(at) => {
+                      setUnhideAt(at);
+                      setUnhideOpen(true);
+                    }}
+                    hiddenCount={hiddenNames.length}
                     trailing={
                       <>
                         {/* Excel's splitter, at the left end of the sheet's
@@ -953,9 +1050,17 @@ export default function App() {
         <GoToDialog
           open={gotoOpen}
           onOpenChange={setGotoOpen}
-          sheets={active?.info.sheets.map((sheet) => sheet.name) ?? []}
+          sheets={shown.map((sheet) => sheet.name)}
           currentSheet={active?.sheet ?? ""}
           onGo={handleGo}
+        />
+
+        <UnhideDialog
+          open={unhideOpen}
+          onOpenChange={setUnhideOpen}
+          sheets={hiddenNames}
+          at={unhideAt}
+          onUnhide={handleUnhideSheet}
         />
 
         <UpdateDialog

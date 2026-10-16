@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/context-menu";
 import { FilterButton } from "@/components/FilterButton";
 import { ColorPalette } from "@/components/ColorPalette";
+import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Accelerated";
 import { ShapeLayer, type ShapeDebugFacts } from "@/components/ShapeLayer";
 import { canvasTheme } from "@/lib/canvasTheme";
 import { useTranslation } from "react-i18next";
@@ -169,28 +170,6 @@ export interface SheetView {
 
 /** Those positions, by workbook path and then by sheet name. */
 export type SheetViews = Map<string, Map<string, SheetView>>;
-
-/**
- * Excel's menu accelerators, written into the label the way a Windows menu
- * string carries one: `非表示(&H)` draws the `H` underlined, and pressing it
- * picks the item whether or not the pointer is anywhere near.
- */
-function acceleratorOf(label: string): string {
-  const at = label.indexOf("&");
-  return at >= 0 && at + 1 < label.length ? label[at + 1].toUpperCase() : "";
-}
-
-function Accelerated({ label }: { label: string }) {
-  const at = label.indexOf("&");
-  if (at < 0 || at + 1 >= label.length) return <>{label}</>;
-  return (
-    <>
-      {label.slice(0, at)}
-      <span className="underline">{label[at + 1]}</span>
-      {label.slice(at + 2)}
-    </>
-  );
-}
 
 /** The heading a context menu was opened on, or none when it was a cell. */
 type MenuTarget = { kind: "row"; index: number } | { kind: "col"; index: number } | null;
@@ -2558,17 +2537,6 @@ export function CanvasGrid({
     });
   };
 
-  /** Pressing an item's underlined letter picks it, as Excel's menus do. */
-  const onMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.altKey || event.ctrlKey || event.metaKey || event.key.length !== 1) return;
-    const item = event.currentTarget.querySelector(
-      `[data-accelerator="${event.key.toUpperCase()}"]`,
-    );
-    if (!item) return;
-    event.preventDefault();
-    (item as HTMLElement).click();
-  };
-
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     suppressClick.current = false;
     // Every shortcut in the key handler needs the viewport focused, and a press
@@ -3291,7 +3259,7 @@ export function CanvasGrid({
               <div style={{ width: contentW, height: contentH }} />
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="min-w-[13.5rem]" onKeyDown={onMenuKeyDown}>
+          <ContextMenuContent className="min-w-[13.5rem]" onKeyDown={pickByAccelerator}>
             {menuTarget && (
               <>
                 <ContextMenuItem
