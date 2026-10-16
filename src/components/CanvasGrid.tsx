@@ -745,6 +745,14 @@ export function CanvasGrid({
     return { rows: displayRows, index };
   }, [displayRows]);
 
+  /**
+   * The rows and columns the file hides. Excel draws none of them and skips the
+   * number, so the gap is the only sign it gives; both take no room at all,
+   * which is what puts everything after them where Excel has it.
+   */
+  const hiddenRows = useMemo(() => new Set(layout?.hiddenRows ?? []), [layout]);
+  const hiddenCols = useMemo(() => new Set(layout?.hiddenCols ?? []), [layout]);
+
   /** How many rows the view shows — a filtered view shows fewer. */
   const displayRowCount = rowView ? rowView.rows.length : sheetRowsGuess;
 
@@ -776,23 +784,26 @@ export function CanvasGrid({
 
   const cols = useMemo(
     () =>
-      buildMetrics(
-        colCount,
+      buildMetrics(colCount, (index) => {
         // `<col>` describes columns a sheet may hold nothing in, and those runs
         // reach past the last cell; outside the extent the sheet's own default
         // width is the honest answer, not the file's.
-        (index) => (index < sheetColsGuess ? (colOverrides.get(index) ?? baseColW) : baseColW),
-      ),
-    [colCount, sheetColsGuess, colOverrides, baseColW],
+        if (index >= sheetColsGuess) return baseColW;
+        if (hiddenCols.has(index)) return 0;
+        return colOverrides.get(index) ?? baseColW;
+      }),
+    [colCount, sheetColsGuess, colOverrides, baseColW, hiddenCols],
   );
 
   const rows = useMemo(
     () =>
       buildMetrics(rowCount, (display) => {
         const row = sheetRowOf(display);
-        return row >= 0 && row < sheetRowsGuess ? (rowOverrides.get(row) ?? baseRowH) : baseRowH;
+        if (row < 0 || row >= sheetRowsGuess) return baseRowH;
+        if (hiddenRows.has(row)) return 0;
+        return rowOverrides.get(row) ?? baseRowH;
       }),
-    [rowView, rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf],
+    [rowView, rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf, hiddenRows],
   );
 
   const minRowH = Math.max(MIN_ROW_H, Math.ceil(fontSize * LINE_HEIGHT));
@@ -1811,6 +1822,8 @@ export function CanvasGrid({
       rows,
       sheetRows,
       sheetCols,
+      hiddenRows,
+      hiddenCols,
       ...range,
       width: size.width,
       height: size.height,
@@ -1853,6 +1866,8 @@ export function CanvasGrid({
     rowView,
     cols,
     rows,
+    hiddenRows,
+    hiddenCols,
     rowCount,
     colCount,
     merges,

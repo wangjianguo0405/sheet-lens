@@ -238,6 +238,12 @@ export interface SheetLayout {
   /** Row index -> height in pixels, for rows the file sized explicitly. */
   rowHeightsPx: Record<string, number>;
   merges: MergeRect[];
+  /**
+   * Rows and columns the file hides. Excel draws none of them and skips the
+   * number, so the gap is the only sign it gives.
+   */
+  hiddenRows: number[];
+  hiddenCols: number[];
   autoFilter: AutoFilter | null;
   /** `_xlnm.Print_Area`; Excel shades everything outside it. */
   printArea: MergeRect | null;

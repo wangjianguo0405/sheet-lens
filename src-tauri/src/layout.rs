@@ -416,6 +416,13 @@ pub struct SheetLayout {
     /// Row index -> height in pixels, for rows with an explicit height.
     pub row_heights_px: HashMap<u32, f64>,
     pub merges: Vec<MergeRect>,
+    /// Rows the file hides. Excel draws none of them and skips their numbers —
+    /// there is no marker at the boundary, so the gap is the only sign. A
+    /// hidden row keeps whatever height it had, which is what unhiding puts
+    /// back; one that never had a height comes back at the sheet's default.
+    pub hidden_rows: Vec<u32>,
+    /// Columns the file hides, which it writes as `width="0"` as well.
+    pub hidden_cols: Vec<u32>,
     pub auto_filter: Option<AutoFilter>,
     /// `_xlnm.Print_Area`, or the used range where the sheet defines none —
     /// Excel prints the used range in that case and shades around it just the
@@ -476,6 +483,8 @@ impl SheetLayout {
             col_widths_chars: HashMap::new(),
             row_heights_px: HashMap::new(),
             merges: Vec::new(),
+            hidden_rows: Vec::new(),
+            hidden_cols: Vec::new(),
             auto_filter: None,
             print_area: None,
             styles: Vec::new(),
@@ -1755,6 +1764,16 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                             }
                         }
 
+                        // Excel writes `width="0"` on a hidden column as well,
+                        // so it already takes no room; the flag is what lets the
+                        // renderer skip its letter and put a width back if the
+                        // reader asks to see it.
+                        if attr(&element, b"hidden").is_some_and(|v| v == "1" || v == "true") {
+                            for column in min..=last {
+                                layout.hidden_cols.push(column - 1);
+                            }
+                        }
+
                         let Some(width) = attr(&element, b"width")
                             .and_then(|v| v.parse::<f64>().ok())
                         else {
@@ -1781,6 +1800,11 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         };
                         if row == 0 {
                             continue;
+                        }
+                        // A hidden row keeps no height of its own, so without
+                        // this the reader sees a row Excel does not draw at all.
+                        if attr(&element, b"hidden").is_some_and(|v| v == "1" || v == "true") {
+                            layout.hidden_rows.push(row - 1);
                         }
                         // Rows can carry a style for the cells in them that have
                         // none of their own — how a filled row reads as solid.
@@ -1903,6 +1927,10 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
 
     layout.rows = extent_rows.min(MAX_SHEET_ROWS);
     layout.cols = extent_cols.min(MAX_SHEET_COLS);
+    // A file writes its rows in order, but nothing makes it, and the payload is
+    // compared byte for byte when a change is checked.
+    layout.hidden_rows.sort_unstable();
+    layout.hidden_cols.sort_unstable();
 
     // The last row is ended by the end of the sheet rather than by a `<row>`.
     collect_runs(&mut layout, pending_row, &mut pending);

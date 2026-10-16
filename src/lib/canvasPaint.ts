@@ -90,6 +90,13 @@ export interface GridView {
   rows: Metrics;
   sheetRows: number;
   sheetCols: number;
+  /**
+   * The rows and columns the sheet hides. Excel draws none of them and skips
+   * the number, so the gap is the only sign it gives; a row that is hidden
+   * takes no room at all, which is what puts the next one where Excel has it.
+   */
+  hiddenRows: Set<number>;
+  hiddenCols: Set<number>;
   /** The overscanned window: display rows, and sheet columns. */
   rowStart: number;
   rowEnd: number;
@@ -1305,6 +1312,8 @@ function paintGutterLabels(
   ctx.clip();
 
   for (const { sheetRow, display } of rows) {
+    // A hidden row carries no number in Excel, and has no room for one here.
+    if (view.hiddenRows.has(sheetRow)) continue;
     const y = oy + view.rows.offsets[display];
     const h = spanAt(view.rows.offsets, display);
     const lit = litRow(view.selection, sheetRow);
@@ -1337,6 +1346,8 @@ function paintGutterLabels(
   ctx.clip();
 
   for (let c = view.colStart; c < view.colEnd; c += 1) {
+    // The letter goes with the column, as it does in Excel's own header.
+    if (view.hiddenCols.has(c)) continue;
     const x = ox + view.cols.offsets[c];
     const w = spanAt(view.cols.offsets, c);
     const lit = litColumn(view.selection, c);
