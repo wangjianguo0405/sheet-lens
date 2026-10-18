@@ -1,4 +1,10 @@
-# Logs
+# 依赖与构建产物
+node_modules
+dist
+dist-ssr
+*.local
+
+# 日志
 logs
 *.log
 npm-debug.log*
@@ -7,12 +13,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
+# 编辑器与系统文件（.vscode/extensions.json 是例外：它值得共用）
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -32,5 +33,18 @@ design/
 # 浏览器里跑真实解析结果的临时夹具与测量脚本（含本机路径与导出数据）
 dev-harness/
 
-# ECMA-376 标准文档与本机会话配置（Part 1–4 约 70MB；整个 .claude 不进版本库）
+# AI 编码工具留在本机的东西（会话记录、缓存、项目标识、历史）——都不进版本库。
+# .claude 里还放着 ECMA-376 标准文档（Part 1–4 约 70MB），更不能进。
+.aider*
 .claude/
+.cline/
+.codeium/
+.codex/
+.continue/
+.crush/
+.cursor/
+.freebuff/
+.gemini/
+.roo/
+.specstory/
+.windsurf/
