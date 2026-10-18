@@ -458,6 +458,143 @@ function paintDecoration(
   }
 }
 
+/** The gap a turned cell keeps from the edge it is measured against. */
+const TURN_INSET = 2;
+
+/**
+ * Text that runs down its cell instead of across it: `textRotation` +90 and
+ * −90, and 255's stacked form, where the characters stand one under the next.
+ *
+ * Where it sits came off Excel's own PDFs rather than out of the standard,
+ * which says what the angle means and nothing about placement:
+ *
+ * - A turned line is centred down the cell's height, and its baseline sits
+ *   against the edge its descenders point at — the right for a line read
+ *   bottom-to-top, the left for one read top-to-bottom. `center` moves it to
+ *   the middle of the cell's width instead.
+ * - A stacked column is centred in the cell, and its pitch is the font's own
+ *   line box, which is what Excel stacks by: 14.2pt at 10pt Meiryo UI against
+ *   16.8pt at 10pt Yu Gothic, so no single constant fits both.
+ *
+ * The cell clips it, the way it clips a flat cell's text.
+ */
+function paintTurnedText(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  box: { x: number; y: number; w: number; h: number },
+  text: string,
+  style: CellStyle | null,
+  color: string,
+): void {
+  const content = flatText(text);
+  if (content === "") return;
+  const font = cellFont(view, style);
+  const metrics = lineMetrics(font, style?.sizePx ?? view.workbookFontSizePx);
+  const horizontal = style?.horizontal ?? null;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(box.x, box.y, box.w, box.h);
+  ctx.clip();
+  ctx.font = font;
+  ctx.fillStyle = color;
+  ctx.textBaseline = "alphabetic";
+
+  if (style?.stacked) {
+    const chars = [...content];
+    /** One character per line box, the font's own. */
+    const pitch = metrics.ascent + metrics.descent;
+    const height = chars.length * pitch;
+    const top =
+      style?.vertical === "top"
+        ? box.y + TURN_INSET
+        : style?.vertical === "middle"
+          ? box.y + (box.h - height) / 2
+          : box.y + box.h - height;
+    // General is centred here: a stacked column that hugged one edge of its
+    // column read as a mistake next to Excel's own.
+    ctx.textAlign =
+      horizontal === "left" ? "left" : horizontal === "right" ? "right" : "center";
+    const x =
+      horizontal === "left"
+        ? box.x + TURN_INSET
+        : horizontal === "right"
+          ? box.x + box.w - TURN_INSET
+          : box.x + box.w / 2;
+    chars.forEach((char, index) => {
+      ctx.fillText(char, x, top + metrics.ascent + index * pitch);
+    });
+    ctx.restore();
+    return;
+  }
+
+  const angle = style?.rotation ?? 0;
+  const ccw = angle > 0;
+  const rad = (-angle * Math.PI) / 180;
+  /**
+   * A second line sits beside the first, on the far side of its baseline — and
+   * before it can be laid out, the first has to know how much room the cell
+   * gives it along its own direction.
+   */
+  const lines = layoutLines(font, content, box.h - TURN_INSET * 2, style?.wrap ?? false);
+  const pitch = metrics.ascent + metrics.descent;
+  const baseline =
+    horizontal === "center"
+      ? box.x + box.w / 2 + (metrics.ascent - metrics.descent) / 2
+      : ccw
+        ? box.x + box.w - TURN_INSET - metrics.descent
+        : box.x + TURN_INSET + metrics.descent;
+  /**
+   * Only the quarter turns have a measured anchor. Excel does write other
+   * angles — 45 and −45 among them — but no workbook here uses one, so rather
+   * than guess at the rule those are laid out as a block centred in the cell,
+   * which is where Excel's own 45° came out to within a few points and which
+   * cannot leave the text hanging off an edge.
+   */
+  const quarter = Math.abs(angle) === 90;
+
+  ctx.textAlign = "left";
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line === "") continue;
+    const length = textWidth(font, line);
+    let x: number;
+    let y: number;
+    if (quarter) {
+      // The origin is where the text starts: the bottom of a centred line read
+      // upwards, its top when read downwards.
+      x = ccw ? baseline - index * pitch : baseline + index * pitch;
+      y =
+        style?.vertical === "top"
+          ? ccw
+            ? box.y + TURN_INSET + length
+            : box.y + TURN_INSET
+          : style?.vertical === "middle"
+            ? ccw
+              ? box.y + box.h / 2 + length / 2
+              : box.y + box.h / 2 - length / 2
+            : ccw
+              ? box.y + box.h - TURN_INSET
+              : box.y + box.h - TURN_INSET - length;
+    } else {
+      // The centre of the turned line's own box, put on the cell's centre.
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const across = (metrics.descent - metrics.ascent) / 2;
+      x = box.x + box.w / 2 - (length / 2) * cos + across * sin;
+      y = box.y + box.h / 2 - (length / 2) * sin - across * cos;
+    }
+    ctx.save();
+    // Canvas turns clockwise and the pixel grid runs downwards, so a positive
+    // Excel angle — a line read bottom-to-top — is a negative rotation here.
+    ctx.translate(x, y);
+    ctx.rotate(rad);
+    ctx.fillText(line, 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 /**
  * A cell's or a block's text, placed by the file's alignment, clipped to its
  * text area, and ellipsised or wrapped to fit.
@@ -480,6 +617,19 @@ function paintText(
 ): void {
   if (text === "") return;
   const available = box.w - padLeft - padRight;
+
+  /**
+   * A turned cell — `textRotation` 90 or −90, or 255's stacked form — runs
+   * down the cell's height rather than across it, so it is laid out and drawn
+   * by its own pass. Nearly every cell in every workbook is flat; the ones that
+   * are not are the narrow column headings a Japanese document writes its
+   * labels in.
+   */
+  if (style?.stacked || (style?.rotation ?? 0) !== 0) {
+    paintTurnedText(ctx, view, box, text, style, textColor(style, kind, view.theme));
+    return;
+  }
+
   if (available <= 0) return;
 
   const wrap = style?.wrap ?? false;

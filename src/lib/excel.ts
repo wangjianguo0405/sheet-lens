@@ -73,6 +73,13 @@ export interface CellStyle {
   wrap: boolean;
   /** Excel's shrink-to-fit: the font is scaled down until the cell's line fits. */
   shrink: boolean;
+  /**
+   * Degrees turned counter-clockwise, from `<alignment textRotation>`; absent
+   * for the cell that draws flat, which is nearly every cell.
+   */
+  rotation?: number;
+  /** `textRotation="255"`: characters one below the next, each upright. */
+  stacked?: boolean;
   bold: boolean;
   italic: boolean;
   strike: boolean;

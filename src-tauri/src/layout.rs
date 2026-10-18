@@ -104,6 +104,15 @@ pub struct Align {
     /// one line fits. The standard makes it inapplicable to a cell holding
     /// several lines, so a wrapping cell ignores it.
     pub shrink: bool,
+    /// `<alignment textRotation>`, as degrees turned counter-clockwise — a
+    /// negative angle turns the other way. Excel stores 0–90 for one direction
+    /// and 91–180 for the angles its own dialog calls −1 to −90, so 180 is the
+    /// "-90" a reader arrives at there.
+    pub rotation: i16,
+    /// `textRotation="255"`: the characters one below the next, each upright,
+    /// rather than the line turned as a whole. It is not an angle, which is why
+    /// it has a field of its own.
+    pub stacked: bool,
 }
 
 /// One side of a cell's border, already reduced to what CSS needs.
@@ -137,6 +146,13 @@ pub struct CellStyle {
     pub indent: u8,
     pub wrap: bool,
     pub shrink: bool,
+    /// Degrees turned counter-clockwise, from `<alignment textRotation>`; left
+    /// out entirely for the cell that draws flat, which is nearly all of them.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub rotation: i16,
+    /// `textRotation="255"`: characters one below the next, each upright.
+    #[serde(skip_serializing_if = "is_false")]
+    pub stacked: bool,
     pub bold: bool,
     pub italic: bool,
     pub strike: bool,
@@ -159,6 +175,15 @@ pub struct CellStyle {
     pub border: Option<CellBorder>,
 }
 
+/// Serde leaves a field out when it still holds the value a flat cell has.
+fn is_zero(value: &i16) -> bool {
+    *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 // Hand-written so styles can be deduplicated in a map. `size_px` is a finite
 // measurement, so claiming `Eq` is sound here even though `f64` is only
 // `PartialEq`.
@@ -169,6 +194,8 @@ impl PartialEq for CellStyle {
             && self.indent == other.indent
             && self.wrap == other.wrap
             && self.shrink == other.shrink
+            && self.rotation == other.rotation
+            && self.stacked == other.stacked
             && self.bold == other.bold
             && self.italic == other.italic
             && self.strike == other.strike
@@ -190,6 +217,8 @@ impl std::hash::Hash for CellStyle {
         self.indent.hash(state);
         self.wrap.hash(state);
         self.shrink.hash(state);
+        self.rotation.hash(state);
+        self.stacked.hash(state);
         self.bold.hash(state);
         self.italic.hash(state);
         self.strike.hash(state);
@@ -209,6 +238,8 @@ impl CellStyle {
             && self.indent == 0
             && !self.wrap
             && !self.shrink
+            && self.rotation == 0
+            && !self.stacked
             && !self.bold
             && !self.italic
             && !self.strike
@@ -320,6 +351,8 @@ impl Styles {
             indent: entry.align.indent,
             wrap: entry.align.wrap,
             shrink: entry.align.shrink,
+            rotation: entry.align.rotation,
+            stacked: entry.align.stacked,
             bold: font.is_some_and(|font| font.bold),
             italic: font.is_some_and(|font| font.italic),
             strike: font.is_some_and(|font| font.strike),
@@ -1810,6 +1843,16 @@ fn read_alignment(element: &BytesStart, slot: &mut Align) {
     if let Some(value) = attr(element, b"shrinkToFit") {
         slot.shrink = value == "1" || value == "true";
     }
+    if let Some(value) = attr(element, b"textRotation").and_then(|v| v.parse::<i16>().ok()) {
+        match value {
+            // 255 is the stacked form, not an angle.
+            255 => slot.stacked = true,
+            // 91–180 is the clockwise half, written as the dial's -1…-90.
+            91..=180 => slot.rotation = 90 - value,
+            0..=90 => slot.rotation = value,
+            _ => {}
+        }
+    }
     if let Some(value) = attr(element, b"indent") {
         slot.indent = value.trim().parse::<u8>().unwrap_or(0);
     }
@@ -2339,6 +2382,44 @@ mod tests {
         assert_eq!(align.vertical, Some("middle"));
         assert_eq!(align.indent, 1);
         assert!(align.shrink);
+    }
+
+    /// `textRotation` carries two directions in one attribute: 0–90 turn one
+    /// way, and 91–180 are the angles the dialog calls −1 to −90, written as
+    /// 90 + degrees. 255 is not an angle at all — it stacks the characters one
+    /// under the next. Seventeen of the corpus's files use one of the three.
+    #[test]
+    fn reads_the_angles_text_rotation_stores() {
+        let read = |xml: &str| -> Align {
+            let mut reader = XmlReader::from_str(xml);
+            let mut buf = Vec::new();
+            let mut align = Align::default();
+            loop {
+                buf.clear();
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
+                        read_alignment(&element, &mut align);
+                        break;
+                    }
+                    Ok(Event::Eof) | Err(_) => break,
+                    _ => {}
+                }
+            }
+            align
+        };
+
+        assert_eq!(read(r#"<alignment textRotation="90"/>"#).rotation, 90);
+        assert_eq!(read(r#"<alignment textRotation="45"/>"#).rotation, 45);
+        // The dialog's -90, which is what a column heading read downwards is.
+        assert_eq!(read(r#"<alignment textRotation="180"/>"#).rotation, -90);
+        assert_eq!(read(r#"<alignment textRotation="135"/>"#).rotation, -45);
+
+        // 255 is the stacked form rather than an angle, and the cell that says
+        // nothing keeps both off.
+        let stacked = read(r#"<alignment textRotation="255"/>"#);
+        assert!(stacked.stacked);
+        assert_eq!(stacked.rotation, 0);
+        assert_eq!(read(r#"<alignment wrapText="1"/>"#).rotation, 0);
     }
 
     /// Center Across Selection has to reach the grid as itself. Collapsing it
