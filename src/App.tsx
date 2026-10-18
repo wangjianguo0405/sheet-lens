@@ -374,6 +374,37 @@ export default function App() {
     });
   }, []);
 
+  /**
+   * A sheet tab dragged along the strip. The order is the reader's for as long
+   * as the workbook is open — nothing is written back — and the sheet list
+   * beside the grid and every Ctrl+PageUp/PageDown step read this same list, so
+   * all three move together.
+   *
+   * The hidden sheets are not on the strip and so are not dragged past: each
+   * keeps the place it held, and the sheets that could be seen are re-laid
+   * around them.
+   */
+  const handleReorderSheets = useCallback(
+    (from: number, to: number) => {
+      if (!active) return;
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.info.path !== active.info.path) return tab;
+          const order = shownSheets(tab);
+          const [moved] = order.splice(from, 1);
+          if (!moved) return tab;
+          order.splice(to, 0, moved);
+          let next = 0;
+          const sheets = tab.info.sheets.map((sheet) =>
+            isHidden(tab, sheet) ? sheet : order[next++],
+          );
+          return { ...tab, info: { ...tab.info, sheets } };
+        }),
+      );
+    },
+    [active],
+  );
+
   const closeTab = useCallback(
     (path: string) => {
       void closeWorkbook(path).catch(() => {});
@@ -1016,6 +1047,7 @@ export default function App() {
                       setUnhideAt(at);
                       setUnhideOpen(true);
                     }}
+                    onReorder={handleReorderSheets}
                     hiddenCount={hiddenNames.length}
                     trailing={
                       <>

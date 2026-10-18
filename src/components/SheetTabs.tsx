@@ -43,9 +43,18 @@ interface SheetTabsProps {
   onUnhide: (at: UnhideAnchor | null) => void;
   /** How many sheets are off the strip, which is what Unhide has to offer. */
   hiddenCount: number;
+  /**
+   * A tab dragged to another place in the strip: both are indices into
+   * `sheets`, which is what is on the strip and not the workbook's own list —
+   * the hidden sheets are not there to be dragged past.
+   */
+  onReorder: (from: number, to: number) => void;
   /** Drawn at the right end of the row: the sheet's own scrollbar. */
   trailing?: ReactNode;
 }
+
+/** How far a press has to travel before it is a drag rather than a click. */
+const DRAG_SLOP = 4;
 
 /**
  * Where a menu stands, as the point a dialog replacing it hangs from: its left
@@ -101,6 +110,7 @@ export function SheetTabs({
   onHide,
   onUnhide,
   hiddenCount,
+  onReorder,
   trailing,
 }: SheetTabsProps) {
   const { t } = useTranslation();
@@ -110,6 +120,17 @@ export function SheetTabs({
   const moreRight = useRef<HTMLButtonElement>(null);
   /** Where the tabs are scrolled to, which decides what the arrows can do. */
   const [bar, setBar] = useState({ left: 0, view: 0, total: 0, more: 0 });
+  /** The tab a press is holding, where it started, and the gap it is over now. */
+  const drag = useRef<{
+    name: string;
+    from: number;
+    x: number;
+    moved: boolean;
+    gap: number | null;
+  } | null>(null);
+  const [dragged, setDragged] = useState<string | null>(null);
+  /** The gap a drop would land in, and where to draw the line that says so. */
+  const [drop, setDrop] = useState<{ gap: number; x: number } | null>(null);
 
   /**
    * The tab whose name is open over it. A sheet's name belongs to the file, so
@@ -267,6 +288,86 @@ export function SheetTabs({
     document.addEventListener("pointerdown", onDown, true);
     return () => document.removeEventListener("pointerdown", onDown, true);
   }, [editing]);
+
+  /**
+   * Where a drop would land: the gap between two tabs, and where that gap sits
+   * in the strip's own scroll coordinates so the marker can be drawn on it.
+   *
+   * A gap is *before* the first tab whose middle is still to the right of the
+   * pointer, which is the rule the strip uses anywhere a pointer picks a place.
+   * The last gap is past the final tab.
+   */
+  const gapAt = useCallback((clientX: number) => {
+    const el = strip.current;
+    if (!el) return null;
+    const tabs = [...el.querySelectorAll<HTMLElement>("[data-sheet]")];
+    let gap = tabs.length;
+    for (let i = 0; i < tabs.length; i += 1) {
+      const rect = tabs[i].getBoundingClientRect();
+      if (clientX < rect.left + rect.width / 2) {
+        gap = i;
+        break;
+      }
+    }
+    const box = el.getBoundingClientRect();
+    const edge = tabs[gap]
+      ? tabs[gap].getBoundingClientRect().left
+      : tabs.length > 0
+        ? tabs[tabs.length - 1].getBoundingClientRect().right
+        : box.left;
+    return { gap, x: edge - box.left + el.scrollLeft };
+  }, []);
+
+  /**
+   * A press on a tab, held until it moves, then carried to a gap and dropped
+   * there — Excel's own gesture for a sheet tab, which is the one place in a
+   * workbook where the strip's order is the reader's to set.
+   *
+   * The strip does not reorder under the pointer: the tabs stay where they are
+   * and a line marks the gap the sheet would land in, so the drop can be called
+   * off by letting go somewhere else. The order it leaves is the reader's while
+   * the workbook is open, and nothing is written back.
+   *
+   * The listeners live on the window, not on the tab: a drag leaves the tab
+   * immediately, and the pointer has to keep being read over its neighbours —
+   * which are the gaps it is choosing between.
+   */
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      const held = drag.current;
+      if (!held) return;
+      // A press is not a drag until it has travelled. A tab that took the
+      // dragged look for every click would flicker on the way to somewhere.
+      if (!held.moved) {
+        if (Math.abs(event.clientX - held.x) < DRAG_SLOP) return;
+        held.moved = true;
+        setDragged(held.name);
+      }
+      const gap = gapAt(event.clientX);
+      if (!gap) return;
+      held.gap = gap.gap;
+      setDrop(gap);
+    };
+    const onUp = () => {
+      const held = drag.current;
+      drag.current = null;
+      setDragged(null);
+      setDrop(null);
+      if (!held || !held.moved || held.gap === null) return;
+      // A gap counts the tabs as they stand, the dragged one included, so a
+      // drop to its own right lands one place short of it.
+      const to = held.gap > held.from ? held.gap - 1 : held.gap;
+      if (to !== held.from) onReorder(held.from, to);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [onReorder, gapAt]);
 
   /** The tabs' left edges in scroll coordinates, which the arrows step between. */
   const edges = useCallback(() => {
@@ -426,9 +527,22 @@ export function SheetTabs({
       <div
         ref={strip}
         onScroll={sync}
-        className="flex min-w-24 flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="relative flex min-w-24 flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        {sheets.map((sheet) => {
+        {/*
+          Where the tab being carried would land. The strip itself does not
+          move — Excel keeps the tabs where they are and draws a line at the gap
+          the sheet would drop into, which is what makes letting go somewhere
+          else the way to call the drag off.
+        */}
+        {drop && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-[#107C41]"
+            style={{ left: drop.x - 1 }}
+          />
+        )}
+        {sheets.map((sheet, index) => {
           const isActive = sheet.name === active;
           const title = t("sheets.tabTitle", {
             name: sheet.name,
@@ -439,7 +553,7 @@ export function SheetTabs({
           // drawn in and what the palette below rings.
           const color = colors.get(sheet.name) ?? sheet.tabColor ?? null;
           const className = cn(
-            "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition",
+            "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition select-none",
             isActive
               ? "border-b-[#107C41] bg-background font-medium text-foreground"
               : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
@@ -447,6 +561,7 @@ export function SheetTabs({
             // on hover sitting behind an inline fill that wins, so it
             // lightens instead — the same "this one is under the pointer".
             !isActive && color && "hover:brightness-110",
+            dragged === sheet.name && "cursor-grabbing opacity-70",
           );
           // A tab that has a colour is filled with it, name and all — Excel
           // paints the whole tab, not a strip along its foot. The current sheet
@@ -495,6 +610,16 @@ export function SheetTabs({
               key={sheet.name}
               type="button"
               data-sheet={sheet.name}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                drag.current = {
+                  name: sheet.name,
+                  from: index,
+                  x: event.clientX,
+                  moved: false,
+                  gap: null,
+                };
+              }}
               onClick={() => onSelect(sheet.name)}
               // The second press is the one that opens the name, and the first
               // has selected the sheet by then — which is what Excel does with a
