@@ -135,6 +135,9 @@ pub struct Text {
     pub wrap: bool,
     /// `lIns`, `tIns`, `rIns`, `bIns` in pixels.
     pub insets: [f64; 4],
+    /// The face the shape's own `defRPr` names, for runs that name none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -143,6 +146,9 @@ pub struct Run {
     pub text: String,
     pub bold: bool,
     pub italic: bool,
+    /// `<a:latin typeface>`: the face this run is written in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
 }
 
 /// The layout arithmetic a drawing needs to turn EMU offsets into cell offsets.
@@ -246,8 +252,14 @@ impl Grid {
 }
 
 /// Reads one sheet's drawing part into shapes.
-pub fn parse(xml: &str, grid: &Grid, theme: &[Option<String>], ln_widths: &[f64]) -> Vec<Shape> {
-    Parser::new(grid, theme, ln_widths).run(xml)
+pub fn parse(
+    xml: &str,
+    grid: &Grid,
+    theme: &[Option<String>],
+    ln_widths: &[f64],
+    fonts: &HashMap<String, String>,
+) -> Vec<Shape> {
+    Parser::new(grid, theme, ln_widths, fonts).run(xml)
 }
 
 /// An anchor corner as the file writes it: a cell plus an EMU offset into it.
@@ -338,14 +350,24 @@ struct Parser<'a> {
     text_wrap: Option<bool>,
     text_insets: Option<[f64; 4]>,
     text_color: Option<Fill>,
+    /// The face the shape's own `defRPr` names, which its runs inherit.
+    text_family: Option<String>,
+    /// The theme's own font scheme, which `+mn-ea` and its like index into.
+    theme_fonts: &'a HashMap<String, String>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(grid: &'a Grid, theme: &'a [Option<String>], ln_widths: &'a [f64]) -> Self {
+    fn new(
+        grid: &'a Grid,
+        theme: &'a [Option<String>],
+        ln_widths: &'a [f64],
+        fonts: &'a HashMap<String, String>,
+    ) -> Self {
         Self {
             grid,
             theme,
             ln_widths,
+            theme_fonts: fonts,
             out: Vec::new(),
             stack: Vec::new(),
             anchor: None,
@@ -369,12 +391,25 @@ impl<'a> Parser<'a> {
             text_wrap: None,
             text_insets: None,
             text_color: None,
+            text_family: None,
         }
     }
 
     /// The local name of the element enclosing the one being read.
     fn parent(&self) -> &[u8] {
         self.stack.last().map(Vec::as_slice).unwrap_or(b"")
+    }
+
+    /// The face a `typeface` names, which may be a slot in the theme's font
+    /// scheme rather than a font: `+mn-lt` is the minor scheme's latin face and
+    /// `+mj-ea` the major scheme's east asian one. A slot the theme leaves
+    /// empty has no face, and the run then draws in what it inherits.
+    fn font_name(&self, typeface: Option<String>) -> Option<String> {
+        let name = typeface?;
+        let Some(slot) = name.strip_prefix('+') else {
+            return Some(name);
+        };
+        self.theme_fonts.get(slot).cloned()
     }
 
     fn run(mut self, xml: &str) -> Vec<Shape> {
@@ -509,6 +544,7 @@ impl<'a> Parser<'a> {
                 self.text_wrap = None;
                 self.text_insets = None;
                 self.text_color = None;
+                self.text_family = None;
             }
             b"xfrm" if parent == b"spPr" || parent == b"txXfrm" => {
                 if let Some(shape) = self.current.as_mut() {
@@ -637,6 +673,17 @@ impl<'a> Parser<'a> {
                     self.text_size = num_attr(element, b"sz").map(|size| size / 100.0);
                 }
             }
+            // `<a:latin typeface>` names the run's font. In a `defRPr` there is
+            // no run open and it becomes the shape's own face, which is what
+            // the runs that name none inherit.
+            b"latin" => {
+                let face = self.font_name(attr(element, b"typeface"));
+                if let Some(run) = self.run.as_mut() {
+                    run.family = face;
+                } else if self.text_family.is_none() {
+                    self.text_family = face;
+                }
+            }
             b"blip" => {
                 if let Some(shape) = self.current.as_mut() {
                     // `r:embed` names the relationship to the image itself.
@@ -751,6 +798,7 @@ impl<'a> Parser<'a> {
                 insets: self
                     .text_insets
                     .unwrap_or(DEFAULT_INSETS_EMU.map(emu_to_px)),
+                family: self.text_family.take(),
                 paras,
             });
         }
@@ -1049,7 +1097,7 @@ mod tests {
     #[test]
     fn reads_a_plain_shape_with_an_explicit_fill() {
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a" xmlns:r="r"><xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>47625</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>95250</xdr:rowOff></xdr:from><xdr:to><xdr:col>2</xdr:col><xdr:colOff>19050</xdr:colOff><xdr:row>3</xdr:row><xdr:rowOff>28575</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:xfrm><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm><a:prstGeom prst="pentagon"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln><a:noFill/></a:ln></xdr:spPr><xdr:style><a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef></xdr:style><xdr:txBody><a:bodyPr anchor="ctr"/><a:p><a:pPr algn="ctr"/><a:r><a:rPr sz="1100" b="1"/><a:t>1</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
-        let shapes = parse(xml, &grid(), &[], &[]);
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
         assert_eq!(shapes.len(), 1);
         let shape = &shapes[0];
         assert_eq!(shape.kind, "pentagon");
@@ -1089,7 +1137,7 @@ mod tests {
         // The `effectRef` names a different accent on purpose: its colour tints a
         // shadow, and reading it as the fill would paint the shape the wrong one.
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="borderCallout2"><a:avLst><a:gd name="adj1" fmla="val 18750"/></a:avLst></a:prstGeom></xdr:spPr><xdr:style><a:lnRef idx="2"><a:schemeClr val="accent1"><a:shade val="50000"/></a:schemeClr></a:lnRef><a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent2"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></xdr:style><xdr:txBody><a:bodyPr/><a:p><a:r><a:rPr sz="800"/><a:t>hi</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
-        let shapes = parse(xml, &grid(), &theme, &ln_widths);
+        let shapes = parse(xml, &grid(), &theme, &ln_widths, &HashMap::new());
         let shape = &shapes[0];
         assert_eq!(shape.kind, "borderCallout2");
         // The file's own units, hundred-thousandths: the preset formulas divide.
@@ -1112,7 +1160,7 @@ mod tests {
         // 9525 EMU is one pixel: 20px into column 1 of a 100/200px pair lands at
         // 120px, and 80px wide ends 200px into column 1.
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:oneCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>190500</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="762000" cy="95250"/><xdr:pic><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic></xdr:oneCellAnchor></xdr:wsDr>"#;
-        let shapes = parse(xml, &grid(), &[], &[]);
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
         let shape = &shapes[0];
         assert_eq!(shape.kind, "picture");
         assert_eq!(shape.media.as_deref(), Some("rId1"));
@@ -1125,7 +1173,7 @@ mod tests {
     #[test]
     fn a_line_without_a_colour_takes_the_style_refs_black() {        let theme = vec![Some("#FFFFFF".to_owned()), Some("#0D0D0D".to_owned())];
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="leftBrace"><a:avLst/></a:prstGeom><a:ln w="19050"/></xdr:spPr><xdr:style><a:lnRef idx="1"><a:schemeClr val="dk1"/></a:lnRef><a:fillRef idx="0"><a:schemeClr val="dk1"/></a:fillRef></xdr:style></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
-        let shapes = parse(xml, &grid(), &theme, &[0.5]);
+        let shapes = parse(xml, &grid(), &theme, &[0.5], &HashMap::new());
         let shape = &shapes[0];
         assert_eq!(shape.kind, "leftBrace");
         // `fillRef idx="0"` is the style's way of saying "no fill".
@@ -1135,6 +1183,29 @@ mod tests {
         assert_eq!(line.width, 2.0);
     }
 
+    /// `<a:latin typeface>` names the face a shape's text is written in — the
+    /// design documents' callouts ask for メイリオ and ＭＳ ゴシック, and with
+    /// nothing reading it they were drawn in whatever the page used. A
+    /// `+mn-ea`-style name is a slot in the theme's font scheme rather than a
+    /// font, which is why the parser is handed that scheme.
+    #[test]
+    fn reads_the_face_a_run_is_written_in() {
+        let fonts: HashMap<String, String> = [
+            ("mn-lt".to_owned(), "Calibri".to_owned()),
+            ("mn-ea".to_owned(), "メイリオ".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1100"><a:latin typeface="+mn-lt"/></a:defRPr></a:pPr><a:r><a:rPr sz="1100"><a:latin typeface="ＭＳ ゴシック"/></a:rPr><a:t>a</a:t></a:r><a:r><a:rPr sz="1100"><a:latin typeface="+mn-ea"/></a:rPr><a:t>b</a:t></a:r><a:r><a:rPr sz="1100"/><a:t>c</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &fonts);
+        let text = shapes[0].text.as_ref().expect("the shape has text");
+        assert_eq!(text.family.as_deref(), Some("Calibri"), "the paragraph default");
+        let runs = &text.paras[0];
+        assert_eq!(runs[0].family.as_deref(), Some("ＭＳ ゴシック"));
+        assert_eq!(runs[1].family.as_deref(), Some("メイリオ"), "a theme slot");
+        assert_eq!(runs[2].family, None, "a run that names none inherits");
+    }
+
     /// Excel writes a shape that only *looks* unrotated as a half turn plus both
     /// flips. Reading either half alone turns the shape — and its label — the
     /// wrong way round, which is what made every callout in the design documents
@@ -1142,7 +1213,7 @@ mod tests {
     #[test]
     fn reads_a_half_turn_and_its_cancelling_flips() {
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:xfrm rot="10800000" flipH="1" flipV="1"><a:off x="0" y="0"/><a:ext cx="1" cy="1"/></a:xfrm><a:prstGeom prst="borderCallout2"><a:avLst/></a:prstGeom></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
-        let shapes = parse(xml, &grid(), &[], &[]);
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
         let shape = &shapes[0];
         assert_eq!(shape.rot, 180.0);
         assert!(shape.flip_h, "flipH");
@@ -1162,7 +1233,7 @@ mod tests {
             Some("#4472C4".to_owned()),
         ];
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:schemeClr val="accent1"><a:tint val="50000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="accent1"/></a:gs></a:gsLst><a:lin ang="16200000" scaled="1"/></a:gradFill></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
-        let shapes = parse(xml, &grid(), &theme, &[]);
+        let shapes = parse(xml, &grid(), &theme, &[], &HashMap::new());
         let fill = shapes[0].fill.as_ref().expect("a gradient fill");
         assert_eq!(fill.stops.len(), 2);
         assert_eq!(fill.stops[0].pos, 0.0);

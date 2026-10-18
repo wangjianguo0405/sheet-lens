@@ -201,6 +201,11 @@ export interface ShapeRun {
   text: string;
   bold: boolean;
   italic: boolean;
+  /**
+   * The face the run's own `<a:latin typeface>` names, theme slots already
+   * resolved. Absent when it names none and inherits the shape's.
+   */
+  family?: string | null;
 }
 
 export interface ShapeText {
@@ -214,6 +219,8 @@ export interface ShapeText {
   wrap: boolean;
   /** `lIns`, `tIns`, `rIns`, `bIns` in pixels. */
   insets: [number, number, number, number];
+  /** The face the shape's own `defRPr` names, which its runs inherit. */
+  family?: string | null;
 }
 
 /**

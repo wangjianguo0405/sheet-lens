@@ -647,6 +647,9 @@ pub struct Cache {
     theme: Vec<Option<String>>,
     /// The theme's own line widths, which a shape's `lnRef idx` selects from.
     ln_widths: Vec<f64>,
+    /// The faces the theme's font scheme names, which a shape's
+    /// `a:latin typeface="+mn-ea"` and its like point at.
+    theme_fonts: HashMap<String, String>,
     styles: Styles,
     /// Shared strings split into coloured runs, keyed by the text they spell
     /// out. Nearly every string in every sheet is shared, so this is read once
@@ -676,6 +679,7 @@ impl Cache {
         let mut zip = ZipArchive::new(BufReader::new(file)).map_err(|e| e.to_string())?;
         self.theme = theme_slots(&read_theme(&mut zip));
         self.ln_widths = read_line_widths(&mut zip);
+        self.theme_fonts = read_theme_fonts(&mut zip);
         self.styles = read_styles(&mut zip, &self.theme);
         // Absent in a workbook that writes its strings inline, which is why
         // this is a lookup on failure rather than an error.
@@ -847,7 +851,7 @@ fn read_drawings<R: Read + Seek>(
         &layout.row_heights_px,
         layout.default_row_height_px,
     );
-    let mut shapes = drawing::parse(&xml, &grid, &cache.theme, &cache.ln_widths);
+    let mut shapes = drawing::parse(&xml, &grid, &cache.theme, &cache.ln_widths, &cache.theme_fonts);
 
     // A picture names its image by relationship id; resolve them all in one read.
     let media = part_rels(zip, &drawing_part);
@@ -1629,6 +1633,68 @@ fn read_theme<R: Read + Seek>(zip: &mut ZipArchive<R>) -> HashMap<String, String
         return HashMap::new();
     };
     parse_theme(&xml)
+}
+
+/// The faces a theme's font scheme names, keyed the way a drawing refers to
+/// them: `mn-lt`, `mn-ea`, `mj-lt`, `mj-ea`.
+///
+/// An east asian slot left empty means "whatever the latin one is" — which is
+/// how a stock Office theme reads, since it says nothing about Japanese at all
+/// — so that fallback is filled in here rather than left for every reader.
+fn read_theme_fonts<R: Read + Seek>(zip: &mut ZipArchive<R>) -> HashMap<String, String> {
+    let mut fonts = HashMap::new();
+    let Ok(xml) = read_entry(zip, "xl/theme/theme1.xml") else {
+        return fonts;
+    };
+    let mut reader = XmlReader::from_str(&xml);
+    let mut buf = Vec::new();
+    // Which of the two schemes is open — `mj` or `mn` — and the latin face it
+    // named, which an empty east asian slot falls back to.
+    let mut scheme: Option<&str> = None;
+    let mut latin: Option<String> = None;
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
+                match element.local_name().as_ref() {
+                    b"majorFont" => {
+                        scheme = Some("mj");
+                        latin = None;
+                    }
+                    b"minorFont" => {
+                        scheme = Some("mn");
+                        latin = None;
+                    }
+                    // Only the scheme's own face counts: the per-script ones
+                    // that follow carry their face as an attribute.
+                    b"latin" if scheme.is_some() && latin.is_none() => {
+                        if let Some(face) = attr(&element, b"typeface").filter(|f| !f.is_empty()) {
+                            fonts.insert(format!("{}-lt", scheme.unwrap_or_default()), face.clone());
+                            latin = Some(face);
+                        }
+                    }
+                    b"ea" if scheme.is_some() => {
+                        if let Some(face) = attr(&element, b"typeface").filter(|f| !f.is_empty()) {
+                            fonts.insert(format!("{}-ea", scheme.unwrap_or_default()), face);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(element))
+                if matches!(element.local_name().as_ref(), b"majorFont" | b"minorFont") =>
+            {
+                if let (Some(scheme), Some(latin)) = (scheme, latin.take()) {
+                    fonts.entry(format!("{scheme}-ea")).or_insert(latin);
+                }
+                scheme = None;
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    fonts
 }
 
 /// The theme's `lnStyleLst` widths, in pixels, which a shape's `lnRef idx="n"`
