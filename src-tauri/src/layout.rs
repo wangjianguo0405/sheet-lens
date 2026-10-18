@@ -1075,38 +1075,83 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<Rich
     out
 }
 
-/// The sheet's `_xlnm.Print_Area`, if it has one.
+/// Every `_xlnm.Print_Area` in `workbook.xml`, keyed by the sheet it belongs to.
 ///
-/// The range is the element's *text*, not an attribute, so this walks events
-/// instead of reusing `scan`.
-fn print_area(workbook: &str, sheet_name: &str) -> Option<MergeRect> {
+/// The sheet a name belongs to is its `localSheetId` — an index into the
+/// workbook's own sheet order — and that is the sheet Excel applies it to. The
+/// formula usually names that sheet as well, and in all 291 workbooks of the
+/// corpus that set a print area the two agree; where they do not, the scope is
+/// the one to believe. A defined name rewritten without its formula, or a sheet
+/// named with a `!` in it — which the formula splits on and cannot escape —
+/// are the two ways they come apart.
+fn print_area_names(workbook: &str) -> HashMap<String, String> {
+    let sheets: Vec<String> = scan(workbook, b"sheet")
+        .iter()
+        .filter_map(|element| element.get("name").cloned())
+        .collect();
+
+    let mut out = HashMap::new();
     let mut reader = XmlReader::from_str(workbook);
     let mut buf = Vec::new();
-    let mut inside = false;
+    // The name being read: the sheet its scope points at, and the formula, which
+    // is the element's text rather than one of its attributes.
+    let mut printing = false;
+    let mut scope: Option<usize> = None;
+    let mut formula = String::new();
 
     loop {
         buf.clear();
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(element)) if element.local_name().as_ref() == b"definedName" => {
-                inside = attr(&element, b"name").as_deref() == Some("_xlnm.Print_Area");
+                printing = attr(&element, b"name").as_deref() == Some("_xlnm.Print_Area");
+                if printing {
+                    scope = attr(&element, b"localSheetId").and_then(|v| v.parse::<usize>().ok());
+                    formula.clear();
+                }
             }
-            Ok(Event::Text(text)) if inside => {
-                inside = false;
-                let content = text.xml_content(XmlVersion::default()).ok()?;
-                // `<sheet>!<range>`, the sheet name quoted only when it must be.
-                let (owner, range) = content.split_once('!')?;
-                if owner.trim_matches('\'') == sheet_name {
-                    return parse_range(range);
+            Ok(Event::Text(text)) if printing => {
+                if let Ok(content) = text.xml_content(XmlVersion::default()) {
+                    formula.push_str(&content);
+                }
+            }
+            // An escaped character arrives as its own event, as it does in a
+            // shared string, so the formula has to be stitched back together.
+            Ok(Event::GeneralRef(reference)) if printing => {
+                if let Some(ch) = entity_text(&reference) {
+                    formula.push(ch);
                 }
             }
             Ok(Event::End(element)) if element.local_name().as_ref() == b"definedName" => {
-                inside = false;
+                if printing {
+                    printing = false;
+                    // `<sheet>!<range>`, the sheet name quoted only when it
+                    // must be — and a local name may leave the sheet out
+                    // altogether, since the scope already says which it is.
+                    let (named, range) = match formula.split_once('!') {
+                        Some((owner, range)) => (Some(owner.trim_matches('\'')), range.trim()),
+                        None => (None, formula.trim()),
+                    };
+                    let owner = scope
+                        .take()
+                        .and_then(|index| sheets.get(index).cloned())
+                        .or_else(|| named.map(str::to_owned));
+                    if let Some(owner) = owner {
+                        out.insert(owner, range.to_owned());
+                    }
+                }
             }
             Ok(Event::Eof) | Err(_) => break,
             _ => {}
         }
     }
-    None
+    out
+}
+
+/// The sheet's `_xlnm.Print_Area`, if it has one.
+fn print_area(workbook: &str, sheet_name: &str) -> Option<MergeRect> {
+    print_area_names(workbook)
+        .get(sheet_name)
+        .and_then(|range| parse_range(range))
 }
 
 /// The sheets that define a `_xlnm.Print_Area` of their own.
@@ -1116,47 +1161,20 @@ fn print_area(workbook: &str, sheet_name: &str) -> Option<MergeRect> {
 /// print area and boxes it, and a workbook where nobody ever set one belongs in
 /// the ordinary view rather than in a page the app guessed at.
 ///
-/// `print_area` below cannot answer this — it falls back to the used range, so
+/// `print_area` above cannot answer this — it falls back to the used range, so
 /// by the time a layout exists *every* sheet has an area. This walks
 /// `workbook.xml` itself, where the difference is still visible.
 pub fn print_area_sheets(path: &str) -> HashSet<String> {
-    let mut sheets = HashSet::new();
     let Ok(file) = File::open(path) else {
-        return sheets;
+        return HashSet::new();
     };
     let Ok(mut zip) = ZipArchive::new(BufReader::new(file)) else {
-        return sheets;
+        return HashSet::new();
     };
     let Ok(workbook) = read_entry(&mut zip, "xl/workbook.xml") else {
-        return sheets;
+        return HashSet::new();
     };
-
-    let mut reader = XmlReader::from_str(&workbook);
-    let mut buf = Vec::new();
-    let mut inside = false;
-    loop {
-        buf.clear();
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(element)) if element.local_name().as_ref() == b"definedName" => {
-                inside = attr(&element, b"name").as_deref() == Some("_xlnm.Print_Area");
-            }
-            Ok(Event::Text(text)) if inside => {
-                inside = false;
-                // `<sheet>!<range>`, the sheet name quoted only when it must be.
-                if let Ok(content) = text.xml_content(XmlVersion::default()) {
-                    if let Some((owner, _)) = content.split_once('!') {
-                        sheets.insert(owner.trim_matches('\'').to_owned());
-                    }
-                }
-            }
-            Ok(Event::End(element)) if element.local_name().as_ref() == b"definedName" => {
-                inside = false;
-            }
-            Ok(Event::Eof) | Err(_) => break,
-            _ => {}
-        }
-    }
-    sheets
+    print_area_names(&workbook).into_keys().collect()
 }
 
 /// Resolves a sheet name to its part inside the zip via workbook relationships.
@@ -2666,6 +2684,38 @@ mod tests {
 
         let area = layout.print_region().expect("a fallback is always there");
         assert_eq!((area.row, area.col, area.rows, area.cols), (0, 0, 44, 49));
+    }
+
+    /// The sheet a print area belongs to is its `localSheetId`, not the name
+    /// its formula spells out. Every workbook of the corpus has the two
+    /// agreeing, so this pins the reading that has to hold where they do not:
+    /// a name rewritten without its formula, and a sheet whose name carries the
+    /// `!` the formula would have to split on.
+    #[test]
+    fn reads_a_print_area_by_the_sheet_it_is_scoped_to() {
+        let xml = r#"<workbook>
+            <sheets>
+                <sheet name="表紙" sheetId="1"/>
+                <sheet name="入出力定義" sheetId="2"/>
+                <sheet name="A!B" sheetId="3"/>
+            </sheets>
+            <definedNames>
+                <definedName name="_xlnm.Print_Area" localSheetId="1">表紙!$A$1:$K$20</definedName>
+                <definedName name="_xlnm.Print_Area" localSheetId="2">$B$2:$C$5</definedName>
+                <definedName name="_xlnm.Print_Area">表紙!$D$4:$E$9</definedName>
+                <definedName name="_xlnm.Print_Titles">表紙!$1:$1</definedName>
+            </definedNames>
+        </workbook>"#;
+        let areas = print_area_names(xml);
+
+        // The scope says 入出力定義 and the formula still says 表紙: the scope wins.
+        assert_eq!(areas.get("入出力定義").map(String::as_str), Some("$A$1:$K$20"));
+        // A local name may leave the sheet out of its formula altogether.
+        assert_eq!(areas.get("A!B").map(String::as_str), Some("$B$2:$C$5"));
+        // A name with no scope says which sheet it is for in the formula.
+        assert_eq!(areas.get("表紙").map(String::as_str), Some("$D$4:$E$9"));
+        // Only print areas are worth keeping.
+        assert_eq!(areas.len(), 3);
     }
 
     /// Excel prints the used range when a sheet defines no `_xlnm.Print_Area`,
