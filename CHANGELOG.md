@@ -12,6 +12,26 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.18] - 2026-10-19
+
+Text can turn in its cell and a sheet tab can be dragged to a new place; the shapes a design document floats above the cells are drawn the way Excel draws them — grouped, cropped, in their own font and colour.
+
+### Added
+
+- Text turned in a cell is drawn turned: a heading written down its column (90° or 180°, the encoding Excel's orientation dialog writes) and characters stacked one under the next (255). Where it sits was measured from Excel's own PDFs; cells that are not turned are untouched
+- A sheet tab can be dragged to another place. The tabs stay where they are while one is carried, a line marks the gap it will drop into, and letting go on its own gap calls the drag off. The order lasts while the workbook is open and is not written back
+- A shape inside a group is drawn where its group puts it, instead of every child being stacked in the group's box. Groups nest, and a child that says `grpFill` takes the fill its group declares — the grey behind every dropdown arrow in the design documents
+- A picture is drawn through its crop: `srcRect` cuts a fraction off each side before Excel stretches the rest into the anchor
+- A shape's text is drawn in the font the file names, including the theme's own slots (`+mn-lt`, `+mj-ea`), which are resolved from `theme1.xml`
+
+### Improved
+
+- A print area follows the sheet its defined name is scoped to, not the sheet spelled inside the formula — the right answer where a sheet was renamed without its name, or when its name contains a `!`
+
+### Fixed
+
+- Text inside a shape is drawn at the size and colour the file gives the run itself. The shape's `lstStyle` was winning over the run because it came first in the file, so the design documents' buttons were drawn at 12pt white instead of 8pt dark grey
+
 ## [0.3.17] - 2026-10-16
 
 A workbook's own hidden sheets are respected, and the file tabs grow the two things a full strip needs: a list of what is open, and a way to read a file again.
