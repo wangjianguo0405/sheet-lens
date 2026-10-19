@@ -12,6 +12,12 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.21] - 2026-10-19
+
+### Fixed
+
+- A heading centred across a run of columns is drawn as one block again. Excel's Center Across Selection drops the borders between the cells it spans; the grid centred the text but still drew every cell's own vertical rule, so a dashboard's title and heading rows came out as a row of little boxes. Only the run's outer edges are drawn now, and its horizontal rules stay continuous
+
 ## [0.3.20] - 2026-10-19
 
 ### Fixed
