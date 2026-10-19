@@ -522,11 +522,20 @@ pub struct SheetLayout {
     /// used to read it in. Not part of what the grid sees.
     #[serde(skip)]
     pub drawing_rel: Option<String>,
-    /// Cells whose text is written as several runs with colours of their own,
-    /// keyed by the string they spell out — which is what a cell holds, so the
-    /// renderer can find a cell's runs without the sheet recording anything per
-    /// cell. Sparse by nature: only strings that really carry a colour appear.
-    pub rich_text: HashMap<String, Vec<RichRun>>,
+    /// Cells whose text is written as several runs, each with its own colour or
+    /// font. Per cell, not per string: a file may spell the same text twice with
+    /// different formatting — a breadcrumb whose current page is red — and the
+    /// text alone cannot tell the two apart. Sparse by nature.
+    pub rich_cells: Vec<RichCell>,
+}
+
+/// One cell's runs. The position is the cell's own, because two cells spelling
+/// the same text may carry different runs.
+#[derive(Serialize, Clone)]
+pub struct RichCell {
+    pub row: u32,
+    pub col: u32,
+    pub runs: Vec<RichRun>,
 }
 
 /// One run of a cell's rich text.
@@ -622,7 +631,7 @@ impl SheetLayout {
             col_styles: Vec::new(),
             drawings: Vec::new(),
             drawing_rel: None,
-            rich_text: HashMap::new(),
+            rich_cells: Vec::new(),
         }
     }
 }
@@ -692,10 +701,10 @@ pub struct Cache {
     /// `a:latin typeface="+mn-ea"` and its like point at.
     theme_fonts: HashMap<String, String>,
     styles: Styles,
-    /// Shared strings split into coloured runs, keyed by the text they spell
-    /// out. Nearly every string in every sheet is shared, so this is read once
-    /// per workbook rather than once per sheet.
-    rich_strings: HashMap<String, Vec<RichRun>>,
+    /// Shared strings split into coloured runs, one slot per `<si>` in the
+    /// order the sheet's cells index them. Nearly every string in every sheet is
+    /// shared, so this is read once per workbook rather than once per sheet.
+    rich_strings: Vec<Option<Vec<RichRun>>>,
     /// The same table in the order the sheet's cells index it. Only a formula
     /// being evaluated needs to look a string up by number — everything drawn
     /// carries its text already.
@@ -840,15 +849,12 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     // does the cell three columns over hold — and only the walk itself can stay
     // local to one row.
     let sheet_xml = read_entry(&mut zip, &part)?;
-    let mut layout = parse_sheet(sheet_xml.as_bytes(), &cache.styles)?;
+    let mut layout = parse_sheet(sheet_xml.as_bytes(), &cache.styles, &cache.rich_strings)?;
     // A sheet with no `_xlnm.Print_Area` still gets shaded by Excel, which falls
     // back to the range it would print. Leaving this `None` painted those sheets
     // white to the edge while every other sheet in the same workbook greyed out
     // past its last cell.
     layout.print_area = print_area(&workbook, sheet).or_else(|| layout.print_region());
-    // Workbook-wide, so every sheet carries the same table and the renderer
-    // simply looks up whatever text it is about to draw.
-    layout.rich_text = cache.rich_strings.clone();
     read_drawings(&mut zip, cache, &part, &mut layout);
     // Last, so that the extent a rule is clamped to is the finished one.
     crate::cond::apply(&sheet_xml, cache, &mut layout);
@@ -1062,19 +1068,21 @@ fn read_run_font(element: &BytesStart, font: Option<&mut RichFont>) {
     }
 }
 
-/// The shared strings that are split into runs, keyed by the text they spell out.
+/// The shared strings that are split into runs, one slot per `<si>` in the
+/// order the sheet's cells index them.
 ///
 /// A cell shows the concatenation of its runs either way, so the text is nothing
 /// new; what a run adds is formatting for part of it — how one word inside a
-/// sentence comes out red, or bold, or underlined. Keying by the whole string is
-/// what lets the renderer find a cell's runs without the sheet having to record
-/// anything per cell, and it costs nothing: the runs already spell the key out.
+/// sentence comes out red, or bold, or underlined. The slots line up with
+/// `shared_strings`, which is what lets a cell's `<v>` index find its own runs:
+/// two cells can spell the same text with different runs, so the text alone
+/// cannot identify them.
 ///
 /// Only strings whose runs really say something are kept. A run that merely
 /// restates the cell's own colour draws exactly like the plain text, and keeping
 /// those would put most of the workbook in the table.
-fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<RichRun>> {
-    let mut out = HashMap::new();
+fn rich_strings(xml: &str, theme: &[Option<String>]) -> Vec<Option<Vec<RichRun>>> {
+    let mut out: Vec<Option<Vec<RichRun>>> = Vec::new();
     let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
     let mut runs: Option<Vec<RichRun>> = None;
@@ -1087,7 +1095,10 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<Rich
         buf.clear();
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(element)) => match element.local_name().as_ref() {
-                b"si" => runs = Some(Vec::new()),
+                b"si" => {
+                    runs = Some(Vec::new());
+                    out.push(None);
+                }
                 b"r" => {
                     run = Some(RichRun {
                         text: String::new(),
@@ -1104,6 +1115,7 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<Rich
             // which never get a start/end pair — but `<b></b>` is the same
             // property spelled the long way, hence both arms.
             Ok(Event::Empty(element)) => match element.local_name().as_ref() {
+                b"si" => out.push(None),
                 b"color" => set_run_color(&element, run.as_mut(), theme),
                 _ => read_run_font(&element, font.as_mut()),
             },
@@ -1139,8 +1151,9 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> HashMap<String, Vec<Rich
                 b"si" => {
                     if let Some(list) = runs.take() {
                         if list.iter().any(|run| run.color.is_some() || run.font.is_some()) {
-                            let text: String = list.iter().map(|run| run.text.as_str()).collect();
-                            out.insert(text, list);
+                            if let Some(slot) = out.last_mut() {
+                                *slot = Some(list);
+                            }
                         }
                     }
                 }
@@ -1987,7 +2000,11 @@ fn collect_runs(layout: &mut SheetLayout, row: u32, cells: &mut Vec<(u32, u32)>)
     cells.clear();
 }
 
-fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, String> {
+fn parse_sheet<R: BufRead>(
+    reader: R,
+    styles: &Styles,
+    rich: &[Option<Vec<RichRun>>],
+) -> Result<SheetLayout, String> {
     let mut xml = XmlReader::from_reader(reader);
     let mut layout = SheetLayout::empty();
     let mut buf = Vec::new();
@@ -2022,6 +2039,12 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
         .and_then(|font| font.size_pt)
         .map(points_to_font_px)
         .unwrap_or_else(|| points_to_font_px(STOCK_FONT_PT));
+
+    // The cell whose shared string is streaming past, and whether its `<v>` is
+    // the thing the text now belongs to. A rich-text cell is identified by the
+    // shared-string index in that value, not by the text it spells out.
+    let mut rich_cell: Option<(u32, u32)> = None;
+    let mut in_cell_value = false;
 
     // The rule being read, and which of its `<formula1>`/`<formula2>` the text
     // now belongs to — the formulas are element text, not attributes.
@@ -2157,6 +2180,9 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         }
                         extent_rows = extent_rows.max(row);
                     }
+                    // A cell's value: for a shared string it is the index into
+                    // the table, which is what identifies the runs.
+                    b"v" => in_cell_value = rich_cell.is_some(),
                     b"c" => {
                         // Cell display values come from calamine; this pass only
                         // recovers the style, and only when it says something.
@@ -2165,6 +2191,12 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                         else {
                             continue;
                         };
+                        // A shared-string cell names its string by number; the
+                        // runs are looked up by that number when `<v>` arrives,
+                        // because two cells may spell the same text with
+                        // different runs.
+                        rich_cell = (attr(&element, b"t").as_deref() == Some("s"))
+                            .then_some((row, col));
                         let Some(index) = attr(&element, b"s")
                             .and_then(|v| v.parse::<usize>().ok())
                         else {
@@ -2267,6 +2299,8 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
             Ok(Event::End(element)) => {
                 match element.local_name().as_ref() {
                     b"filterColumn" => filter_col = None,
+                    b"v" => in_cell_value = false,
+                    b"c" => rich_cell = None,
                     b"formula1" | b"formula2" => formula_slot = None,
                     b"dataValidation" => {
                         if let Some(rule) = validation.take() {
@@ -2278,6 +2312,25 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                     }
                     _ => {}
                 }
+            }
+            Ok(Event::Text(text)) if in_cell_value => {
+                if let (Some((row, col)), Ok(value)) =
+                    (rich_cell, text.xml_content(XmlVersion::default()))
+                {
+                    if let Some(Some(runs)) = value
+                        .trim()
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|index| rich.get(index))
+                    {
+                        layout.rich_cells.push(RichCell {
+                            row,
+                            col,
+                            runs: runs.clone(),
+                        });
+                    }
+                }
+                in_cell_value = false;
             }
             Ok(Event::Text(text)) if formula_slot.is_some() => {
                 if let (Some(rule), Ok(content)) =
@@ -2672,7 +2725,7 @@ mod tests {
         // Excel's `showDropDown` is inverted: writing it hides the in-cell
         // dropdown, which is what `InCellDropdown = False` produces.
         let xml = br#"<worksheet><dataValidations><dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" showDropDown="1" promptTitle="Pick" prompt="Choose" sqref="B1 C3:D4"><formula1>"a,b"</formula1></dataValidation></dataValidations><sheetData/></worksheet>"#;
-        let layout = parse_sheet(&xml[..], &cache.styles).expect("layout");
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
         assert_eq!(layout.validations.len(), 1);
         let rule = &layout.validations[0];
         assert_eq!(rule.kind, "list");
@@ -2691,18 +2744,18 @@ mod tests {
     fn reads_the_rows_and_columns_a_sheet_view_freezes() {
         let cache = Cache::default();
         let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="1" ySplit="2" topLeftCell="B3" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetData/></worksheet>"#;
-        let layout = parse_sheet(&xml[..], &cache.styles).expect("layout");
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
         assert_eq!((layout.frozen_rows, layout.frozen_cols), (2, 1));
 
         // A writer that leaves the splits out still names the scrolling
         // region's first cell; the count is what that cell's position implies.
         let xml = br#"<worksheet><sheetViews><sheetView><pane topLeftCell="B3" state="frozen"/></sheetView></sheetViews><sheetData/></worksheet>"#;
-        let layout = parse_sheet(&xml[..], &cache.styles).expect("layout");
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
         assert_eq!((layout.frozen_rows, layout.frozen_cols), (2, 1));
 
         // A split pane is not a frozen one: nothing is held still.
         let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="1" ySplit="2" state="split"/></sheetView></sheetViews><sheetData/></worksheet>"#;
-        let layout = parse_sheet(&xml[..], &cache.styles).expect("layout");
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
         assert_eq!((layout.frozen_rows, layout.frozen_cols), (0, 0));
     }
 
@@ -3035,21 +3088,23 @@ mod tests {
         assert!(area.rows > 1 && area.cols > 1);
     }
 
-    /// Only the strings that colour part of themselves are kept, they are keyed
-    /// by the text they spell out — which is what the cell holds, so the renderer
-    /// can find a cell's runs without the sheet recording anything — and an
-    /// escaped character inside one is put back, since the key has to match the
-    /// text the cell reports.
+    /// Only the strings that colour part of themselves keep their runs, the
+    /// slots line up with the order the cells index them, and an escaped
+    /// character inside one is put back so the runs spell the text the cell
+    /// reports.
     #[test]
     fn keeps_the_runs_of_a_string_that_colours_a_word() {
         let xml = r#"<sst><si><t>plain</t></si><si><r><rPr><sz val="9"/></rPr><t>a</t></r><r><rPr><color rgb="FFFF0000"/></rPr><t>red</t></r><r><t>w&lt;&gt;ord</t></r></si></sst>"#;
         let runs = rich_strings(xml, &[]);
-        assert_eq!(runs.len(), 1, "a string with no colour is not worth a table entry");
-        let list = runs.get("aredw<>ord").expect("keyed by the whole text");
+        assert_eq!(runs.len(), 2, "one slot per <si>, whether or not it is kept");
+        assert!(runs[0].is_none(), "a string with no colour is not worth a table entry");
+        let list = runs[1].as_ref().expect("the coloured string keeps its runs");
         assert_eq!(list.len(), 3);
         assert_eq!(list[0].color, None);
         assert_eq!(list[1].color.as_deref(), Some("#FF0000"));
         assert_eq!(list[2].color, None);
+        let text: String = list.iter().map(|run| run.text.as_str()).collect();
+        assert_eq!(text, "aredw<>ord");
     }
 
     /// A run's own `<rPr>` is read, and a string distinguished only by its font
@@ -3065,9 +3120,13 @@ mod tests {
             <si><r><rPr><b val="0"/><u val="none"/></rPr><t>d</t></r></si>
         </sst>"#;
         let runs = rich_strings(xml, &[]);
-        assert_eq!(runs.len(), 3, "a string with no formatting is not worth a table entry");
+        assert_eq!(
+            runs.iter().flatten().count(),
+            3,
+            "a string with no formatting is not worth a table entry"
+        );
 
-        let loaded = runs.get("ab").expect("keyed by the whole text");
+        let loaded = runs[1].as_ref().expect("the formatted string keeps its runs");
         assert_eq!(loaded[0].font, None, "a run with no rPr takes the cell's font");
         let font = loaded[1].font.as_ref().expect("the second run names a font");
         assert_eq!(font.family.as_deref(), Some("MS Gothic"));
@@ -3079,12 +3138,18 @@ mod tests {
 
         // An rPr that turns both off has to survive as a decision of its own:
         // dropped, the run would inherit a bold, underlined cell's formatting.
-        let off = runs.get("d").and_then(|list| list[0].font.clone()).expect("kept");
+        let off = runs[3]
+            .as_ref()
+            .and_then(|list| list[0].font.clone())
+            .expect("kept");
         assert_eq!(off.bold, Some(false));
         assert_eq!(off.underline, Some("none"));
 
         assert_eq!(
-            runs.get("c").and_then(|list| list[0].font.as_ref()).and_then(|f| f.underline),
+            runs[2]
+                .as_ref()
+                .and_then(|list| list[0].font.as_ref())
+                .and_then(|f| f.underline),
             Some("double")
         );
     }
@@ -3151,19 +3216,41 @@ mod tests {
             let Ok(layout) = read_cached(&mut cache, &path, &sheet.name) else {
                 continue;
             };
-            if layout.rich_text.is_empty() {
+            if layout.rich_cells.is_empty() {
                 continue;
             }
-            println!("--- {} : {} rich strings", sheet.name, layout.rich_text.len());
-            for (text, runs) in layout.rich_text.iter().take(5) {
-                let head: String = text.chars().take(28).collect();
+            println!("--- {} : {} rich cells", sheet.name, layout.rich_cells.len());
+
+            let cells = book
+                .cells(&sheet.name, 0, 0, sheet.rows.min(400), sheet.cols.min(64))
+                .unwrap_or_default();
+            let mut landed = 0;
+            for cell in layout.rich_cells.iter().take(5) {
+                let text = cells
+                    .get(cell.row as usize)
+                    .and_then(|row| row.get(cell.col as usize))
+                    .map(|value| value.text.as_str())
+                    .unwrap_or("");
+                if !text.is_empty() {
+                    landed += 1;
+                }
+                let joined: String = cell.runs.iter().map(|run| run.text.as_str()).collect();
                 println!(
-                    "    {:?}… — {} runs, {} chars",
-                    head,
-                    runs.len(),
-                    text.chars().count()
+                    "    ({}, {}) {:?}… — {} runs, cell text {:?}…",
+                    cell.row + 1,
+                    cell.col + 1,
+                    joined.chars().take(28).collect::<String>(),
+                    cell.runs.len(),
+                    text.chars().take(28).collect::<String>()
                 );
-                for run in runs {
+                if joined != text {
+                    println!(
+                        "      runs and text differ: {} vs {} chars",
+                        joined.chars().count(),
+                        text.chars().count()
+                    );
+                }
+                for run in &cell.runs {
                     let what: Vec<&str> = [
                         run.font.as_ref().and_then(|f| f.family.as_deref()),
                         run.font.as_ref().and_then(|f| f.underline),
@@ -3182,57 +3269,10 @@ mod tests {
                     );
                 }
             }
-
-            let cells = book
-                .cells(&sheet.name, 0, 0, sheet.rows.min(400), sheet.cols.min(64))
-                .unwrap_or_default();
-            let matched = cells
-                .iter()
-                .flatten()
-                .filter(|cell| layout.rich_text.contains_key(&cell.text))
-                .count();
             let plain = cells.iter().flatten().filter(|cell| cell.text != "").count();
-            println!("    {matched} of {plain} non-empty cells found their runs");
-            // What the nearest cell text looks like, when nothing matched.
-            let longest = cells
-                .iter()
-                .flatten()
-                .filter(|cell| !cell.text.is_empty())
-                .max_by_key(|cell| cell.text.chars().count());
-            if let Some(cell) = longest {
-                let head: String = cell.text.chars().take(28).collect();
-                let tail: String = cell.text.chars().skip(cell.text.chars().count().saturating_sub(24)).collect();
-                println!(
-                    "    longest cell text: {:?}… ({} chars) tail {:?}",
-                    head,
-                    cell.text.chars().count(),
-                    tail
-                );
-                if let Some((key, _)) = layout
-                    .rich_text
-                    .iter()
-                    .max_by_key(|(text, _)| text.chars().count())
-                {
-                    let tail: String = key.chars().skip(key.chars().count().saturating_sub(24)).collect();
-                    println!("    longest key tail: {:?}", tail);
-                    let at = cell
-                        .text
-                        .chars()
-                        .zip(key.chars())
-                        .position(|(a, b)| a != b);
-                    let around = |text: &str| -> String {
-                        text.chars().skip(at.unwrap_or(0).saturating_sub(8)).take(40).collect()
-                    };
-                    println!(
-                        "    first difference at char {:?}; cell {} chars, key {} chars",
-                        at,
-                        cell.text.chars().count(),
-                        key.chars().count()
-                    );
-                    println!("      cell: {:?}", around(&cell.text));
-                    println!("      key : {:?}", around(key));
-                }
-            }
+            println!(
+                "    {landed} of the first 5 rich cells sit on a non-empty cell; {plain} non-empty cells in the window"
+            );
         }
     }
 

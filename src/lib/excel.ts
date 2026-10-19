@@ -143,6 +143,17 @@ export interface RichFont {
   underline?: "single" | "double" | "none" | null;
 }
 
+/**
+ * One cell's runs. Keyed by cell rather than by text: two cells can spell the
+ * same text with different runs — a breadcrumb whose current page is red — and
+ * the text alone cannot tell them apart.
+ */
+export interface RichCell {
+  row: number;
+  col: number;
+  runs: RichRun[];
+}
+
 export interface AutoFilter {
   /** Sheet row holding the filter buttons. */
   row: number;
@@ -406,12 +417,11 @@ export interface SheetLayout {
    */
   drawings: Shape[];
   /**
-   * Strings split into runs with colours of their own, keyed by the text they
-   * spell out — which is exactly what a cell holds, so a cell's runs are found
-   * without the sheet recording anything per cell. Empty for a workbook that
-   * never colours part of a string.
+   * Cells split into runs of their own, each with its own colour or font. Sparse
+   * by nature: only cells that really format part of their text appear, and two
+   * cells spelling the same text may carry different runs.
    */
-  richText: Record<string, RichRun[]>;
+  richCells: RichCell[];
 }
 
 export interface ValueCount {

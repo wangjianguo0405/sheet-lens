@@ -57,6 +57,7 @@ import {
   type CellStyle,
   type FilterCriterion,
   type MergeRect,
+  type RichRun,
   type SheetInfo,
   type SheetLayout,
 } from "@/lib/excel";
@@ -2121,6 +2122,16 @@ export function CanvasGrid({
       }
     }
 
+    /**
+     * The runs a cell draws part of its text in, keyed by the cell. Sparse: only
+     * cells that format part of their text are in it, and two cells spelling
+     * the same text may carry different runs.
+     */
+    const richIndex = new Map<number, RichRun[]>();
+    for (const cell of layout.richCells ?? []) {
+      richIndex.set(cellKey(sheetCols, cell.row, cell.col), cell.runs);
+    }
+
     return {
       cols,
       rows,
@@ -2158,7 +2169,7 @@ export function CanvasGrid({
       filtering: visibleRows !== null && filters.size > 0,
       printArea,
       outsidePrint,
-      richText: layout.richText ?? {},
+      cellRich: richIndex,
       theme: canvasTheme(),
     };
   }, [
@@ -3672,7 +3683,11 @@ export function CanvasGrid({
    * cell's own colour says nothing about them.
    */
   const editingText = editing ? (cellAt(editing.row, editing.col)?.text ?? "") : "";
-  const runs = editingText ? (layout?.richText?.[editingText] ?? null) : null;
+  const runs = editing
+    ? (layout?.richCells?.find(
+        (cell) => cell.row === editing.row && cell.col === editing.col,
+      )?.runs ?? null)
+    : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">

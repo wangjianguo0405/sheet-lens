@@ -174,8 +174,12 @@ export interface GridView {
   printArea: MergeRect | null;
   /** Whether a cell lies outside the print area, and so takes the grey shade. */
   outsidePrint: (row: number, col: number) => boolean;
-  /** Coloured runs, keyed by the text they spell out. Empty for most files. */
-  richText: Record<string, RichRun[]>;
+  /**
+   * Cells that draw part of their text in runs of their own, keyed by cell —
+   * the text alone cannot identify them, since two cells may spell the same
+   * text with different runs. Empty for most files.
+   */
+  cellRich: Map<number, RichRun[]>;
   theme: CanvasTheme;
 }
 
@@ -1246,7 +1250,7 @@ function paintSpanText(
     span.kindOfCell,
     pad.left,
     pad.right,
-    view.richText[text] ?? null,
+    view.cellRich.get(cellKey(view.sheetCols, span.rect.row, span.rect.col)) ?? null,
   );
 }
 
@@ -1373,7 +1377,17 @@ function paintCellText(
     h,
   };
 
-  paintText(ctx, view, box, text, style, cell?.kind, padLeft, padRight, view.richText[text] ?? null);
+  paintText(
+    ctx,
+    view,
+    box,
+    text,
+    style,
+    cell?.kind,
+    padLeft,
+    padRight,
+    view.cellRich.get(cellKey(view.sheetCols, sheetRow, col)) ?? null,
+  );
   return true;
 }
 
