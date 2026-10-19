@@ -917,6 +917,42 @@ export function CanvasGrid({
   const minRowH = Math.max(MIN_ROW_H, Math.ceil(fontSize * LINE_HEIGHT));
 
   /**
+   * The frozen bands, in display rows and sheet columns.
+   *
+   * A frozen row that a filter has taken out of the view holds no height, so
+   * the boundary is the first *shown* row at or past the file's count rather
+   * than the count itself. The heights and widths come from the same metrics
+   * the paint pass lays cells out with, which is what keeps a pinned band and
+   * the rows under it from drifting apart.
+   */
+  const freeze = useMemo(() => {
+    const frozenSheetRows = Math.max(0, Math.min(layout?.frozenRows ?? 0, rowCount));
+    const frozenSheetCols = Math.max(0, Math.min(layout?.frozenCols ?? 0, colCount));
+    let frozenDisplayRows = 0;
+    if (frozenSheetRows > 0) {
+      if (!rowView) {
+        frozenDisplayRows = Math.min(frozenSheetRows, displayRowCount);
+      } else {
+        let lo = 0;
+        let hi = displayRowCount;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (sheetRowOf(mid) < frozenSheetRows) lo = mid + 1;
+          else hi = mid;
+        }
+        frozenDisplayRows = lo;
+      }
+    }
+    return {
+      rows: frozenDisplayRows,
+      cols: frozenSheetCols,
+      height: frozenDisplayRows > 0 ? (rows.offsets[frozenDisplayRows] ?? 0) : 0,
+      width: frozenSheetCols > 0 ? (cols.offsets[frozenSheetCols] ?? 0) : 0,
+    };
+  }, [layout, rowView, rowCount, colCount, displayRowCount, sheetRowOf, rows, cols]);
+
+
+  /**
    * Where the sheet's own extent ends, in sheet pixels.
    *
    * The blank area is a prefix on top of this and never moves it, so this is
@@ -1720,18 +1756,24 @@ export function CanvasGrid({
     if (atRow >= 0) {
       const display = displayOfRow(atRow);
       if (display >= 0) {
-        const top = (rows.offsets[display] ?? 0) * factor;
-        const bottom =
-          (COL_HEADER_H + (rows.offsets[Math.min(display + 1, displayRowCount)] ?? 0)) * factor;
-        if (top < el.scrollTop) el.scrollTop = top;
-        else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
+        // A pinned row is always in view; one in the scrolling area has to
+        // clear the frozen band above it, not just the scroll offset.
+        if (display >= freeze.rows) {
+          const frozen = freeze.height * factor;
+          const top = (rows.offsets[display] ?? 0) * factor;
+          const bottom =
+            (COL_HEADER_H + (rows.offsets[Math.min(display + 1, displayRowCount)] ?? 0)) * factor;
+          if (top < el.scrollTop + frozen) el.scrollTop = top - frozen;
+          else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
+        }
       }
     }
-    if (atCol >= 0) {
+    if (atCol >= 0 && atCol >= freeze.cols) {
+      const frozen = freeze.width * factor;
       const left = (cols.offsets[atCol] ?? 0) * factor;
       const right =
         (ROW_HEADER_W + (cols.offsets[Math.min(atCol + 1, sheetColsGuess)] ?? 0)) * factor;
-      if (left < el.scrollLeft) el.scrollLeft = left;
+      if (left < el.scrollLeft + frozen) el.scrollLeft = left - frozen;
       else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth;
     }
   }, [
@@ -1744,6 +1786,7 @@ export function CanvasGrid({
     zoom,
     layoutReady,
     reveal,
+    freeze,
   ]);
 
   // --- fetching the cells the viewport needs ---
@@ -1877,19 +1920,39 @@ export function CanvasGrid({
     const coveredMerges = new Set<number>();
     /** The same regions as `coveredMerges`, so a lookup is not a scan. */
     const mergeIndex = new Map<number, MergeRect>();
-    for (const merge of merges) {
-      const end = merge.row + merge.rows - 1;
-      if (end < lo || merge.row > hi) continue;
-      if (displayOfRow(merge.row) < 0) continue;
-      shownMerges.push(merge);
-      for (let r = Math.max(merge.row, lo); r <= Math.min(end, hi); r += 1) {
-        for (let c = merge.col; c < merge.col + merge.cols; c += 1) {
-          const key = cellKey(sheetCols, r, c);
-          coveredMerges.add(key);
-          mergeIndex.set(key, merge);
+    const seenMerges = new Set<number>();
+    /**
+     * Adds the merges a rectangular window touches. A frozen band is a window
+     * of its own — the pinned rows and the pinned columns sit outside the
+     * scrolling range, and a region that straddles the freeze line has to be
+     * drawable in both panes.
+     */
+    const addMerges = (rowLo: number, rowHi: number, colLo: number, colHi: number) => {
+      for (const merge of merges) {
+        const end = merge.row + merge.rows - 1;
+        if (end < rowLo || merge.row > rowHi) continue;
+        const endCol = merge.col + merge.cols - 1;
+        if (endCol < colLo || merge.col > colHi) continue;
+        if (displayOfRow(merge.row) < 0) continue;
+        const anchor = cellKey(sheetCols, merge.row, merge.col);
+        if (!seenMerges.has(anchor)) {
+          seenMerges.add(anchor);
+          shownMerges.push(merge);
+        }
+        for (let r = Math.max(merge.row, rowLo); r <= Math.min(end, rowHi); r += 1) {
+          for (let c = Math.max(merge.col, colLo); c <= Math.min(endCol, colHi); c += 1) {
+            const key = cellKey(sheetCols, r, c);
+            coveredMerges.add(key);
+            mergeIndex.set(key, merge);
+          }
         }
       }
-    }
+    };
+    const frozenSheetRows = Math.min(layout.frozenRows ?? 0, sheetRows);
+    const frozenSheetCols = Math.min(layout.frozenCols ?? 0, sheetCols);
+    addMerges(lo, hi, range.colStart, range.colEnd);
+    if (frozenSheetRows > 0) addMerges(0, frozenSheetRows - 1, range.colStart, range.colEnd);
+    if (frozenSheetCols > 0) addMerges(lo, hi, 0, frozenSheetCols - 1);
     const mergeAtFast = (row: number, col: number): MergeRect | null =>
       mergeIndex.get(cellKey(sheetCols, row, col)) ?? null;
 
@@ -1924,26 +1987,37 @@ export function CanvasGrid({
       styleAtFast(row, col)?.horizontal === "centerContinuous" &&
       mergeAtFast(row, col) === null;
     const textAt = (row: number, col: number) => cellAt(row, col)?.text ?? "";
-    for (let row = lo; row <= hi; row += 1) {
-      if (row < 0 || row >= sheetRows || displayOfRow(row) < 0) continue;
-      for (let col = range.colStart; col < range.colEnd; col += 1) {
-        if (!joinable(row, col)) continue;
-        const text = textAt(row, col) || null;
-        /**
-         * A run is the cell holding the text and the empty cells after it, and
-         * it stops at the next cell with a value of its own — which is why two
-         * labels side by side stay two runs. Reading it as one unbroken stretch
-         * of the same alignment ran `変更項番` across J..L and then on across
-         * the `変更者` columns beside it, centring it over all six.
-         */
-        if (text === null && joinable(row, col - 1)) continue;
-        let end = col;
-        while (joinable(row, end + 1) && textAt(row, end + 1) === "") end += 1;
-        if (end === col) continue;
-        shownRuns.push({ row, col, rows: 1, cols: end - col + 1, text });
-        for (let c = col; c <= end; c += 1) coveredRuns.add(cellKey(sheetCols, row, c));
+    const seenRuns = new Set<number>();
+    /** The same windows the merges get: the scrolling one and the pinned bands. */
+    const addRuns = (rowFrom: number, rowTo: number, colFrom: number, colTo: number) => {
+      for (let row = rowFrom; row <= rowTo; row += 1) {
+        if (row < 0 || row >= sheetRows || displayOfRow(row) < 0) continue;
+        for (let col = colFrom; col < colTo; col += 1) {
+          if (!joinable(row, col)) continue;
+          const text = textAt(row, col) || null;
+          /**
+           * A run is the cell holding the text and the empty cells after it, and
+           * it stops at the next cell with a value of its own — which is why two
+           * labels side by side stay two runs. Reading it as one unbroken stretch
+           * of the same alignment ran `変更項番` across J..L and then on across
+           * the `変更者` columns beside it, centring it over all six.
+           */
+          if (text === null && joinable(row, col - 1)) continue;
+          let end = col;
+          while (joinable(row, end + 1) && textAt(row, end + 1) === "") end += 1;
+          if (end === col) continue;
+          const anchor = cellKey(sheetCols, row, col);
+          if (!seenRuns.has(anchor)) {
+            seenRuns.add(anchor);
+            shownRuns.push({ row, col, rows: 1, cols: end - col + 1, text });
+          }
+          for (let c = col; c <= end; c += 1) coveredRuns.add(cellKey(sheetCols, row, c));
+        }
       }
-    }
+    };
+    addRuns(lo, hi, range.colStart, range.colEnd);
+    if (frozenSheetRows > 0) addRuns(0, frozenSheetRows - 1, range.colStart, range.colEnd);
+    if (frozenSheetCols > 0) addRuns(lo, hi, 0, frozenSheetCols - 1);
 
     return {
       cols,
@@ -2021,15 +2095,122 @@ export function CanvasGrid({
       // Nothing drawn until the incoming sheet's layout is in: leaving the last
       // sheet's pixels untouched is what keeps a switch from flashing blank.
       if (!view) return;
+      /**
+       * The panes a frozen view is divided into, each with the region of the
+       * canvas it owns. A pane is the same sheet drawn at its own scroll
+       * offset: the pinned rows and columns use no offset at all, so they stay
+       * put while the rest scrolls, and the clip is what stops the scrolling
+       * content from painting over them.
+       */
+      const gx = ROW_HEADER_W;
+      const gy = COL_HEADER_H;
+      const fr = freeze.rows;
+      const fc = freeze.cols;
+      const fw = freeze.width;
+      const fh = freeze.height;
+      const bodyW = Math.max(0, view.width - gx - fw);
+      const bodyH = Math.max(0, view.height - gy - fh);
+      const frozenRowEnd = Math.min(rowCount, fr + 1 + OVERSCAN_ROWS);
+      const frozenColEnd = Math.min(colCount, fc + 1 + OVERSCAN_COLS);
+      const panes: { view: GridView; clips: { x: number; y: number; w: number; h: number }[] }[] = [];
+      if (fr === 0 && fc === 0) {
+        panes.push({ view, clips: [] });
+      } else {
+        if (bodyW > 0 || bodyH > 0) {
+          panes.push({
+            view,
+            clips: [
+              { x: gx + fw, y: gy + fh, w: bodyW, h: bodyH },
+              { x: 0, y: gy + fh, w: gx, h: bodyH },
+              { x: gx + fw, y: 0, w: bodyW, h: gy },
+              { x: 0, y: 0, w: gx, h: gy },
+            ],
+          });
+        }
+        if (fr > 0 && fh > 0) {
+          panes.push({
+            view: { ...view, scrollTop: 0, rowStart: 0, rowEnd: frozenRowEnd },
+            clips: [
+              { x: gx + fw, y: gy, w: bodyW, h: fh },
+              { x: gx + fw, y: 0, w: bodyW, h: gy },
+              ...(fc === 0 ? [{ x: 0, y: gy, w: gx, h: fh }] : []),
+            ],
+          });
+        }
+        if (fc > 0 && fw > 0) {
+          panes.push({
+            view: { ...view, scrollLeft: 0, colStart: 0, colEnd: frozenColEnd },
+            clips: [
+              { x: gx, y: gy + fh, w: fw, h: bodyH },
+              { x: 0, y: gy + fh, w: gx, h: bodyH },
+              ...(fr === 0 ? [{ x: gx, y: 0, w: fw, h: gy }] : []),
+            ],
+          });
+        }
+        if (fr > 0 && fc > 0 && fh > 0 && fw > 0) {
+          panes.push({
+            view: {
+              ...view,
+              scrollTop: 0,
+              scrollLeft: 0,
+              rowStart: 0,
+              rowEnd: frozenRowEnd,
+              colStart: 0,
+              colEnd: frozenColEnd,
+            },
+            clips: [
+              { x: gx, y: gy, w: fw, h: fh },
+              { x: 0, y: gy, w: gx, h: fh },
+              { x: gx, y: 0, w: fw, h: gy },
+            ],
+          });
+        }
+      }
+      const clipTo = (ctx: CanvasRenderingContext2D, clips: { x: number; y: number; w: number; h: number }[]) => {
+        if (clips.length === 0) return;
+        ctx.beginPath();
+        for (const clip of clips) {
+          if (clip.w > 0 && clip.h > 0) ctx.rect(clip.x, clip.y, clip.w, clip.h);
+        }
+        ctx.clip();
+      };
+
       // Whatever this frame is about to show has to have its data asked for.
-      ensureBlocks(view);
+      // A pane can reach rows the scrolling window does not, which is the whole
+      // point of a frozen one, so each asks for its own.
+      for (const pane of panes) ensureBlocks(pane.view);
       const startedAt = performance.now();
       const scale = view.zoom * dprRef.current;
       if (layers === "both") {
         const ctx = baseRef.current?.getContext("2d");
         if (ctx) {
           ctx.setTransform(scale, 0, 0, scale, 0, 0);
-          const stats = paintBase(ctx, view);
+          const stats: PaintStats = {
+            rows: 0,
+            cols: 0,
+            spans: 0,
+            texts: 0,
+            surfaceMs: 0,
+            surfaceFills: 0,
+            textMs: 0,
+            styleResolved: 0,
+            styleMemoHits: 0,
+          };
+          for (const pane of panes) {
+            ctx.save();
+            clipTo(ctx, pane.clips);
+            const part = paintBase(ctx, pane.view);
+            ctx.restore();
+            stats.rows += part.rows;
+            stats.cols += part.cols;
+            stats.spans += part.spans;
+            stats.texts += part.texts;
+            stats.surfaceMs += part.surfaceMs;
+            stats.surfaceFills += part.surfaceFills;
+            stats.textMs += part.textMs;
+            stats.styleResolved += part.styleResolved;
+            stats.styleMemoHits += part.styleMemoHits;
+          }
           perf.current.stats = stats;
           // Only real base passes enter the window: an overlay-only frame runs
           // no base pass, and folding a zero in would drag the median down to a
@@ -2052,7 +2233,12 @@ export function CanvasGrid({
       const ctx = overlayRef.current?.getContext("2d");
       if (ctx) {
         ctx.setTransform(scale, 0, 0, scale, 0, 0);
-        paintOverlay(ctx, view);
+        for (const pane of panes) {
+          ctx.save();
+          clipTo(ctx, pane.clips);
+          paintOverlay(ctx, pane.view);
+          ctx.restore();
+        }
       }
       perf.current.overlayMs = performance.now() - overlayStarted;
       perf.current.layers = layers === "both" ? 2 : 1;
@@ -2077,8 +2263,8 @@ export function CanvasGrid({
           }
           slot.style.display = "";
           slot.style.transform =
-            `translate(${(view.cols.offsets[col] - view.scrollLeft) * view.zoom}px, ` +
-            `${(view.rows.offsets[headerDisplay] - view.scrollTop) * view.zoom}px)`;
+            `translate(${(view.cols.offsets[col] - (col < fc ? 0 : view.scrollLeft)) * view.zoom}px, ` +
+            `${(view.rows.offsets[headerDisplay] - (headerDisplay < fr ? 0 : view.scrollTop)) * view.zoom}px)`;
           slot.style.width = `${spanAt(view.cols.offsets, col) * view.zoom}px`;
           slot.style.height = `${headerH * view.zoom}px`;
         }
@@ -2128,8 +2314,8 @@ export function CanvasGrid({
             const size = (style?.sizePx ?? view.workbookFontSizePx) * view.zoom;
             field.style.display = "";
             field.style.transform =
-              `translate(${(view.cols.offsets[col] - view.scrollLeft) * view.zoom}px, ` +
-              `${(view.rows.offsets[display] - view.scrollTop) * view.zoom}px)`;
+              `translate(${(view.cols.offsets[col] - (col < fc ? 0 : view.scrollLeft)) * view.zoom}px, ` +
+              `${(view.rows.offsets[display] - (display < fr ? 0 : view.scrollTop)) * view.zoom}px)`;
             // The cell's boundary is one pixel past its last one on the right
             // and bottom — that is where the ring and the cell's own border are
             // drawn. The field has to reach that far, and it wears the
@@ -2202,6 +2388,19 @@ export function CanvasGrid({
           inner.style.transform =
             `translate(${-view.scrollLeft * view.zoom}px, ${-view.scrollTop * view.zoom}px) ` +
             `scale(${view.zoom})`;
+          // A shape anchored in a frozen band is pinned to it: the layer was
+          // just moved by the scroll, so those shapes add it back. The layer
+          // does not re-render on a scroll, which is why this is done here
+          // rather than with a prop.
+          if (freeze.rows > 0 || freeze.cols > 0) {
+            for (const node of inner.querySelectorAll<SVGGElement>("[data-shape-x]")) {
+              const x = Number(node.dataset.shapeX ?? 0);
+              const y = Number(node.dataset.shapeY ?? 0);
+              const dx = node.hasAttribute("data-pin-x") ? view.scrollLeft : 0;
+              const dy = node.hasAttribute("data-pin-y") ? view.scrollTop : 0;
+              node.setAttribute("transform", `translate(${x + dx} ${y + dy})`);
+            }
+          }
         }
 
         const mark = markRef.current;
@@ -2228,7 +2427,7 @@ export function CanvasGrid({
         }
       }
     },
-    [buildView, ensureBlocks, printColX, printRowY],
+    [buildView, ensureBlocks, printColX, printRowY, freeze, rowCount, colCount],
   );
   const paintRef = useRef(paint);
   paintRef.current = paint;
@@ -2261,6 +2460,13 @@ export function CanvasGrid({
       const py = clientY - rect.top;
       const gutterW = ROW_HEADER_W * z;
       const gutterH = COL_HEADER_H * z;
+      const frozenW = freeze.width * z;
+      const frozenH = freeze.height * z;
+      /** A point inside a frozen band is the viewport's own; the rest scrolls. */
+      const sheetX = (viewportX: number) =>
+        (viewportX + (viewportX < gutterW + frozenW ? 0 : el.scrollLeft)) / z - ROW_HEADER_W;
+      const sheetY = (viewportY: number) =>
+        (viewportY + (viewportY < gutterH + frozenH ? 0 : el.scrollTop)) / z - COL_HEADER_H;
 
       // The scroller's scrollbars are inside its border box but are not the
       // sheet. Hit-testing one as a cell started a block selection on the
@@ -2272,26 +2478,26 @@ export function CanvasGrid({
       if (px < gutterW && py < gutterH) return null; // the corner
       // The gutters are pinned, so their coordinate is the viewport's own.
       if (py < gutterH) {
-        const x = (clientX - rect.left + el.scrollLeft) / z - ROW_HEADER_W;
+        const x = sheetX(clientX - rect.left);
         if (x < 0 || x >= cols.total) return null;
         return { kind: "colHeader", col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
       }
       if (px < gutterW) {
-        const y = (clientY - rect.top + el.scrollTop) / z - COL_HEADER_H;
+        const y = sheetY(clientY - rect.top);
         if (y < 0 || y >= rows.total) return null;
         const display = Math.min(rowCount - 1, indexAt(rows.offsets, y));
         const row = sheetRowOf(display);
         return row < 0 ? null : { kind: "rowHeader", row };
       }
 
-      const x = (clientX - rect.left + el.scrollLeft) / z - ROW_HEADER_W;
-      const y = (clientY - rect.top + el.scrollTop) / z - COL_HEADER_H;
+      const x = sheetX(clientX - rect.left);
+      const y = sheetY(clientY - rect.top);
       if (x < 0 || y < 0 || x >= cols.total || y >= rows.total) return null;
       const row = sheetRowOf(Math.min(rowCount - 1, indexAt(rows.offsets, y)));
       if (row < 0) return null;
       return { kind: "cell", row, col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
     },
-    [cols, rows, colCount, rowCount, sheetRowOf],
+    [cols, rows, colCount, rowCount, sheetRowOf, freeze],
   );
 
   /**
@@ -3453,6 +3659,8 @@ export function CanvasGrid({
                 width={usedColsTotal}
                 height={usedRowsTotal}
                 path={path}
+                frozenRows={layout.frozenRows ?? 0}
+                frozenCols={layout.frozenCols ?? 0}
                 // Null unless the readout is on, so the layer's `memo` still
                 // holds in normal use — the facts change with the selection.
                 debug={debugFacts}

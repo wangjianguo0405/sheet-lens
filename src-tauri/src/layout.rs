@@ -444,6 +444,11 @@ pub struct SheetLayout {
     /// Excel's View > Gridlines setting. Most design documents turn it off, and
     /// then only the borders the author drew are visible.
     pub show_grid_lines: bool,
+    /// How many rows and columns the sheet view freezes at the top and left.
+    /// Excel's `state="frozen"` pane; a *split* pane leaves nothing pinned in
+    /// this viewer, since it repeats one region rather than holding rows still.
+    pub frozen_rows: u32,
+    pub frozen_cols: u32,
     /// Column index -> width in characters, for columns with an explicit width.
     pub col_widths_chars: HashMap<u32, f64>,
     /// Row index -> height in pixels, for rows with an explicit height.
@@ -568,6 +573,8 @@ impl SheetLayout {
             font_family: None,
             font_size_px: points_to_font_px(STOCK_FONT_PT),
             show_grid_lines: true,
+            frozen_rows: 0,
+            frozen_cols: 0,
             col_widths_chars: HashMap::new(),
             row_heights_px: HashMap::new(),
             merges: Vec::new(),
@@ -2001,6 +2008,30 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                             layout.show_grid_lines = value != "0" && value != "false";
                         }
                     }
+                    // A frozen view holds the rows above the split and the
+                    // columns to its left still while the rest scrolls. The
+                    // split counts are authoritative; `topLeftCell` names the
+                    // scrolling region's first cell, which is the same count
+                    // when a writer leaves them out.
+                    b"pane" => {
+                        if attr(&element, b"state").as_deref() == Some("frozen") {
+                            let split = |name: &[u8]| {
+                                attr(&element, name)
+                                    .and_then(|value| value.parse::<u32>().ok())
+                                    .unwrap_or(0)
+                            };
+                            layout.frozen_rows = split(b"ySplit");
+                            layout.frozen_cols = split(b"xSplit");
+                            if layout.frozen_rows == 0 && layout.frozen_cols == 0 {
+                                if let Some((row, col)) =
+                                    attr(&element, b"topLeftCell").and_then(|cell| parse_cell(&cell))
+                                {
+                                    layout.frozen_rows = row;
+                                    layout.frozen_cols = col;
+                                }
+                            }
+                        }
+                    }
                     b"col" => {
                         let min = attr(&element, b"min")
                             .and_then(|v| v.parse::<u32>().ok())
@@ -2546,6 +2577,25 @@ mod tests {
         let Some(layout) = sample("Summary") else { return };
         // Six rows are written out, and the A1:B1 merge names two columns.
         assert_eq!((layout.rows, layout.cols), (6, 2));
+    }
+
+    #[test]
+    fn reads_the_rows_and_columns_a_sheet_view_freezes() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="1" ySplit="2" topLeftCell="B3" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles).expect("layout");
+        assert_eq!((layout.frozen_rows, layout.frozen_cols), (2, 1));
+
+        // A writer that leaves the splits out still names the scrolling
+        // region's first cell; the count is what that cell's position implies.
+        let xml = br#"<worksheet><sheetViews><sheetView><pane topLeftCell="B3" state="frozen"/></sheetView></sheetViews><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles).expect("layout");
+        assert_eq!((layout.frozen_rows, layout.frozen_cols), (2, 1));
+
+        // A split pane is not a frozen one: nothing is held still.
+        let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="1" ySplit="2" state="split"/></sheetView></sheetViews><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles).expect("layout");
+        assert_eq!((layout.frozen_rows, layout.frozen_cols), (0, 0));
     }
 
     #[test]

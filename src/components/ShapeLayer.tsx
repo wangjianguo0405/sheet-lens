@@ -351,6 +351,14 @@ export interface ShapeLayerProps {
   width: number;
   height: number;
   path: string;
+  /**
+   * A shape whose anchor is inside a frozen band is pinned: the layer is
+   * translated by the scroll, so its own position has to add it back. Zero
+   * unless the sheet freezes something, which is what keeps a scroll from
+   * re-rendering this layer on ordinary sheets.
+   */
+  frozenRows?: number;
+  frozenCols?: number;
   /** Read out when Ctrl+Shift+D has switched the hidden panel on. */
   debug?: ShapeDebugFacts | null;
 }
@@ -369,6 +377,8 @@ export const ShapeLayer = memo(function ShapeLayer({
   width,
   height,
   path,
+  frozenRows = 0,
+  frozenCols = 0,
   debug,
 }: ShapeLayerProps) {
   const parts = useMemo(
@@ -518,6 +528,12 @@ export const ShapeLayer = memo(function ShapeLayer({
         const y = group ? gTop + group.fy * gHeight : rowY(shape.fromRow) + shape.fromY;
         const w = group ? group.fw * gWidth : Math.max(0, colX(shape.toCol) + shape.toX - x);
         const h = group ? group.fh * gHeight : Math.max(0, rowY(shape.toRow) + shape.toY - y);
+        // A shape in a frozen band stays put while the layer under it scrolls.
+        // Excel places a shape by its anchor, so that is what decides its pane.
+        // The scroll is added back imperatively — see `CanvasGrid`'s transform
+        // step — because this layer does not re-render on a scroll.
+        const pinnedX = (group?.fromCol ?? shape.fromCol) < frozenCols;
+        const pinnedY = (group?.fromRow ?? shape.fromRow) < frozenRows;
 
         if (shapeDebug && facts) {
           const lines = [
@@ -605,7 +621,14 @@ export const ShapeLayer = memo(function ShapeLayer({
         const imageH = keepY > 0.001 ? gh / keepY : gh;
 
         return (
-          <g key={index} transform={`translate(${x} ${y})`}>
+          <g
+            key={index}
+            data-shape-x={x}
+            data-shape-y={y}
+            data-pin-x={pinnedX ? "1" : undefined}
+            data-pin-y={pinnedY ? "1" : undefined}
+            transform={`translate(${x} ${y})`}
+          >
             <g transform={placement || undefined}>
               {/* A chart or table frame is anchored like a shape but has contents
                   we do not read, so only its outline is drawn. */}

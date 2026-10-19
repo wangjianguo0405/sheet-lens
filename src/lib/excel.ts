@@ -347,6 +347,9 @@ export interface SheetLayout {
   fontSizePx: number;
   /** Excel's View > Gridlines setting. */
   showGridLines: boolean;
+  /** Rows and columns the sheet view freezes at the top and left. */
+  frozenRows: number;
+  frozenCols: number;
   /** Column index -> width in characters, for columns the file sized explicitly. */
   colWidthsChars: Record<string, number>;
   /** Row index -> height in pixels, for rows the file sized explicitly. */
