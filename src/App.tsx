@@ -150,6 +150,13 @@ export default function App() {
   const { t, i18n } = useTranslation();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
+  /**
+   * The tab strip's own multi-selection: Ctrl+click groups sheets and
+   * Shift+click takes a run of them, as Excel's tabs do. The displayed sheet is
+   * always one of them; what the group is for here is acting on several sheets
+   * at once — Hide.
+   */
+  const [sheetGroup, setSheetGroup] = useState<{ names: string[]; anchor: string } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [gotoOpen, setGotoOpen] = useState(false);
   /** The sheet dialog Excel opens from a tab's own menu — see `SheetTabs`. */
@@ -243,6 +250,23 @@ export default function App() {
     () => (active ? active.info.sheets.filter((s) => isHidden(active, s)).map((s) => s.name) : []),
     [active],
   );
+
+  // A group belongs to the file it was made in.
+  useEffect(() => {
+    setSheetGroup(null);
+  }, [activePath]);
+
+  /**
+   * The group as the strip draws it: only sheets still on the strip, and always
+   * the one on screen. A sheet that gets hidden or reordered out of the group
+   * simply drops out rather than leaving a stale name to act on.
+   */
+  const sheetSelection = useMemo(() => {
+    const visible = new Set(shown.map((sheet) => sheet.name));
+    const names = new Set((sheetGroup?.names ?? []).filter((name) => visible.has(name)));
+    if (active && visible.has(active.sheet)) names.add(active.sheet);
+    return names;
+  }, [sheetGroup, shown, active]);
 
   const selection = active?.cursors[active.sheet] ?? ORIGIN;
 
@@ -563,6 +587,107 @@ export default function App() {
   );
 
   /**
+   * The strip's own clicks, with Excel's modifiers: a plain click selects one
+   * sheet and shows it; Ctrl+click adds or removes one from the group; Shift
+   * +click takes the run between the anchor and the clicked sheet. The sheet
+   * that was clicked is the one the window shows, as in Excel.
+   */
+  const handleSheetClick = useCallback(
+    (name: string, mods: { ctrl: boolean; shift: boolean }) => {
+      if (!active) return;
+      const order = shownSheets(active).map((sheet) => sheet.name);
+      const at = order.indexOf(name);
+      if (at < 0) return;
+
+      if (mods.shift) {
+        const anchor =
+          sheetGroup?.anchor && order.includes(sheetGroup.anchor)
+            ? sheetGroup.anchor
+            : active.sheet;
+        const from = order.indexOf(anchor);
+        if (from < 0) return;
+        const [lo, hi] = from <= at ? [from, at] : [at, from];
+        setSheetGroup({ names: order.slice(lo, hi + 1), anchor });
+        updateActive({ sheet: name });
+        return;
+      }
+
+      if (mods.ctrl) {
+        const current = (sheetGroup?.names ?? [active.sheet]).filter((one) =>
+          order.includes(one),
+        );
+        const names = new Set(current);
+        if (names.has(name)) {
+          // One sheet always stays selected; Excel does not let the group empty.
+          if (names.size === 1) return;
+          names.delete(name);
+        } else {
+          names.add(name);
+        }
+        const kept = order.filter((one) => names.has(one));
+        const anchor =
+          sheetGroup?.anchor && kept.includes(sheetGroup.anchor) ? sheetGroup.anchor : name;
+        setSheetGroup({ names: kept, anchor });
+        // Adding a sheet shows it; removing the one on screen moves to one that
+        // is still selected.
+        updateActive({ sheet: names.has(name) ? name : (kept[kept.length - 1] ?? active.sheet) });
+        return;
+      }
+
+      setSheetGroup(null);
+      updateActive({ sheet: name });
+    },
+    [active, sheetGroup, updateActive],
+  );
+
+  /**
+   * Hides the sheets on the strip that the menu asked for — the whole group
+   * when the right-clicked tab is part of it, that tab alone otherwise, which
+   * is how Excel reads the gesture. Hiding everything still shown is refused:
+   * it would leave the workbook with nothing to display.
+   */
+  const applySheetsHidden = useCallback(
+    (names: string[]) => {
+      if (!active) return;
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.info.path !== active.info.path) return tab;
+          const visible = shownSheets(tab);
+          const hiding = new Set(names.filter((name) => visible.some((one) => one.name === name)));
+          if (hiding.size === 0 || hiding.size >= visible.length) return tab;
+
+          const sheetHidden = new Map(tab.sheetHidden);
+          for (const name of hiding) sheetHidden.set(name, true);
+          let sheet = tab.sheet;
+          if (hiding.has(sheet)) {
+            const stillShown = new Set(
+              shownSheets({ ...tab, sheetHidden }).map((one) => one.name),
+            );
+            const at = tab.info.sheets.findIndex((one) => one.name === sheet);
+            const next =
+              tab.info.sheets.slice(at + 1).find((one) => stillShown.has(one.name)) ??
+              [...tab.info.sheets.slice(0, at)]
+                .reverse()
+                .find((one) => stillShown.has(one.name));
+            sheet = next?.name ?? sheet;
+          }
+          return { ...tab, sheetHidden, sheet };
+        }),
+      );
+      setSheetGroup(null);
+    },
+    [active],
+  );
+
+  const handleHideSheet = useCallback(
+    (name: string) => {
+      const group = sheetGroup?.names;
+      applySheetsHidden(group && group.includes(name) ? group : [name]);
+    },
+    [sheetGroup, applySheetsHidden],
+  );
+
+  /**
    * Hides a sheet, or brings one back, for as long as the tab is open — the
    * file's own flag is never touched, and the sheet comes back as the workbook
    * has it when the workbook is opened again.
@@ -601,13 +726,17 @@ export default function App() {
   const handleUnhideSheet = useCallback(
     (name: string) => {
       applySheetHidden(name, false);
+      setSheetGroup(null);
       updateActive({ sheet: name });
     },
     [applySheetHidden, updateActive],
   );
 
   const handleSheetSelect = useCallback(
-    (name: string) => updateActive({ sheet: name }),
+    (name: string) => {
+      setSheetGroup(null);
+      updateActive({ sheet: name });
+    },
     [updateActive],
   );
 
@@ -1040,9 +1169,11 @@ export default function App() {
                     sheets={shown}
                     active={active.sheet}
                     onSelect={handleSheetSelect}
+                    onTabClick={handleSheetClick}
+                    selected={sheetSelection}
                     colors={active.tabColors}
                     onColor={applyTabColor}
-                    onHide={(name) => applySheetHidden(name, true)}
+                    onHide={handleHideSheet}
                     onUnhide={(at) => {
                       setUnhideAt(at);
                       setUnhideOpen(true);

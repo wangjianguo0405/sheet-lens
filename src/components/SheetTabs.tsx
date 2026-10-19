@@ -27,6 +27,16 @@ interface SheetTabsProps {
   active: string;
   onSelect: (name: string) => void;
   /**
+   * A click on a tab, with the modifiers that make it a group: Ctrl adds or
+   * removes one sheet, Shift takes the run from the anchor to this one.
+   */
+  onTabClick: (name: string, mods: { ctrl: boolean; shift: boolean }) => void;
+  /**
+   * The sheets grouped with the active one. The active sheet is always in it;
+   * what the group is for is acting on several tabs at once.
+   */
+  selected: Set<string>;
+  /**
    * The colours the reader has given the tabs, by sheet name, over the ones the
    * workbook sets. They are the app's own, like the review marks: nothing is
    * written back, and a colour lasts as long as the tab holding it.
@@ -105,6 +115,8 @@ export function SheetTabs({
   sheets,
   active,
   onSelect,
+  onTabClick,
+  selected,
   colors,
   onColor,
   onHide,
@@ -544,6 +556,7 @@ export function SheetTabs({
         )}
         {sheets.map((sheet, index) => {
           const isActive = sheet.name === active;
+          const isSelected = selected.has(sheet.name);
           const title = t("sheets.tabTitle", {
             name: sheet.name,
             rows: sheet.rows,
@@ -556,7 +569,11 @@ export function SheetTabs({
             "shrink-0 border-r border-b-2 border-border px-3 py-1 text-xs whitespace-nowrap transition select-none",
             isActive
               ? "border-b-[#107C41] bg-background font-medium text-foreground"
-              : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+              : isSelected
+                // Grouped with the active sheet: Excel keeps them looking
+                // selected, without the raised face the current one has.
+                ? "border-b-[#107C41]/40 bg-background text-foreground"
+                : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
             // A tab filled with its own colour has the grey the others take
             // on hover sitting behind an inline fill that wins, so it
             // lightens instead — the same "this one is under the pointer".
@@ -620,7 +637,12 @@ export function SheetTabs({
                   gap: null,
                 };
               }}
-              onClick={() => onSelect(sheet.name)}
+              onClick={(event) =>
+                onTabClick(sheet.name, {
+                  ctrl: event.ctrlKey || event.metaKey,
+                  shift: event.shiftKey,
+                })
+              }
               // The second press is the one that opens the name, and the first
               // has selected the sheet by then — which is what Excel does with a
               // tab that is not the current one.
@@ -756,7 +778,11 @@ export function SheetTabs({
           </DropdownMenuItem>
           <DropdownMenuItem
             data-accelerator={acceleratorOf(t("sheets.hide"))}
-            disabled={sheets.length <= 1}
+            // Hiding everything on the strip would leave nothing to show, so
+            // that is exactly when the command greys out.
+            disabled={
+              sheets.length <= (menu && selected.has(menu.sheet) ? selected.size : 1)
+            }
             icon={<EyeOff />}
             onSelect={() => {
               if (menu !== null) onHide(menu.sheet);
