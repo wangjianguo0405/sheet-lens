@@ -36,6 +36,7 @@ import type {
   BorderEdge,
   Cell,
   CellStyle,
+  DataValidation,
   MergeRect,
   RichRun,
 } from "@/lib/excel";
@@ -131,6 +132,11 @@ export interface GridView {
    * mark is only there because the reader put it there.
    */
   markAt: (row: number, col: number) => string | null;
+  /**
+   * The data-validation rule governing a cell, if any. Only the active cell's
+   * is drawn — Excel's in-cell dropdown appears on the cell the cursor is on.
+   */
+  validationAt: (row: number, col: number) => DataValidation | null;
 
   // --- sheet facts ---
   workbookFontFamily: string | null;
@@ -1472,6 +1478,37 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
         view.rows.offsets[bottom + 1] - view.rows.offsets[top],
         ACCENT_INK,
       );
+    }
+  }
+
+  // Excel's in-cell dropdown, on the active cell alone: a small button at the
+  // right edge, which a list validation offers its choices through. It is not
+  // drawn for a file that turned the dropdown off, and the attribute that says
+  // so is inverted in the format.
+  if (active) {
+    const rule = view.validationAt(active.row, active.col);
+    if (rule?.kind === "list" && !rule.hideDropdown) {
+      const display = view.displayOfRow(active.row);
+      if (display >= 0) {
+        const x = ox + view.cols.offsets[active.col];
+        const y = oy + view.rows.offsets[display];
+        const w = spanAt(view.cols.offsets, active.col);
+        const h = spanAt(view.rows.offsets, display);
+        const size = Math.min(16, Math.max(9, h - 2));
+        const bx = x + w - size - 1;
+        const by = y + (h - size) / 2;
+        fill(ctx, bx, by, size, size, view.theme.background);
+        ring(ctx, bx, by, size, size, view.theme.border);
+        const cx = bx + size / 2;
+        const cy = by + size / 2;
+        ctx.fillStyle = view.theme.mutedForeground;
+        ctx.beginPath();
+        ctx.moveTo(cx - 3.5, cy - 1.5);
+        ctx.lineTo(cx + 3.5, cy - 1.5);
+        ctx.lineTo(cx, cy + 2.5);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
   }
 

@@ -154,6 +154,25 @@ export interface AutoFilter {
   applied: Record<string, string[]>;
 }
 
+export interface DataValidation {
+  /** The cells the rule governs; `sqref` may name several blocks. */
+  ranges: MergeRect[];
+  /** `list`, `whole`, `decimal`, `date`, `time`, `textLength`, `custom`, `none`. */
+  kind: string;
+  /** The rule as written: a quoted list (`"a,b"`), a range, or an expression. */
+  formula1?: string | null;
+  formula2?: string | null;
+  allowBlank: boolean;
+  /** The file's `showDropDown` is inverted: true hides the in-cell dropdown. */
+  hideDropdown: boolean;
+  showInput: boolean;
+  showError: boolean;
+  promptTitle?: string | null;
+  prompt?: string | null;
+  errorTitle?: string | null;
+  error?: string | null;
+}
+
 export interface ColumnStyle {
   from: number;
   to: number;
@@ -355,6 +374,8 @@ export interface SheetLayout {
   /** Row index -> height in pixels, for rows the file sized explicitly. */
   rowHeightsPx: Record<string, number>;
   merges: MergeRect[];
+  /** Data-validation rules: what a cell accepts, and what Excel offers for it. */
+  validations: DataValidation[];
   /**
    * Rows and columns the file hides. Excel draws none of them and skips the
    * number, so the gap is the only sign it gives.

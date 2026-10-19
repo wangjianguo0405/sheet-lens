@@ -33,6 +33,7 @@ import {
   type GridView,
   type PaintStats,
 } from "@/lib/canvasPaint";
+import { validationListItems } from "@/lib/validationList";
 import {
   cellFontStack,
   clearTextCaches,
@@ -174,6 +175,14 @@ export type SheetViews = Map<string, Map<string, SheetView>>;
 
 /** The heading a context menu was opened on, or none when it was a cell. */
 type MenuTarget = { kind: "row"; index: number } | { kind: "col"; index: number } | null;
+
+/** Excel's input prompt for the active cell, from the file's validation rule. */
+interface PromptInfo {
+  row: number;
+  col: number;
+  title: string;
+  text: string;
+}
 
 /**
  * The rows — or the columns — an area covers, or null when it runs the other
@@ -464,6 +473,9 @@ export function CanvasGrid({
   const overlayRef = useRef<HTMLCanvasElement>(null);
   /** The clipped strip the filter buttons live in, over the cell area. */
   const overlayAreaRef = useRef<HTMLDivElement>(null);
+  /** The data-validation input prompt, when the active cell carries one. */
+  const promptRef = useRef<HTMLDivElement>(null);
+  const promptInfoRef = useRef<PromptInfo | null>(null);
   /** One positioned wrapper per filter-header column, keyed by column index. */
   const filterSlots = useRef(new Map<number, HTMLDivElement>());
   /** The clipped cell area the shapes and the print mark live in. */
@@ -603,6 +615,16 @@ export function CanvasGrid({
    * go, and offering one that could not be kept would be a lie.
    */
   const [editing, setEditing] = useState<{ row: number; col: number } | null>(null);
+  /**
+   * The list a list-validated cell offers, opened from the arrow Excel draws
+   * on it. Fixed positioning, because the sheet it belongs to scrolls under
+   * it; it closes rather than following a scroll.
+   */
+  const [valueList, setValueList] = useState<{
+    x: number;
+    y: number;
+    items: string[];
+  } | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   /** What the paint pass reads, since a scroll does not re-render React. */
   const editingRef = useRef(editing);
@@ -950,6 +972,37 @@ export function CanvasGrid({
       width: frozenSheetCols > 0 ? (cols.offsets[frozenSheetCols] ?? 0) : 0,
     };
   }, [layout, rowView, rowCount, colCount, displayRowCount, sheetRowOf, rows, cols]);
+
+  /**
+   * Excel's input prompt: a small yellow note beside the cell the cursor is on,
+   * when the file's validation rule asks for one. A range selection shows none
+   * — only a single active cell has somewhere to put it.
+   */
+  const promptInfo = useMemo<PromptInfo | null>(() => {
+    if (!layout) return null;
+    const at = activeArea(selection);
+    if (at.kind !== "cell") return null;
+    const rule = (layout.validations ?? []).find(
+      (rule) =>
+        rule.showInput &&
+        (rule.prompt || rule.promptTitle) &&
+        rule.ranges.some(
+          (range) =>
+            at.row >= range.row &&
+            at.row < range.row + range.rows &&
+            at.col >= range.col &&
+            at.col < range.col + range.cols,
+        ),
+    );
+    if (!rule) return null;
+    return {
+      row: at.row,
+      col: at.col,
+      title: rule.promptTitle ?? "",
+      text: rule.prompt ?? "",
+    };
+  }, [layout, selection]);
+  promptInfoRef.current = promptInfo;
 
 
   /**
@@ -1979,6 +2032,28 @@ export function CanvasGrid({
       return value;
     };
 
+    /**
+     * The validation rule over a cell. Rules are few and each names its blocks,
+     * so a walk is cheaper than the per-cell index a mark needs — and this is
+     * only asked about the active cell.
+     */
+    const validations = layout.validations ?? [];
+    const validationAtFast = (row: number, col: number) => {
+      for (const rule of validations) {
+        for (const range of rule.ranges) {
+          if (
+            row >= range.row &&
+            row < range.row + range.rows &&
+            col >= range.col &&
+            col < range.col + range.cols
+          ) {
+            return rule;
+          }
+        }
+      }
+      return null;
+    };
+
     const shownRuns: (MergeRect & { text: string | null })[] = [];
     const coveredRuns = new Set<number>();
     const joinable = (row: number, col: number) =>
@@ -2039,6 +2114,7 @@ export function CanvasGrid({
       styleCalls,
       mergeAt: mergeAtFast,
       markAt: markAtFast,
+      validationAt: validationAtFast,
       workbookFontFamily: fontFamily,
       workbookFontSizePx: fontSize,
       showGrid,
@@ -2267,6 +2343,30 @@ export function CanvasGrid({
             `${(view.rows.offsets[headerDisplay] - (headerDisplay < fr ? 0 : view.scrollTop)) * view.zoom}px)`;
           slot.style.width = `${spanAt(view.cols.offsets, col) * view.zoom}px`;
           slot.style.height = `${headerH * view.zoom}px`;
+        }
+
+        // The file's input prompt sits beside the active cell — to its right
+        // when that fits, to its left otherwise, and never past the view's own
+        // edges, which is where Excel keeps it too.
+        const prompt = promptRef.current;
+        if (prompt) {
+          const info = promptInfoRef.current;
+          const display = info ? view.displayOfRow(info.row) : -1;
+          if (!info || display < 0) {
+            prompt.style.display = "none";
+          } else {
+            const x = (view.cols.offsets[info.col] - (info.col < fc ? 0 : view.scrollLeft)) * view.zoom;
+            const y = (view.rows.offsets[display] - (display < fr ? 0 : view.scrollTop)) * view.zoom;
+            const w = spanAt(view.cols.offsets, info.col) * view.zoom;
+            prompt.style.display = "";
+            prompt.style.transform = "translate(0px, 0px)";
+            const pw = prompt.offsetWidth;
+            const ph = prompt.offsetHeight;
+            const left =
+              x + w + 2 + pw <= area.clientWidth ? x + w + 2 : Math.max(0, x - pw - 2);
+            const top = Math.min(Math.max(0, y), Math.max(0, area.clientHeight - ph - 1));
+            prompt.style.transform = `translate(${left}px, ${top}px)`;
+          }
         }
 
         // The field over an open cell is DOM as well, and goes where its cell
@@ -2766,6 +2866,89 @@ export function CanvasGrid({
     });
   };
 
+  /** The validation rule over a sheet cell, independent of the paint view. */
+  const validationAtCell = useCallback(
+    (row: number, col: number) => {
+      for (const rule of layout?.validations ?? []) {
+        for (const range of rule.ranges) {
+          if (
+            row >= range.row &&
+            row < range.row + range.rows &&
+            col >= range.col &&
+            col < range.col + range.cols
+          ) {
+            return rule;
+          }
+        }
+      }
+      return null;
+    },
+    [layout],
+  );
+
+  /**
+   * Opens a list validation's choices when the press was on its arrow — the
+   * small button the overlay draws at the active cell's right edge. The list is
+   * a viewer's list: this app does not write a value back, so choosing one
+   * closes it rather than inventing an edit the file does not have.
+   */
+  const handleDropdownPress = useCallback(
+    (clientX: number, clientY: number): boolean => {
+      const at = activeArea(selection);
+      if (at.kind !== "cell") return false;
+      const rule = validationAtCell(at.row, at.col);
+      if (!rule || rule.kind !== "list" || rule.hideDropdown) return false;
+      const el = viewportRef.current;
+      if (!el) return false;
+      const display = displayOfRow(at.row);
+      if (display < 0) return false;
+
+      const z = zoomRef.current;
+      const rect = el.getBoundingClientRect();
+      const sheetX = cols.offsets[at.col] ?? 0;
+      const sheetY = rows.offsets[display] ?? 0;
+      const w = spanAt(cols.offsets, at.col);
+      const h = spanAt(rows.offsets, display);
+      // The same geometry the overlay painted the button with.
+      const screenX = (ROW_HEADER_W + sheetX) * z - (at.col < freeze.cols ? 0 : el.scrollLeft);
+      const screenY = (COL_HEADER_H + sheetY) * z - (display < freeze.rows ? 0 : el.scrollTop);
+      const size = Math.min(16, Math.max(9, h - 2)) * z;
+      const left = rect.left + screenX + (w - size / z - 1) * z;
+      const top = rect.top + screenY + (h * z - size) / 2;
+      if (clientX < left || clientX > left + size || clientY < top || clientY > top + size) {
+        return false;
+      }
+      void validationListItems(path, sheet.name, rule.formula1).then((items) => {
+        if (items.length === 0) return;
+        const boxHeight = Math.min(items.length * 24 + 8, 272);
+        const y = Math.min(rect.top + screenY + h * z + 2, window.innerHeight - boxHeight - 8);
+        const x = Math.min(rect.left + screenX, window.innerWidth - 208);
+        setValueList({ x, y, items });
+      });
+      return true;
+    },
+    [selection, validationAtCell, displayOfRow, cols, rows, freeze, path, sheet.name],
+  );
+
+  // A list belongs to a cell on screen; a scroll or a press anywhere else is
+  // the end of it. Escape closes it, as it closes every menu.
+  useEffect(() => {
+    if (!valueList) return;
+    const close = () => setValueList(null);
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    const view = viewportRef.current;
+    window.addEventListener("pointerdown", close, true);
+    window.addEventListener("keydown", key);
+    view?.addEventListener("scroll", close);
+    return () => {
+      window.removeEventListener("pointerdown", close, true);
+      window.removeEventListener("keydown", key);
+      view?.removeEventListener("scroll", close);
+    };
+  }, [valueList]);
+
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     suppressClick.current = false;
     // Every shortcut in the key handler needs the viewport focused, and a press
@@ -2777,6 +2960,12 @@ export function CanvasGrid({
     // sheet is a text selection, so a press clears it.
     window.getSelection()?.removeAllRanges();
     if (event.button !== 0) return;
+    // Excel's in-cell dropdown: a press on the arrow opens the choices and does
+    // not move the selection.
+    if (handleDropdownPress(event.clientX, event.clientY)) {
+      event.preventDefault();
+      return;
+    }
     const hit = hitAt(event.clientX, event.clientY);
     if (!hit) return;
     // An anchor on a gutter picks a run of rows or columns; one on a cell runs a
@@ -3559,6 +3748,19 @@ export function CanvasGrid({
               </div>
             ))}
 
+          {/* The file's input prompt, beside the active cell. */}
+          {promptInfo && !valueList && (
+            <div
+              ref={promptRef}
+              className="pointer-events-none absolute top-0 left-0 max-w-[260px] rounded-[3px] border border-[#8f8f8f] bg-[#ffffe1] px-2 py-1 text-[11px] leading-[1.3] text-[#333] shadow-sm"
+              style={{ display: "none", transformOrigin: "0 0" }}
+            >
+              {promptInfo.title ? <div className="font-bold">{promptInfo.title}</div> : null}
+              {promptInfo.text ? (
+                <div className="whitespace-pre-wrap">{promptInfo.text}</div>
+              ) : null}
+            </div>
+          )}
           {/*
             The cell's text, lifted out of the painting so it can be selected
             and copied with the mouse, which painted text cannot be. It is a
@@ -3684,6 +3886,28 @@ export function CanvasGrid({
             style={{ left: tip.x, top: tip.y }}
           >
             {tip.text}
+          </div>
+        )}
+
+        {/* The values a list validation allows, under its own arrow. */}
+        {valueList && (
+          <div
+            role="listbox"
+            className="fixed z-50 max-h-64 min-w-48 overflow-auto border border-border bg-background py-1 text-xs shadow-md"
+            style={{ left: valueList.x, top: valueList.y }}
+          >
+            {valueList.items.map((item, index) => (
+              <div
+                key={`${index}-${item}`}
+                role="option"
+                aria-selected={false}
+                className="cursor-default truncate px-2 py-1 hover:bg-accent"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => setValueList(null)}
+              >
+                {item}
+              </div>
+            ))}
           </div>
         )}
       </div>

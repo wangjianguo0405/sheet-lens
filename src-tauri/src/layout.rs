@@ -263,6 +263,36 @@ pub struct MergeRect {
     pub cols: u32,
 }
 
+/// One data-validation rule and the cells it governs.
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DataValidation {
+    pub ranges: Vec<MergeRect>,
+    /// `list`, `whole`, `decimal`, `date`, `time`, `textLength`, `custom` or
+    /// `none`.
+    pub kind: String,
+    /// The rule's own formula, as written: a quoted list such as `"a,b"`, a
+    /// range, or an expression.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formula1: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formula2: Option<String>,
+    pub allow_blank: bool,
+    /// The file's `showDropDown` — **inverted**, as Excel writes it: setting it
+    /// hides the in-cell dropdown (`InCellDropdown = False` writes `"1"`).
+    pub hide_dropdown: bool,
+    pub show_input: bool,
+    pub show_error: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// The sheet's autofilter: `row` holds the filter buttons, `rows` counts the
 /// whole range including that header row.
 #[derive(Serialize, Clone)]
@@ -454,6 +484,9 @@ pub struct SheetLayout {
     /// Row index -> height in pixels, for rows with an explicit height.
     pub row_heights_px: HashMap<u32, f64>,
     pub merges: Vec<MergeRect>,
+    /// Data-validation rules: what a cell accepts, and the prompt or dropdown
+    /// Excel offers for it.
+    pub validations: Vec<DataValidation>,
     /// Rows the file hides. Excel draws none of them and skips their numbers —
     /// there is no marker at the boundary, so the gap is the only sign. A
     /// hidden row keeps whatever height it had, which is what unhiding puts
@@ -578,6 +611,7 @@ impl SheetLayout {
             col_widths_chars: HashMap::new(),
             row_heights_px: HashMap::new(),
             merges: Vec::new(),
+            validations: Vec::new(),
             hidden_rows: Vec::new(),
             hidden_cols: Vec::new(),
             auto_filter: None,
@@ -1989,6 +2023,11 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
         .map(points_to_font_px)
         .unwrap_or_else(|| points_to_font_px(STOCK_FONT_PT));
 
+    // The rule being read, and which of its `<formula1>`/`<formula2>` the text
+    // now belongs to — the formulas are element text, not attributes.
+    let mut validation: Option<DataValidation> = None;
+    let mut formula_slot: Option<u8> = None;
+
     loop {
         buf.clear();
         match xml.read_event_into(&mut buf) {
@@ -2192,16 +2231,64 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles) -> Result<SheetLayout, St
                             }
                         }
                     }
+                    b"dataValidation" => {
+                        let flag = |name: &[u8]| {
+                            attr(&element, name).is_some_and(|v| v == "1" || v == "true")
+                        };
+                        validation = Some(DataValidation {
+                            ranges: attr(&element, b"sqref")
+                                .map(|refs| {
+                                    refs.split_whitespace()
+                                        .filter_map(parse_range)
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                            kind: attr(&element, b"type")
+                                .unwrap_or_else(|| "none".to_owned()),
+                            formula1: None,
+                            formula2: None,
+                            allow_blank: flag(b"allowBlank"),
+                            // Excel's own quirk: `InCellDropdown = False`
+                            // writes `showDropDown="1"`.
+                            hide_dropdown: flag(b"showDropDown"),
+                            show_input: flag(b"showInputMessage"),
+                            show_error: flag(b"showErrorMessage"),
+                            prompt_title: attr(&element, b"promptTitle"),
+                            prompt: attr(&element, b"prompt"),
+                            error_title: attr(&element, b"errorTitle"),
+                            error: attr(&element, b"error"),
+                        });
+                    }
+                    b"formula1" if validation.is_some() => formula_slot = Some(1),
+                    b"formula2" if validation.is_some() => formula_slot = Some(2),
                     _ => {}
                 }
             }
             Ok(Event::End(element)) => {
                 match element.local_name().as_ref() {
                     b"filterColumn" => filter_col = None,
+                    b"formula1" | b"formula2" => formula_slot = None,
+                    b"dataValidation" => {
+                        if let Some(rule) = validation.take() {
+                            layout.validations.push(rule);
+                        }
+                    }
                     b"customSheetViews" | b"extLst" => {
                         borrowed_filters = borrowed_filters.saturating_sub(1)
                     }
                     _ => {}
+                }
+            }
+            Ok(Event::Text(text)) if formula_slot.is_some() => {
+                if let (Some(rule), Ok(content)) =
+                    (validation.as_mut(), text.xml_content(XmlVersion::default()))
+                {
+                    let content = content.trim().to_owned();
+                    if formula_slot == Some(1) {
+                        rule.formula1 = Some(content);
+                    } else {
+                        rule.formula2 = Some(content);
+                    }
                 }
             }
             Ok(Event::Eof) => break,
@@ -2577,6 +2664,27 @@ mod tests {
         let Some(layout) = sample("Summary") else { return };
         // Six rows are written out, and the A1:B1 merge names two columns.
         assert_eq!((layout.rows, layout.cols), (6, 2));
+    }
+
+    #[test]
+    fn reads_a_data_validation_rule() {
+        let cache = Cache::default();
+        // Excel's `showDropDown` is inverted: writing it hides the in-cell
+        // dropdown, which is what `InCellDropdown = False` produces.
+        let xml = br#"<worksheet><dataValidations><dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" showDropDown="1" promptTitle="Pick" prompt="Choose" sqref="B1 C3:D4"><formula1>"a,b"</formula1></dataValidation></dataValidations><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles).expect("layout");
+        assert_eq!(layout.validations.len(), 1);
+        let rule = &layout.validations[0];
+        assert_eq!(rule.kind, "list");
+        assert_eq!(rule.formula1.as_deref(), Some("\"a,b\""));
+        assert!(rule.allow_blank);
+        assert!(rule.hide_dropdown);
+        assert!(rule.show_input);
+        assert_eq!(rule.prompt_title.as_deref(), Some("Pick"));
+        assert_eq!(rule.prompt.as_deref(), Some("Choose"));
+        assert_eq!(rule.ranges.len(), 2);
+        let block = &rule.ranges[1];
+        assert_eq!((block.row, block.col, block.rows, block.cols), (2, 2, 2, 2));
     }
 
     #[test]
