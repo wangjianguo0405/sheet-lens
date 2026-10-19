@@ -109,6 +109,20 @@ enum Matcher {
     /// `duplicateValues` / `uniqueValues`: whether the value repeats among the
     /// rule's own ranges. Blanks never count either way.
     Duplicate { keep_duplicates: bool },
+    /// `top10`: whether the cell's value is among the highest or lowest `rank`
+    /// in the rule's range. `percent` makes `rank` a share of the count instead.
+    Top {
+        bottom: bool,
+        rank: u32,
+        percent: bool,
+    },
+    /// `aboveAverage` and its below/equal variants, optionally shifted by a
+    /// number of standard deviations.
+    Average {
+        above: bool,
+        equal: bool,
+        deviations: u32,
+    },
     /// A colour scale or a data bar covers its whole range.
     Always,
 }
@@ -262,8 +276,23 @@ enum Kind {
     CellIs(CellOp),
     Text(TextTest, String),
     Duplicate(bool),
+    Top {
+        bottom: bool,
+        rank: u32,
+        percent: bool,
+    },
+    Average {
+        above: bool,
+        equal: bool,
+        deviations: u32,
+    },
     ColorScale,
     DataBar,
+}
+
+/// An optional OOXML boolean: absent means false.
+fn flag(value: Option<String>) -> bool {
+    value.is_some_and(|v| v == "1" || v == "true")
 }
 
 /// The rule a `<cfRule>` element names, if this reader has a way to evaluate it.
@@ -280,6 +309,24 @@ fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
         Some("endsWith") => Kind::Text(TextTest::Ends, attr(element, b"text")?),
         Some("duplicateValues") => Kind::Duplicate(true),
         Some("uniqueValues") => Kind::Duplicate(false),
+        Some("top10") => Kind::Top {
+            bottom: flag(attr(element, b"bottom")),
+            rank: attr(element, b"rank")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
+            percent: flag(attr(element, b"percent")),
+        },
+        Some("aboveAverage") => Kind::Average {
+            // Absent means above, which is what Excel writes for a rule it
+            // created above the average.
+            above: !attr(element, b"aboveAverage")
+                .is_some_and(|v| v == "0" || v == "false"),
+            equal: flag(attr(element, b"equalAverage")),
+            deviations: attr(element, b"stdDev")
+                .and_then(|v| v.parse::<i32>().ok())
+                .map(i32::unsigned_abs)
+                .unwrap_or(0),
+        },
         Some("colorScale") => Kind::ColorScale,
         Some("dataBar") => Kind::DataBar,
         _ => return None,
@@ -340,6 +387,24 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
         },
         Kind::Duplicate(keep_duplicates) => Matcher::Duplicate {
             keep_duplicates: *keep_duplicates,
+        },
+        Kind::Top {
+            bottom,
+            rank,
+            percent,
+        } => Matcher::Top {
+            bottom: *bottom,
+            rank: *rank,
+            percent: *percent,
+        },
+        Kind::Average {
+            above,
+            equal,
+            deviations,
+        } => Matcher::Average {
+            above: *above,
+            equal: *equal,
+            deviations: *deviations,
         },
         Kind::ColorScale | Kind::DataBar => Matcher::Always,
     };
@@ -403,9 +468,11 @@ impl Rule {
                 }
                 self.range_columns(out);
             }
-            Matcher::Text { .. } | Matcher::Duplicate { .. } | Matcher::Always => {
-                self.range_columns(out)
-            }
+            Matcher::Text { .. }
+            | Matcher::Duplicate { .. }
+            | Matcher::Top { .. }
+            | Matcher::Average { .. }
+            | Matcher::Always => self.range_columns(out),
         }
     }
 
@@ -884,11 +951,17 @@ fn fold(
     // per rule.
     let numbers: Vec<Option<Vec<f64>>> = ordered
         .iter()
-        .map(|rule| match &rule.paint {
-            Paint::ColorScale(_) | Paint::DataBar(_) => {
+        .map(|rule| match &rule.matcher {
+            // The rules that measure a cell against its whole range.
+            Matcher::Top { .. } | Matcher::Average { .. } => {
                 Some(rule.numbers(values, layout.rows, layout.cols))
             }
-            _ => None,
+            _ => match &rule.paint {
+                Paint::ColorScale(_) | Paint::DataBar(_) => {
+                    Some(rule.numbers(values, layout.rows, layout.cols))
+                }
+                _ => None,
+            },
         })
         .collect();
 
@@ -952,10 +1025,14 @@ fn fold(
                     anchor_col: span.anchor_col,
                     values,
                 };
-                if !span.rule.matcher.matches(&context, counts[span.index].as_ref()) {
+                let numbers = numbers[span.index].as_deref().unwrap_or(&[]);
+                if !span
+                    .rule
+                    .matcher
+                    .matches(&context, counts[span.index].as_ref(), numbers)
+                {
                     continue;
                 }
-                let numbers = numbers[span.index].as_deref().unwrap_or(&[]);
                 match &span.rule.paint {
                     Paint::Dxf(index) => {
                         merge(fired.entry(col).or_default(), &patches[*index]);
@@ -1193,6 +1270,7 @@ impl Matcher {
         &self,
         context: &Context,
         duplicates: Option<&HashMap<ValueKey, usize>>,
+        numbers: &[f64],
     ) -> bool {
         match self {
             Matcher::Expression(formula) => formula.eval(context) == Some(Value::Bool(true)),
@@ -1251,6 +1329,64 @@ impl Matcher {
                     count > 1
                 } else {
                     count == 1
+                }
+            }
+            Matcher::Top {
+                bottom,
+                rank,
+                percent,
+            } => {
+                let Value::Number(value) = context.value() else {
+                    return false;
+                };
+                let count = numbers.len();
+                if count == 0 {
+                    return false;
+                }
+                let take = if *percent {
+                    ((count as f64 * *rank as f64 / 100.0).ceil() as usize).max(1)
+                } else {
+                    (*rank as usize).max(1)
+                }
+                .min(count);
+                // Ties at the cut are all in, which is how Excel highlights a
+                // rank whose boundary value repeats.
+                if *bottom {
+                    value <= numbers[take - 1]
+                } else {
+                    value >= numbers[count - take]
+                }
+            }
+            Matcher::Average {
+                above,
+                equal,
+                deviations,
+            } => {
+                let Value::Number(value) = context.value() else {
+                    return false;
+                };
+                if numbers.is_empty() {
+                    return false;
+                }
+                let count = numbers.len() as f64;
+                let mean = numbers.iter().sum::<f64>() / count;
+                let variance = numbers
+                    .iter()
+                    .map(|number| (number - mean) * (number - mean))
+                    .sum::<f64>()
+                    / count;
+                let spread = *deviations as f64 * variance.sqrt();
+                let threshold = if *above { mean + spread } else { mean - spread };
+                if *above {
+                    if *equal {
+                        value >= threshold
+                    } else {
+                        value > threshold
+                    }
+                } else if *equal {
+                    value <= threshold
+                } else {
+                    value < threshold
                 }
             }
             Matcher::Always => true,
@@ -1920,6 +2056,16 @@ mod tests {
     /// Whether a rule fires for one cell, with the range's values laid out as a
     /// small sheet would.
     fn fires(rule: &Rule, row: u32, col: u32, cells: &[((u32, u32), Value)]) -> bool {
+        fires_with(rule, row, col, cells, &[])
+    }
+
+    fn fires_with(
+        rule: &Rule,
+        row: u32,
+        col: u32,
+        cells: &[((u32, u32), Value)],
+        numbers: &[f64],
+    ) -> bool {
         let values: HashMap<(u32, u32), Value> = cells.iter().cloned().collect();
         let context = Context {
             row,
@@ -1932,7 +2078,7 @@ mod tests {
             Matcher::Duplicate { .. } => Some(rule.value_counts(&values, 8, 8)),
             _ => None,
         };
-        rule.matcher.matches(&context, counts.as_ref())
+        rule.matcher.matches(&context, counts.as_ref(), numbers)
     }
 
     /// The rule this whole feature was written for: a row greyed out because its
@@ -2134,6 +2280,97 @@ mod tests {
         // A value below the range is clamped, not drawn backwards.
         assert_eq!(share(5.0), Some(0.0));
         assert_eq!(share(150.0), Some(1.0));
+    }
+
+    #[test]
+    fn reads_the_top_rank_rules() {
+        let xml = r#"<worksheet>
+            <conditionalFormatting sqref="A1:A10"><cfRule type="top10" dxfId="0" priority="1" rank="3"/></conditionalFormatting>
+            <conditionalFormatting sqref="B1:B10"><cfRule type="top10" dxfId="0" priority="2" rank="2" bottom="1"/></conditionalFormatting>
+            <conditionalFormatting sqref="C1:C10"><cfRule type="top10" dxfId="0" priority="3" rank="20" percent="1"/></conditionalFormatting>
+        </worksheet>"#;
+        let rules = rules(xml, &[]);
+        assert_eq!(rules.len(), 3);
+        let numbers: Vec<f64> = (1..=10).map(|n| n as f64 * 10.0).collect();
+        let top3 = |value: f64| {
+            fires_with(
+                &rules[0],
+                0,
+                0,
+                &[((0, 0), Value::Number(value))],
+                &numbers,
+            )
+        };
+        assert!(top3(100.0));
+        assert!(top3(80.0));
+        assert!(!top3(70.0));
+        assert!(fires_with(
+            &rules[1],
+            0,
+            1,
+            &[((0, 1), Value::Number(20.0))],
+            &numbers
+        ));
+        assert!(!fires_with(
+            &rules[1],
+            0,
+            1,
+            &[((0, 1), Value::Number(30.0))],
+            &numbers
+        ));
+        // Twenty per cent of ten values is the top two.
+        assert!(fires_with(
+            &rules[2],
+            0,
+            2,
+            &[((0, 2), Value::Number(90.0))],
+            &numbers
+        ));
+        assert!(!fires_with(
+            &rules[2],
+            0,
+            2,
+            &[((0, 2), Value::Number(80.0))],
+            &numbers
+        ));
+    }
+
+    #[test]
+    fn reads_the_average_rules() {
+        let xml = r#"<worksheet>
+            <conditionalFormatting sqref="A1:A10"><cfRule type="aboveAverage" dxfId="0" priority="1"/></conditionalFormatting>
+            <conditionalFormatting sqref="B1:B10"><cfRule type="aboveAverage" dxfId="0" priority="2" aboveAverage="0" equalAverage="1"/></conditionalFormatting>
+        </worksheet>"#;
+        let rules = rules(xml, &[]);
+        assert_eq!(rules.len(), 2);
+        // 10 through 100: the mean is 55.
+        let numbers: Vec<f64> = (1..=10).map(|n| n as f64 * 10.0).collect();
+        let above = |value: f64| {
+            fires_with(
+                &rules[0],
+                0,
+                0,
+                &[((0, 0), Value::Number(value))],
+                &numbers,
+            )
+        };
+        assert!(above(60.0));
+        // Strictly above, unless `equalAverage` says otherwise.
+        assert!(!above(55.0));
+        assert!(fires_with(
+            &rules[1],
+            0,
+            1,
+            &[((0, 1), Value::Number(55.0))],
+            &numbers
+        ));
+        assert!(!fires_with(
+            &rules[1],
+            0,
+            1,
+            &[((0, 1), Value::Number(60.0))],
+            &numbers
+        ));
     }
 
     #[test]
