@@ -230,6 +230,22 @@ export interface ShapeText {
  * offset, so the renderer can resolve it against the grid's own column widths —
  * which is what keeps shapes in place once a filter hides rows.
  */
+export interface ShapeGroup {
+  fromCol: number;
+  fromX: number;
+  fromRow: number;
+  fromY: number;
+  toCol: number;
+  toX: number;
+  toRow: number;
+  toY: number;
+  /** The shape's box as a fraction of the group's box. */
+  fx: number;
+  fy: number;
+  fw: number;
+  fh: number;
+}
+
 export interface Shape {
   /** The preset geometry name, `picture`, or `frame` for a chart we do not draw. */
   kind: string;
@@ -250,6 +266,14 @@ export interface Shape {
   text: ShapeText | null;
   /** Pictures only: the media part inside the workbook, e.g. `xl/media/image3.png`. */
   media: string | null;
+  /** Pictures only: the part of the image cut away, as [left, top, right, bottom] fractions. */
+  crop?: [number, number, number, number];
+  /**
+   * Set when the shape sits inside a group. The group's box is given in cells —
+   * so it follows the grid — and the shape's own box is a fraction of it, which
+   * keeps a group exact without the parser's approximate column widths.
+   */
+  group?: ShapeGroup;
   /** Preset adjustments (`adj1`…), as fractions of the shape. Callouts use these. */
   adjust: number[];
 }

@@ -52,6 +52,15 @@ pub struct Shape {
     pub text: Option<Text>,
     /// Pictures only: the media part inside the workbook, e.g. `xl/media/image3.png`.
     pub media: Option<String>,
+    /// Pictures only: the part of the image cut away, as fractions of it —
+    /// `[left, top, right, bottom]`. Excel writes a negative side to extend the
+    /// image past the box instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f64; 4]>,
+    /// Set when the shape sits inside a group: its place as a fraction of the
+    /// group's anchor box, which the renderer resolves with its own widths.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<GroupFrame>,
     /// Preset adjustments in the order the preset declares them (`adj1`…), in
     /// the file's own units — hundred-thousandths. The renderer feeds them
     /// straight into the preset's formulas, which divide by 100000 themselves.
@@ -302,6 +311,56 @@ struct StyleRefs {
     font: Option<Fill>,
 }
 
+/// Where a group's children live. A group carries a child coordinate space
+/// (`chOff`/`chExt`) that maps onto the group's own box, and Excel places that
+/// box from the anchor — its `xfrm` is a cached copy that a resized sheet can
+/// leave stale. The frame is the group's rect as a fraction of the anchor, which
+/// is what lets the renderer resolve children against its own column widths
+/// instead of the parser's approximate ones. Nested groups compose.
+struct GroupXform {
+    ch_off: (f64, f64),
+    ch_ext: (f64, f64),
+    /// `[left, top, width, height]` as fractions of the anchor's box.
+    frame: [f64; 4],
+    /// The innermost enclosing anchor, whose box the fractions are against.
+    anchor: ((u32, f64, u32, f64), (u32, f64, u32, f64)),
+    /// The group's own fill, which a child with `<a:grpFill/>` draws with.
+    fill: Option<Fill>,
+}
+
+impl GroupXform {
+    /// A child group's rect as fractions of the same anchor box this group's
+    /// frame is measured in.
+    fn child_frame(&self, off: (f64, f64), ext: (f64, f64)) -> [f64; 4] {
+        let sx = if self.ch_ext.0 != 0.0 { 1.0 / self.ch_ext.0 } else { 0.0 };
+        let sy = if self.ch_ext.1 != 0.0 { 1.0 / self.ch_ext.1 } else { 0.0 };
+        [
+            self.frame[0] + (off.0 - self.ch_off.0) * sx * self.frame[2],
+            self.frame[1] + (off.1 - self.ch_off.1) * sy * self.frame[3],
+            ext.0 * sx * self.frame[2],
+            ext.1 * sy * self.frame[3],
+        ]
+    }
+}
+
+/// A shape's place inside its group, as a fraction of the group's anchor box.
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupFrame {
+    pub from_col: u32,
+    pub from_x: f64,
+    pub from_row: u32,
+    pub from_y: f64,
+    pub to_col: u32,
+    pub to_x: f64,
+    pub to_row: u32,
+    pub to_y: f64,
+    pub fx: f64,
+    pub fy: f64,
+    pub fw: f64,
+    pub fh: f64,
+}
+
 /// Which slot the colour element now being read will fill.
 #[derive(Clone, Copy, PartialEq)]
 enum Target {
@@ -350,10 +409,31 @@ struct Parser<'a> {
     text_wrap: Option<bool>,
     text_insets: Option<[f64; 4]>,
     text_color: Option<Fill>,
+    /// The paragraph's own `b`/`i`, which a run that does not name them
+    /// inherits. A shape's `lstStyle` is only the outermost default.
+    text_bold: Option<bool>,
+    text_italic: Option<bool>,
     /// The face the shape's own `defRPr` names, which its runs inherit.
     text_family: Option<String>,
     /// The theme's own font scheme, which `+mn-ea` and its like index into.
     theme_fonts: &'a HashMap<String, String>,
+    /// The group transforms now open, innermost last. A shape inside one is
+    /// placed by its own `xfrm` — the anchor belongs to the group.
+    groups: Vec<GroupXform>,
+    /// A group's `xfrm`, in EMU, collected between its start and its end.
+    group_off: (f64, f64),
+    group_ext: (f64, f64),
+    group_ch_off: (f64, f64),
+    group_ch_ext: (f64, f64),
+    /// The shape's own `xfrm` offset and size, in EMU. Unused unless the shape
+    /// sits in a group; otherwise its anchor is what places it.
+    sp_off: (f64, f64),
+    sp_ext: (f64, f64),
+    /// The fill the group being read declares (`grpSpPr`), for children that
+    /// say `<a:grpFill/>`.
+    group_fill: ExplicitFill,
+    /// Whether the shape being read asked for its group's fill.
+    shape_group_fill: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -391,13 +471,47 @@ impl<'a> Parser<'a> {
             text_wrap: None,
             text_insets: None,
             text_color: None,
+            text_bold: None,
+            text_italic: None,
             text_family: None,
+            groups: Vec::new(),
+            group_off: (0.0, 0.0),
+            group_ext: (0.0, 0.0),
+            group_ch_off: (0.0, 0.0),
+            group_ch_ext: (0.0, 0.0),
+            sp_off: (0.0, 0.0),
+            sp_ext: (0.0, 0.0),
+            group_fill: None,
+            shape_group_fill: false,
         }
     }
 
     /// The local name of the element enclosing the one being read.
     fn parent(&self) -> &[u8] {
         self.stack.last().map(Vec::as_slice).unwrap_or(b"")
+    }
+
+    /// Whether the `xfrm` being read is a group's rather than a shape's.
+    fn in_group_xfrm(&self) -> bool {
+        self.stack.iter().rev().nth(1).map(Vec::as_slice) == Some(b"grpSpPr")
+    }
+
+    /// Whether the `xfrm` being read belongs to the shape's own geometry, as
+    /// opposed to a group's or a text body's.
+    fn in_shape_xfrm(&self) -> bool {
+        self.stack.iter().rev().nth(1).map(Vec::as_slice) == Some(b"spPr")
+    }
+
+    /// Whether the element being read sits in the shape's `lstStyle`, whose
+    /// defaults are overridden by a paragraph's or a run's own formatting.
+    fn in_list_style(&self) -> bool {
+        self.stack.iter().any(|name| name == b"lstStyle")
+    }
+
+    /// Whether the element being read is a group's own properties — its fill,
+    /// as opposed to a child's.
+    fn in_group_props(&self) -> bool {
+        self.stack.iter().any(|name| name == b"grpSpPr")
     }
 
     /// The face a `typeface` names, which may be a slot in the theme's font
@@ -508,6 +622,7 @@ impl<'a> Parser<'a> {
                 self.to = None;
                 self.size = (0.0, 0.0);
                 self.pos = (0.0, 0.0);
+                self.groups.clear();
             }
             b"to" => self.to = Some(Point::default()),
             // Only the anchor's own `ext` sizes the shape; the one inside `xfrm`
@@ -544,7 +659,12 @@ impl<'a> Parser<'a> {
                 self.text_wrap = None;
                 self.text_insets = None;
                 self.text_color = None;
+                self.text_bold = None;
+                self.text_italic = None;
                 self.text_family = None;
+                self.sp_off = (0.0, 0.0);
+                self.sp_ext = (0.0, 0.0);
+                self.shape_group_fill = false;
             }
             b"xfrm" if parent == b"spPr" || parent == b"txXfrm" => {
                 if let Some(shape) = self.current.as_mut() {
@@ -552,6 +672,48 @@ impl<'a> Parser<'a> {
                     shape.flip_h = is_true(element, b"flipH");
                     shape.flip_v = is_true(element, b"flipV");
                 }
+            }
+            // A group's `xfrm` maps its children's coordinate space onto its own.
+            b"grpSp" => self.group_fill = None,
+            b"xfrm" if parent == b"grpSpPr" => {
+                self.group_off = (0.0, 0.0);
+                self.group_ext = (0.0, 0.0);
+                self.group_ch_off = (0.0, 0.0);
+                self.group_ch_ext = (0.0, 0.0);
+            }
+            b"off" if parent == b"xfrm" => {
+                let at = (
+                    num_attr(element, b"x").unwrap_or(0.0),
+                    num_attr(element, b"y").unwrap_or(0.0),
+                );
+                if self.in_group_xfrm() {
+                    self.group_off = at;
+                } else if self.in_shape_xfrm() {
+                    self.sp_off = at;
+                }
+            }
+            b"ext" if parent == b"xfrm" => {
+                let size = (
+                    num_attr(element, b"cx").unwrap_or(0.0),
+                    num_attr(element, b"cy").unwrap_or(0.0),
+                );
+                if self.in_group_xfrm() {
+                    self.group_ext = size;
+                } else if self.in_shape_xfrm() {
+                    self.sp_ext = size;
+                }
+            }
+            b"chOff" => {
+                self.group_ch_off = (
+                    num_attr(element, b"x").unwrap_or(0.0),
+                    num_attr(element, b"y").unwrap_or(0.0),
+                );
+            }
+            b"chExt" => {
+                self.group_ch_ext = (
+                    num_attr(element, b"cx").unwrap_or(0.0),
+                    num_attr(element, b"cy").unwrap_or(0.0),
+                );
             }
             b"prstGeom" => {
                 if let Some(shape) = self.current.as_mut() {
@@ -572,10 +734,14 @@ impl<'a> Parser<'a> {
             b"noFill" => {
                 if parent == b"ln" {
                     self.line.none = true;
+                } else if self.in_group_props() {
+                    self.group_fill = Some(None);
                 } else if self.fill.is_none() {
                     self.fill = Some(None);
                 }
             }
+            // `<a:grpFill/>` is the child taking its group's own fill.
+            b"grpFill" => self.shape_group_fill = true,
             // A pattern fill is reported as no fill rather than as a wrong flat
             // one. Gradients are collected properly just below.
             b"pattFill" if self.parent_is_sp_pr(&parent) && self.fill.is_none() => {
@@ -663,14 +829,46 @@ impl<'a> Parser<'a> {
                     self.text_align = Some(align_of(&value));
                 }
             }
-            b"r" => self.run = Some(Run::default()),
+            b"r" => {
+                self.run = Some(Run {
+                    bold: self.text_bold.unwrap_or(false),
+                    italic: self.text_italic.unwrap_or(false),
+                    ..Run::default()
+                })
+            }
+            // A run's own `rPr` is the most specific text formatting; a
+            // paragraph's `defRPr` sits under it, and a shape's `lstStyle` is
+            // the outermost default — so a real level beats `lstStyle` even
+            // when it comes later in the file, while an attribute a run omits
+            // is inherited rather than turned off.
             b"rPr" | b"defRPr" => {
-                if let Some(run) = self.run.as_mut() {
-                    run.bold = is_true(element, b"b");
-                    run.italic = is_true(element, b"i");
+                let in_list_style = self.in_list_style();
+                match self.run.as_mut() {
+                    Some(run) => {
+                        if let Some(bold) = bool_attr(element, b"b") {
+                            run.bold = bold;
+                        }
+                        if let Some(italic) = bool_attr(element, b"i") {
+                            run.italic = italic;
+                        }
+                    }
+                    None => {
+                        if let Some(bold) = bool_attr(element, b"b") {
+                            if !in_list_style || self.text_bold.is_none() {
+                                self.text_bold = Some(bold);
+                            }
+                        }
+                        if let Some(italic) = bool_attr(element, b"i") {
+                            if !in_list_style || self.text_italic.is_none() {
+                                self.text_italic = Some(italic);
+                            }
+                        }
+                    }
                 }
-                if self.text_size.is_none() {
-                    self.text_size = num_attr(element, b"sz").map(|size| size / 100.0);
+                if let Some(size) = num_attr(element, b"sz") {
+                    if self.run.is_some() || !in_list_style || self.text_size.is_none() {
+                        self.text_size = Some(size / 100.0);
+                    }
                 }
             }
             // `<a:latin typeface>` names the run's font. In a `defRPr` there is
@@ -680,7 +878,7 @@ impl<'a> Parser<'a> {
                 let face = self.font_name(attr(element, b"typeface"));
                 if let Some(run) = self.run.as_mut() {
                     run.family = face;
-                } else if self.text_family.is_none() {
+                } else if self.text_family.is_none() || !self.in_list_style() {
                     self.text_family = face;
                 }
             }
@@ -688,6 +886,14 @@ impl<'a> Parser<'a> {
                 if let Some(shape) = self.current.as_mut() {
                     // `r:embed` names the relationship to the image itself.
                     shape.media = attr(element, b"embed");
+                }
+            }
+            // Thousandths of a percent cut off each side of the image; the
+            // sides it does not name are not cropped.
+            b"srcRect" => {
+                if let Some(shape) = self.current.as_mut() {
+                    let side = |name: &[u8]| num_attr(element, name).unwrap_or(0.0) / 100_000.0;
+                    shape.crop = Some([side(b"l"), side(b"t"), side(b"r"), side(b"b")]);
                 }
             }
             _ => {}
@@ -732,6 +938,14 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            // A group's transform and fill are both known once its `grpSpPr`
+            // has closed. Its box is the anchor's — Excel draws it from there
+            // even when the `xfrm` disagrees — and the children map into it
+            // from `chOff`/`chExt`.
+            b"grpSpPr" => self.push_group(),
+            b"grpSp" => {
+                self.groups.pop();
+            }
             b"sp" | b"cxnSp" | b"pic" | b"graphicFrame" => self.finish(),
             _ => {}
         }
@@ -746,15 +960,74 @@ impl<'a> Parser<'a> {
                 }
             }
             b"lnRef" | b"fillRef" | b"fontRef" | b"effectRef" => self.ref_slot = None,
+            b"grpSpPr" => self.push_group(),
             _ => {}
         }
+    }
+
+    /// Opens the transform and fill a group puts its children in, once its
+    /// `grpSpPr` has been read.
+    fn push_group(&mut self) {
+        let (frame, anchor) = match self.groups.last() {
+            Some(parent) => (
+                parent.child_frame(self.group_off, self.group_ext),
+                parent.anchor,
+            ),
+            None => ([0.0, 0.0, 1.0, 1.0], self.resolve_box()),
+        };
+        self.groups.push(GroupXform {
+            ch_off: self.group_ch_off,
+            ch_ext: self.group_ch_ext,
+            frame,
+            anchor,
+            fill: match self.group_fill.take() {
+                Some(Some(fill)) => Some(fill),
+                _ => None,
+            },
+        });
     }
 
     fn finish(&mut self) {
         let Some(mut shape) = self.current.take() else {
             return;
         };
-        let (from, to) = self.resolve_box();
+        // A shape inside a group is not anchored itself: its own `xfrm` says
+        // where it sits in the group's child space, and the group's transform
+        // says where that is on the sheet.
+        let (from, to) = match self.groups.last() {
+            Some(group) => {
+                let frame = group.child_frame(self.sp_off, self.sp_ext);
+                shape.group = Some(GroupFrame {
+                    from_col: group.anchor.0.0,
+                    from_x: group.anchor.0.1,
+                    from_row: group.anchor.0.2,
+                    from_y: group.anchor.0.3,
+                    to_col: group.anchor.1.0,
+                    to_x: group.anchor.1.1,
+                    to_row: group.anchor.1.2,
+                    to_y: group.anchor.1.3,
+                    fx: frame[0],
+                    fy: frame[1],
+                    fw: frame[2],
+                    fh: frame[3],
+                });
+                // Only a fallback: the renderer resolves `group` against the
+                // real column widths, and these are the parser's approximation.
+                let left = self.grid.col_start(group.anchor.0.0) + group.anchor.0.1;
+                let top = self.grid.row_start(group.anchor.0.2) + group.anchor.0.3;
+                let width = self.grid.col_start(group.anchor.1.0) + group.anchor.1.1 - left;
+                let height = self.grid.row_start(group.anchor.1.2) + group.anchor.1.3 - top;
+                let (from_col, from_x) = self.grid.col_at(left + frame[0] * width);
+                let (from_row, from_y) = self.grid.row_at(top + frame[1] * height);
+                let (to_col, to_x) = self.grid.col_at(left + (frame[0] + frame[2]) * width);
+                let (to_row, to_y) = self.grid.row_at(top + (frame[1] + frame[3]) * height);
+                (
+                    (from_col, from_x, from_row, from_y),
+                    (to_col, to_x, to_row, to_y),
+                )
+            }
+            None => self.resolve_box(),
+        };
         shape.from_col = from.0;
         shape.from_x = from.1;
         shape.from_row = from.2;
@@ -775,6 +1048,10 @@ impl<'a> Parser<'a> {
                 (*index > 0).then(|| fill.clone())
             }),
         };
+        if self.shape_group_fill {
+            shape.fill = self.groups.last().and_then(|group| group.fill.clone());
+            self.shape_group_fill = false;
+        }
         shape.line = self.effective_line();
 
         // Empty paragraphs are kept — an empty one is a blank line, and a
@@ -900,13 +1177,19 @@ impl<'a> Parser<'a> {
     fn commit(&mut self, target: Target, fill: Fill) {
         match target {
             Target::Fill => {
-                if self.fill.is_none() {
+                if self.in_group_props() {
+                    if self.group_fill.is_none() {
+                        self.group_fill = Some(Some(fill));
+                    }
+                } else if self.fill.is_none() {
                     self.fill = Some(Some(fill));
                 }
             }
             Target::Line => self.line.color = Some(fill),
             Target::Run => {
-                if self.text_color.is_none() {
+                // A run's own colour beats a paragraph default, which beats
+                // `lstStyle` — the last one read wins in the second case.
+                if self.run.is_some() || self.text_color.is_none() || !self.in_list_style() {
                     self.text_color = Some(fill);
                 }
             }
@@ -970,6 +1253,12 @@ fn read_arrow(element: &BytesStart) -> Option<Arrow> {
 }
 
 fn is_true(element: &BytesStart, name: &[u8]) -> bool {    attr(element, name).is_some_and(|value| value == "1" || value == "true")
+}
+
+/// A boolean attribute, distinguishing "absent" from an explicit `0` — a run
+/// that does not name `b` inherits the paragraph's, while `b="0"` turns it off.
+fn bool_attr(element: &BytesStart, name: &[u8]) -> Option<bool> {
+    attr(element, name).map(|value| value == "1" || value == "true")
 }
 
 fn emu_to_px(emu: f64) -> f64 {
@@ -1168,6 +1457,77 @@ mod tests {
         // 20px + 80px = 100px, exactly column 1's left edge.
         assert_eq!((shape.to_col, shape.to_x), (1, 0.0));
         assert_eq!((shape.to_row, shape.to_y), (0, 10.0));
+    }
+
+    /// `srcRect` cuts a fraction off each side of a picture before it is
+    /// stretched into its anchor.
+    #[test]
+    fn reads_the_part_of_a_picture_that_is_cut_away() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a" xmlns:r="r"><xdr:oneCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="9525" cy="9525"/><xdr:pic><xdr:blipFill><a:blip r:embed="rId1"/><a:srcRect t="26517" b="-2"/><a:stretch/></xdr:blipFill></xdr:pic></xdr:oneCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let crop = shapes[0].crop.expect("crop");
+        assert!((crop[1] - 0.26517).abs() < 1e-9);
+        assert!((crop[3] + 0.00002).abs() < 1e-9);
+        assert_eq!((crop[0], crop[2]), (0.0, 0.0));
+    }
+
+    /// A shape inside a group is placed by the group's child coordinate space,
+    /// as a fraction of the group's anchor box — nested groups compose, and the
+    /// fractions are what the renderer resolves against the real column widths.
+    #[test]
+    fn places_a_grouped_shape_in_its_group() {
+        // The group fills the anchor (col 0 to col 1 = 100px); its child space
+        // is 200×100, and the ellipse sits at (150, 50) sized 50×50 in it.
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:grpSp><xdr:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="190500"/><a:chOff x="100" y="0"/><a:chExt cx="200" cy="100"/></a:xfrm></xdr:grpSpPr><xdr:sp><xdr:spPr><a:xfrm><a:off x="150" y="50"/><a:ext cx="50" cy="50"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom></xdr:spPr></xdr:sp></xdr:grpSp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        assert_eq!(shapes.len(), 1);
+        let group = shapes[0].group.as_ref().expect("in a group");
+        assert_eq!((group.from_col, group.from_x), (0, 0.0));
+        assert_eq!((group.to_col, group.to_x), (1, 0.0));
+        assert!((group.fx - 0.25).abs() < 1e-9);
+        assert!((group.fy - 0.5).abs() < 1e-9);
+        assert!((group.fw - 0.25).abs() < 1e-9);
+        assert!((group.fh - 0.5).abs() < 1e-9);
+    }
+
+    /// A group inside a group maps through both coordinate spaces.
+    #[test]
+    fn composes_a_nested_group() {
+        // Outer child space 200×100; inner group at x=50 spanning half of it;
+        // the child fills the inner group horizontally and half of it down.
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:grpSp><xdr:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="190500"/><a:chOff x="0" y="0"/><a:chExt cx="200" cy="100"/></a:xfrm></xdr:grpSpPr><xdr:grpSp><xdr:grpSpPr><a:xfrm><a:off x="50" y="0"/><a:ext cx="100" cy="100"/><a:chOff x="0" y="0"/><a:chExt cx="100" cy="100"/></a:xfrm></xdr:grpSpPr><xdr:sp><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="50"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:sp></xdr:grpSp></xdr:grpSp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let group = shapes[0].group.as_ref().expect("in a group");
+        assert!((group.fx - 0.25).abs() < 1e-9);
+        assert!((group.fy - 0.0).abs() < 1e-9);
+        assert!((group.fw - 0.5).abs() < 1e-9);
+        assert!((group.fh - 0.5).abs() < 1e-9);
+    }
+
+    /// `lstStyle` holds defaults; a run's own `rPr` beats them, and the
+    /// attributes a run omits are inherited rather than switched off — the
+    /// buttons in the design documents read 8pt bold dark grey, while their
+    /// `lstStyle` says 12pt white bold.
+    #[test]
+    fn a_run_beats_the_list_style_it_inherits_from() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr><a:defRPr sz="1200" b="1"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill><a:latin typeface="+mn-lt"/></a:defRPr></a:lvl1pPr></a:lstStyle><a:p><a:r><a:rPr sz="800"><a:solidFill><a:srgbClr val="616466"/></a:solidFill><a:latin typeface="メイリオ"/></a:rPr><a:t>x</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let theme = vec![Some("#FFFFFF".to_owned()), None, None];
+        let shapes = parse(xml, &grid(), &theme, &[], &HashMap::new());
+        let text = shapes[0].text.as_ref().expect("text");
+        assert_eq!(text.size_pt, 8.0);
+        assert_eq!(text.color, "#616466");
+        let run = &text.paras[0][0];
+        assert!(run.bold, "inherited from lstStyle");
+        assert_eq!(run.family.as_deref(), Some("メイリオ"));
+    }
+
+    /// `<a:grpFill/>` draws in the group's own fill, which in the design
+    /// documents is the grey behind their dropdown arrows.
+    #[test]
+    fn a_child_can_take_its_groups_fill() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:grpSp><xdr:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="190500"/><a:chOff x="0" y="0"/><a:chExt cx="100" cy="100"/></a:xfrm><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></xdr:grpSpPr><xdr:sp><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="triangle"><a:avLst/></a:prstGeom><a:grpFill/></xdr:spPr></xdr:sp></xdr:grpSp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        assert_eq!(shapes[0].fill.as_ref().map(|fill| fill.color.as_str()), Some("#BFBFBF"));
     }
 
     #[test]

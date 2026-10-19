@@ -15,6 +15,11 @@ function gradientId(prefix: string, index: number): string {
   return `${prefix}-g${index}`;
 }
 
+/** A cropped picture is clipped to its shape's box, so it needs an id too. */
+function cropId(prefix: string, index: number): string {
+  return `${prefix}-c${index}`;
+}
+
 /**
  * Presets whose box may be perfectly flat — a connector run along a single row
  * or column is exactly zero high, and dropping it would lose most of them.
@@ -460,17 +465,28 @@ export const ShapeLayer = memo(function ShapeLayer({
         })}
       </defs>
       {shapes.map((shape, index) => {
-        const x = colX(shape.fromCol) + shape.fromX;
-        const y = rowY(shape.fromRow) + shape.fromY;
-        const w = Math.max(0, colX(shape.toCol) + shape.toX - x);
-        const h = Math.max(0, rowY(shape.toRow) + shape.toY - y);
+        const group = shape.group;
+        const gLeft = group ? colX(group.fromCol) + group.fromX : 0;
+        const gTop = group ? rowY(group.fromRow) + group.fromY : 0;
+        const gWidth = group ? Math.max(0, colX(group.toCol) + group.toX - gLeft) : 0;
+        const gHeight = group ? Math.max(0, rowY(group.toRow) + group.toY - gTop) : 0;
+        const x = group ? gLeft + group.fx * gWidth : colX(shape.fromCol) + shape.fromX;
+        const y = group ? gTop + group.fy * gHeight : rowY(shape.fromRow) + shape.fromY;
+        const w = group ? group.fw * gWidth : Math.max(0, colX(shape.toCol) + shape.toX - x);
+        const h = group ? group.fh * gHeight : Math.max(0, rowY(shape.toRow) + shape.toY - y);
 
         if (shapeDebug && facts) {
           const lines = [
             `${index + 1}. ${shape.kind}  box ${w.toFixed(1)}×${h.toFixed(1)} @ (${x.toFixed(1)}, ${y.toFixed(1)})`,
-            `   x: col ${shape.fromCol} + ${shape.fromX.toFixed(1)} = ${x.toFixed(1)} → col ${shape.toCol} + ${shape.toX.toFixed(1)} = ${(colX(shape.toCol) + shape.toX).toFixed(1)}`,
-            `   y: row ${shape.fromRow} + ${shape.fromY.toFixed(1)} = ${y.toFixed(1)} → row ${shape.toRow} + ${shape.toY.toFixed(1)} = ${(rowY(shape.toRow) + shape.toY).toFixed(1)}`,
+            group
+              ? `   in group: anchor ${group.fromCol}+${group.fromX.toFixed(1)},${group.fromRow}+${group.fromY.toFixed(1)} · ${gWidth.toFixed(1)}×${gHeight.toFixed(1)} · at ${group.fx.toFixed(3)},${group.fy.toFixed(3)} · ${group.fw.toFixed(3)}×${group.fh.toFixed(3)}`
+              : `   x: col ${shape.fromCol} + ${shape.fromX.toFixed(1)} = ${x.toFixed(1)} → col ${shape.toCol} + ${shape.toX.toFixed(1)} = ${(colX(shape.toCol) + shape.toX).toFixed(1)}`,
           ];
+          if (!group) {
+            lines.push(
+              `   y: row ${shape.fromRow} + ${shape.fromY.toFixed(1)} = ${y.toFixed(1)} → row ${shape.toRow} + ${shape.toY.toFixed(1)} = ${(rowY(shape.toRow) + shape.toY).toFixed(1)}`,
+            );
+          }
           if (shape.text) {
             const t = shape.text;
             const [l, top, r, b] = t.insets;
@@ -532,6 +548,14 @@ export const ShapeLayer = memo(function ShapeLayer({
 
         const image = shape.media ? media.get(shape.media) : undefined;
         const mime = shape.media ? mimeOf(shape.media) : null;
+        // Excel stretches a picture to its anchor unless it was cropped:
+        // `srcRect` cuts a fraction off each side, so the drawn image is larger
+        // than the box by exactly that much and is clipped to it.
+        const [cropL, cropT, cropR, cropB] = shape.crop ?? [0, 0, 0, 0];
+        const keepX = 1 - cropL - cropR;
+        const keepY = 1 - cropT - cropB;
+        const imageW = keepX > 0.001 ? gw / keepX : gw;
+        const imageH = keepY > 0.001 ? gh / keepY : gh;
 
         return (
           <g key={index} transform={`translate(${x} ${y})`}>
@@ -539,13 +563,21 @@ export const ShapeLayer = memo(function ShapeLayer({
               {/* A chart or table frame is anchored like a shape but has contents
                   we do not read, so only its outline is drawn. */}
               {image && mime ? (
-                // Excel stretches a picture to its anchor unless it was cropped.
-                <image
-                  href={`data:${mime};base64,${image}`}
-                  width={gw}
-                  height={gh}
-                  preserveAspectRatio="none"
-                />
+                <g clipPath={shape.crop ? `url(#${cropId(ids, index)})` : undefined}>
+                  {shape.crop ? (
+                    <clipPath id={cropId(ids, index)}>
+                      <rect width={gw} height={gh} />
+                    </clipPath>
+                  ) : null}
+                  <image
+                    href={`data:${mime};base64,${image}`}
+                    x={keepX > 0.001 ? -cropL * imageW : 0}
+                    y={keepY > 0.001 ? -cropT * imageH : 0}
+                    width={imageW}
+                    height={imageH}
+                    preserveAspectRatio="none"
+                  />
+                </g>
               ) : shape.kind === "frame" ? (
                 // A chart or table frame has contents we do not read, so only
                 // its outline is drawn.
