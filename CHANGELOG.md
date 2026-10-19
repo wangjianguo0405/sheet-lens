@@ -12,6 +12,12 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.20] - 2026-10-19
+
+### Fixed
+
+- A sheet saved with an active filter behaves again: changing the filter shows the rows the new criteria select, and clearing it brings the filtered-out rows back. Excel stores the rows its filter hides as ordinary hidden rows in the file; those were being taken as rows the reader had hidden, so the rows another filter wanted to show stayed collapsed — the count changed but the grid kept drawing only its header — and the stored rows never returned once the filter was cleared
+
 ## [0.3.19] - 2026-10-19
 
 Frozen rows and columns stay put, several sheet tabs can be hidden at once, and the shapes a design document draws are followed to the file's own geometry and text rules.
