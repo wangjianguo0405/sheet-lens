@@ -12,6 +12,24 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.19] - 2026-10-19
+
+Frozen rows and columns stay put, several sheet tabs can be hidden at once, and the shapes a design document draws are followed to the file's own geometry and text rules.
+
+### Added
+
+- A sheet view's frozen rows and columns stay still while the rest scrolls — the cells, their row numbers and column letters, and any shape anchored inside them. Rows alone, columns alone, and both are all honoured
+- Sheet tabs can be selected as a group with Ctrl+click, or a run with Shift+click, and Hide acts on the whole group. It greys out when that would leave nothing on the strip
+- A cell with a list validation draws Excel's in-cell dropdown, and pressing it lists the values the file allows — written inline, or held in other cells, another sheet included. A rule with an input prompt shows Excel's yellow note beside the active cell
+- A shape that carries its own geometry instead of naming a preset is drawn from it — guides, lines, curves and arcs included — rather than as a box
+- A paragraph can flow right-to-left, and every paragraph keeps its own alignment instead of the last one overriding the shape
+- A line break inside a shape's paragraph (`<a:br/>`) is drawn as a break
+
+### Improved
+
+- A font that is not installed falls back to the kind of face the file classified it as — serif, sans, monospaced or script — and to the fallbacks for its character set, so a Korean or Chinese face does not land in a Japanese UI font
+- A line's corners join the way the file says — miter with its limit, round, or bevel — and a file that names no join gets Excel's own limit of eight rather than SVG's four
+
 ## [0.3.18] - 2026-10-19
 
 Text can turn in its cell and a sheet tab can be dragged to a new place; the shapes a design document floats above the cells are drawn the way Excel draws them — grouped, cropped, in their own font and colour.
