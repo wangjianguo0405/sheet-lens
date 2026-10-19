@@ -1,0 +1,167 @@
+{
+  "app": {
+    "name": "SheetLens",
+    "resizeSheetList": "シート一覧の幅を変更",
+    "resizeSearch": "検索パネルの幅を変更",
+    "resizeSheetScrollBar": "シートのスクロールバーの幅を変更",
+    "dragToResize": "ドラッグでサイズ変更",
+    "dismiss": "閉じる",
+    "noSheets": "このブックには読み取り可能なシートがありません。",
+    "extent": "{{rows}} 行 × {{cols}} 列"
+  },
+  "toolbar": {
+    "file": "ファイル",
+    "open": "開く",
+    "more": "その他",
+    "close": "閉じる",
+    "missing": "前回開けませんでした。クリックでもう一度：{{path}}",
+    "forget": "{{name}} を一覧から削除",
+    "clearRecent": "最近使ったファイルを消去",
+    "showSheetList": "シート一覧を表示",
+    "hideSheetList": "シート一覧を非表示",
+    "showSheetTabs": "シート見出しを表示",
+    "hideSheetTabs": "シート見出しを非表示",
+    "checkUpdates": "更新を確認",
+    "updateAvailable": "新しいバージョンが利用可能です",
+    "fill": "塗りつぶしの色",
+    "language": "言語"
+  },
+  "language": {
+    "en": "English",
+    "zh-CN": "简体中文",
+    "ja": "日本語"
+  },
+  "welcome": {
+    "tagline": "高速・ローカル優先の Excel ビューアー。",
+    "hint": "ブックを開くか、ウィンドウ上にファイルをドラッグしてください。",
+    "open": "ブックを開く",
+    "history": "最近",
+    "pinned": "固定",
+    "pin": "{{name}} を固定する",
+    "unpin": "{{name}} の固定を解除する",
+    "noHistory": "まだブックを開いていません。",
+    "more": "その他",
+    "shortcuts": "キーボードショートカット",
+    "sc": {
+      "open": "ブックを開く",
+      "search": "シートを検索",
+      "goTo": "セルへジャンプ",
+      "close": "ブックを閉じる",
+      "selectAll": "シート全体を選択",
+      "copy": "選択範囲をコピー",
+      "move": "カーソルを移動",
+      "extend": "選択範囲を広げる",
+      "edge": "データの端までジャンプ",
+      "page": "1 画面分スクロール",
+      "rowEnds": "行の先頭 / 末尾",
+      "sheetEnds": "シートの先頭 / 末尾",
+      "sheetStep": "前 / 次のシート",
+      "escape": "検索を閉じる / セルの内容を戻す"
+    }
+  },
+  "dialog": {
+    "close": "閉じる"
+  },
+  "tabs": {
+    "close": "{{name}} を閉じる",
+    "new": "新しいタブ",
+    "openAnother": "別のブックを開く",
+    "copyName": "ファイル名をコピー",
+    "copyPath": "ファイルパスをコピー",
+    "list": "開いているファイル",
+    "reload": "再読み込み"
+  },
+  "palette": {
+    "theme": "テーマの色",
+    "standard": "標準の色",
+    "recent": "最近使用した色",
+    "clear": "塗りつぶしなし",
+    "fill": "塗りつぶしの色"
+  },
+  "sheets": {
+    "filter": "シートを絞り込む",
+    "clearFilter": "絞り込みを解除",
+    "list": "シート",
+    "tabTitle": "{{name}} — {{rows}}×{{cols}}",
+    "scrollLeft": "シート見出しを左へスクロール",
+    "scrollRight": "シート見出しを右へスクロール",
+    "count_other": "{{count}} シート",
+    "none": "一致するシートはありません。",
+    "tabColor": "シート見出しの色",
+    "tabColorNone": "色なし",
+    "moreLeft": "左に隠れているシート見出しを表示",
+    "moreRight": "右に隠れているシート見出しを表示",
+    "hide": "非表示(&H)",
+    "unhide": "再表示(&U)",
+    "unhideTitle": "シートの再表示",
+    "unhideGo": "再表示",
+    "hidden": "非表示"
+  },
+  "formulaBar": {
+    "expand": "展開",
+    "collapse": "折りたたむ"
+  },
+  "search": {
+    "title": "検索",
+    "close": "検索を閉じる",
+    "placeholder": "シート内を検索…",
+    "history": "最近の検索",
+    "historyEmpty": "まだありません",
+    "thisSheet": "このシート",
+    "workbook": "ブック全体",
+    "wholeCell": "セル全体",
+    "results_other": "{{count}}{{plus}} 件",
+    "typeToSearch": "入力して検索"
+  },
+  "filter": {
+    "column": "列を絞り込む",
+    "edit": "絞り込みを編集",
+    "searchValues": "値を検索…",
+    "blank": "(空白)",
+    "noMatch": "一致する値はありません。",
+    "selected": "{{count}} 件を選択",
+    "allValues": "すべての値",
+    "showing": "{{total}} 行中 {{shown}} 行を表示",
+    "clearAll": "絞り込みを解除",
+    "clear": "クリア",
+    "apply": "適用"
+  },
+  "goTo": {
+    "title": "セルへジャンプ",
+    "description": "参照でセルへジャンプします。シート名を前に付けるとシートも切り替わります（例: <code>{{ref}}</code>）。",
+    "invalid": "G408 や Sheet1!G408 のような参照を入力してください。",
+    "noSheet": "「{{name}}」という名前のシートはありません。",
+    "go": "移動"
+  },
+  "status": {
+    "noFile": "ファイルなし",
+    "zoomOut": "縮小",
+    "zoom": "ズーム",
+    "zoomIn": "拡大",
+    "resetZoom": "ズームを 100% に戻す",
+    "spanRows": "{{rows}} 行を選択",
+    "spanCols": "{{cols}} 列を選択",
+    "spanBlock": "{{rows}} 行 × {{cols}} 列を選択",
+    "spanAreas": "{{areas}} 個の範囲を選択",
+    "viewNormal": "標準",
+    "viewPageBreak": "改ページ プレビュー"
+  },
+  "grid": {
+    "resizeColumn": "列 {{column}} の幅を変更",
+    "resizeColumnHint": "ドラッグで幅を変更、ダブルクリックで自動調整",
+    "resizeRow": "行 {{row}} の高さを変更",
+    "hide": "非表示(&H)",
+    "unhide": "再表示(&U)"
+  },
+  "update": {
+    "title": "ソフトウェア更新",
+    "checking": "更新を確認しています…",
+    "available": "バージョン <b>{{version}}</b> が利用可能です。",
+    "latest": "最新バージョンです。",
+    "installing": "更新をダウンロードして検証しています…",
+    "progress": "更新のダウンロード進行状況",
+    "restarting": "更新を適用するため再起動しています…",
+    "install": "更新して再起動",
+    "checkAgain": "再確認"
+  }
+}

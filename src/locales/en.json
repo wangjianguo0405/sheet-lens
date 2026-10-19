@@ -1,0 +1,169 @@
+{
+  "app": {
+    "name": "SheetLens",
+    "resizeSheetList": "Resize the sheet list",
+    "resizeSearch": "Resize the search panel",
+    "resizeSheetScrollBar": "Resize the sheet's scrollbar",
+    "dragToResize": "Drag to resize",
+    "dismiss": "Dismiss",
+    "noSheets": "This workbook has no readable sheets.",
+    "extent": "{{rows}} rows × {{cols}} cols"
+  },
+  "toolbar": {
+    "file": "File",
+    "open": "Open",
+    "more": "More",
+    "close": "Close",
+    "missing": "Could not be opened last time — click to try again: {{path}}",
+    "forget": "Remove {{name}} from the list",
+    "clearRecent": "Clear recent files",
+    "showSheetList": "Show the sheet list",
+    "hideSheetList": "Hide the sheet list",
+    "showSheetTabs": "Show the sheet tabs",
+    "hideSheetTabs": "Hide the sheet tabs",
+    "checkUpdates": "Check for updates",
+    "updateAvailable": "A newer version is available",
+    "fill": "Fill colour",
+    "language": "Language"
+  },
+  "language": {
+    "en": "English",
+    "zh-CN": "简体中文",
+    "ja": "日本語"
+  },
+  "welcome": {
+    "tagline": "Fast, local-first Excel viewer.",
+    "hint": "Open a workbook, or drag one anywhere onto this window.",
+    "open": "Open workbook",
+    "history": "Recent",
+    "pinned": "Pinned",
+    "pin": "Pin {{name}} to the start page",
+    "unpin": "Unpin {{name}}",
+    "noHistory": "No workbook has been opened yet.",
+    "more": "More",
+    "shortcuts": "Keyboard shortcuts",
+    "sc": {
+      "open": "Open a workbook",
+      "search": "Search the sheet",
+      "goTo": "Go to a cell",
+      "close": "Close the workbook",
+      "selectAll": "Select the whole sheet",
+      "copy": "Copy what is selected",
+      "move": "Move the cursor",
+      "extend": "Extend the selection",
+      "edge": "Jump to the edge of the data",
+      "page": "A screenful up or down",
+      "rowEnds": "First or last column of the row",
+      "sheetEnds": "First or last cell of the sheet",
+      "sheetStep": "Previous or next sheet",
+      "escape": "Close the search, or put a cell's text back"
+    }
+  },
+  "dialog": {
+    "close": "Close"
+  },
+  "tabs": {
+    "close": "Close {{name}}",
+    "new": "New tab",
+    "openAnother": "Open another workbook",
+    "copyName": "Copy file name",
+    "copyPath": "Copy file path",
+    "list": "Open files",
+    "reload": "Reload"
+  },
+  "palette": {
+    "theme": "Theme colours",
+    "standard": "Standard colours",
+    "recent": "Recent colours",
+    "clear": "No Fill",
+    "fill": "Fill colour"
+  },
+  "sheets": {
+    "filter": "Filter sheets",
+    "clearFilter": "Clear filter",
+    "list": "Sheets",
+    "tabTitle": "{{name}} — {{rows}}×{{cols}}",
+    "scrollLeft": "Scroll the sheet tabs left",
+    "scrollRight": "Scroll the sheet tabs right",
+    "count_one": "{{count}} sheet",
+    "count_other": "{{count}} sheets",
+    "none": "No sheets match.",
+    "tabColor": "Sheet tab colour",
+    "tabColorNone": "No colour",
+    "moreLeft": "Show the hidden sheet tabs to the left",
+    "moreRight": "Show the hidden sheet tabs to the right",
+    "hide": "Hide (&H)",
+    "unhide": "Unhide (&U)",
+    "unhideTitle": "Unhide sheet",
+    "unhideGo": "Unhide",
+    "hidden": "Hidden"
+  },
+  "formulaBar": {
+    "expand": "Expand",
+    "collapse": "Collapse"
+  },
+  "search": {
+    "title": "Search",
+    "close": "Close search",
+    "placeholder": "Find in sheet…",
+    "history": "Recent searches",
+    "historyEmpty": "Nothing searched for yet",
+    "thisSheet": "This sheet",
+    "workbook": "Workbook",
+    "wholeCell": "Whole cell",
+    "results_one": "{{count}}{{plus}} result",
+    "results_other": "{{count}}{{plus}} results",
+    "typeToSearch": "Type to search"
+  },
+  "filter": {
+    "column": "Filter column",
+    "edit": "Edit filter",
+    "searchValues": "Search values…",
+    "blank": "(blank)",
+    "noMatch": "No values match.",
+    "selected": "{{count}} selected",
+    "allValues": "All values",
+    "showing": "Showing {{shown}} of {{total}} rows",
+    "clearAll": "Clear filters",
+    "clear": "Clear",
+    "apply": "Apply"
+  },
+  "goTo": {
+    "title": "Go to cell",
+    "description": "Jump to a cell by reference. Prefix with a sheet name to switch sheets, for example <code>{{ref}}</code>.",
+    "invalid": "Enter a reference such as G408 or Sheet1!G408.",
+    "noSheet": "No sheet named \"{{name}}\".",
+    "go": "Go"
+  },
+  "status": {
+    "noFile": "No file",
+    "zoomOut": "Zoom out",
+    "zoom": "Zoom",
+    "zoomIn": "Zoom in",
+    "resetZoom": "Reset the zoom to 100%",
+    "spanRows": "{{rows}} rows selected",
+    "spanCols": "{{cols}} cols selected",
+    "spanBlock": "{{rows}} rows × {{cols}} cols selected",
+    "spanAreas": "{{areas}} areas selected",
+    "viewNormal": "Normal",
+    "viewPageBreak": "Page Break Preview"
+  },
+  "grid": {
+    "resizeColumn": "Resize column {{column}}",
+    "resizeColumnHint": "Drag to resize, double-click to fit",
+    "resizeRow": "Resize row {{row}}",
+    "hide": "Hide (&H)",
+    "unhide": "Unhide (&U)"
+  },
+  "update": {
+    "title": "Software update",
+    "checking": "Checking for updates…",
+    "available": "Version <b>{{version}}</b> is available.",
+    "latest": "This is the latest version.",
+    "installing": "Downloading and checking the update…",
+    "progress": "Update download progress",
+    "restarting": "Restarting to finish the update…",
+    "install": "Update and restart",
+    "checkAgain": "Check again"
+  }
+}

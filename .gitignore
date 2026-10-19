@@ -1,0 +1,50 @@
+# 依赖与构建产物
+node_modules
+dist
+dist-ssr
+*.local
+
+# 日志
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# 编辑器与系统文件（.vscode/extensions.json 是例外：它值得共用）
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 绿色版打包输出（6MB 的二进制，不进版本库）
+release/
+
+# 设计稿工作目录（候选图标、参考图、预览产物；没有任何构建引用它）
+design/
+
+# 浏览器里跑真实解析结果的临时夹具与测量脚本（含本机路径与导出数据）
+dev-harness/
+
+# AI 编码工具留在本机的东西（会话记录、缓存、项目标识、历史）——都不进版本库。
+# .claude 里还放着 ECMA-376 标准文档（Part 1–4 约 70MB），更不能进。
+.aider*
+.claude/
+.cline/
+.codeium/
+.codex/
+.continue/
+.crush/
+.cursor/
+.freebuff/
+.gemini/
+.roo/
+.specstory/
+.windsurf/
