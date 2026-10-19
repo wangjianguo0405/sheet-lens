@@ -1,0 +1,167 @@
+{
+  "app": {
+    "name": "SheetLens",
+    "resizeSheetList": "调整工作表列表宽度",
+    "resizeSearch": "调整搜索面板宽度",
+    "resizeSheetScrollBar": "调整工作表滚动条宽度",
+    "dragToResize": "拖动以调整大小",
+    "dismiss": "关闭",
+    "noSheets": "此工作簿没有可读取的工作表。",
+    "extent": "{{rows}} 行 × {{cols}} 列"
+  },
+  "toolbar": {
+    "file": "文件",
+    "open": "打开",
+    "more": "更多",
+    "close": "关闭",
+    "missing": "上次没能打开，点一下再试：{{path}}",
+    "forget": "把 {{name}} 从列表里移除",
+    "clearRecent": "清除最近记录",
+    "showSheetList": "显示工作表列表",
+    "hideSheetList": "隐藏工作表列表",
+    "showSheetTabs": "显示工作表标签",
+    "hideSheetTabs": "隐藏工作表标签",
+    "checkUpdates": "检查更新",
+    "updateAvailable": "有新版本可用",
+    "fill": "填充颜色",
+    "language": "语言"
+  },
+  "language": {
+    "en": "English",
+    "zh-CN": "简体中文",
+    "ja": "日本語"
+  },
+  "welcome": {
+    "tagline": "快速、本地优先的 Excel 查看器。",
+    "hint": "打开一个工作簿，或把文件拖到窗口任意位置。",
+    "open": "打开工作簿",
+    "history": "最近",
+    "pinned": "固定",
+    "pin": "把 {{name}} 固定在首页",
+    "unpin": "取消固定 {{name}}",
+    "noHistory": "还没有打开过工作簿。",
+    "more": "更多",
+    "shortcuts": "快捷键",
+    "sc": {
+      "open": "打开工作簿",
+      "search": "搜索工作表",
+      "goTo": "定位到单元格",
+      "close": "关闭工作簿",
+      "selectAll": "全选工作表",
+      "copy": "复制选中内容",
+      "move": "移动光标",
+      "extend": "扩展选区",
+      "edge": "跳到数据边缘",
+      "page": "上下翻一页",
+      "rowEnds": "行首 / 行末",
+      "sheetEnds": "工作表开头 / 末尾",
+      "sheetStep": "上一张 / 下一张工作表",
+      "escape": "关闭搜索 / 收起单元格内容"
+    }
+  },
+  "dialog": {
+    "close": "关闭"
+  },
+  "tabs": {
+    "close": "关闭 {{name}}",
+    "new": "新标签页",
+    "openAnother": "打开其他工作簿",
+    "copyName": "复制文件名",
+    "copyPath": "复制文件路径",
+    "list": "已打开的文件",
+    "reload": "重新加载"
+  },
+  "palette": {
+    "theme": "主题颜色",
+    "standard": "标准色",
+    "recent": "最近使用的颜色",
+    "clear": "无填充",
+    "fill": "填充颜色"
+  },
+  "sheets": {
+    "filter": "筛选工作表",
+    "clearFilter": "清除筛选",
+    "list": "工作表",
+    "tabTitle": "{{name}} — {{rows}}×{{cols}}",
+    "scrollLeft": "向左滚动工作表标签",
+    "scrollRight": "向右滚动工作表标签",
+    "count_other": "{{count}} 个工作表",
+    "none": "没有匹配的工作表。",
+    "tabColor": "工作表标签颜色",
+    "tabColorNone": "无颜色",
+    "moreLeft": "显示左侧隐藏的工作表标签",
+    "moreRight": "显示右侧隐藏的工作表标签",
+    "hide": "隐藏(&H)",
+    "unhide": "取消隐藏(&U)",
+    "unhideTitle": "取消隐藏工作表",
+    "unhideGo": "取消隐藏",
+    "hidden": "已隐藏"
+  },
+  "formulaBar": {
+    "expand": "展开",
+    "collapse": "收起"
+  },
+  "search": {
+    "title": "搜索",
+    "close": "关闭搜索",
+    "placeholder": "在工作表中查找…",
+    "history": "最近的搜索",
+    "historyEmpty": "还没有搜索过",
+    "thisSheet": "当前工作表",
+    "workbook": "整个工作簿",
+    "wholeCell": "整个单元格",
+    "results_other": "{{count}}{{plus}} 条结果",
+    "typeToSearch": "输入以搜索"
+  },
+  "filter": {
+    "column": "筛选此列",
+    "edit": "编辑筛选",
+    "searchValues": "搜索值…",
+    "blank": "(空白)",
+    "noMatch": "没有匹配的值。",
+    "selected": "已选 {{count}} 项",
+    "allValues": "全部值",
+    "showing": "显示 {{total}} 行中的 {{shown}} 行",
+    "clearAll": "清除筛选",
+    "clear": "清除",
+    "apply": "应用"
+  },
+  "goTo": {
+    "title": "跳转到单元格",
+    "description": "按引用跳转到单元格。在引用前加上工作表名可同时切换工作表，例如 <code>{{ref}}</code>。",
+    "invalid": "请输入类似 G408 或 Sheet1!G408 的引用。",
+    "noSheet": "没有名为“{{name}}”的工作表。",
+    "go": "跳转"
+  },
+  "status": {
+    "noFile": "无文件",
+    "zoomOut": "缩小",
+    "zoom": "缩放",
+    "zoomIn": "放大",
+    "resetZoom": "将缩放重置为 100%",
+    "spanRows": "已选 {{rows}} 行",
+    "spanCols": "已选 {{cols}} 列",
+    "spanBlock": "已选 {{rows}} 行 × {{cols}} 列",
+    "spanAreas": "已选 {{areas}} 个区域",
+    "viewNormal": "普通视图",
+    "viewPageBreak": "分页预览"
+  },
+  "grid": {
+    "resizeColumn": "调整列 {{column}} 的宽度",
+    "resizeColumnHint": "拖动调整宽度，双击自适应",
+    "resizeRow": "调整第 {{row}} 行的高度",
+    "hide": "隐藏(&H)",
+    "unhide": "取消隐藏(&U)"
+  },
+  "update": {
+    "title": "软件更新",
+    "checking": "正在检查更新…",
+    "available": "版本 <b>{{version}}</b> 已发布。",
+    "latest": "已是最新版本。",
+    "installing": "正在下载并校验更新…",
+    "progress": "更新下载进度",
+    "restarting": "正在重启以完成更新…",
+    "install": "更新并重启",
+    "checkAgain": "重新检查"
+  }
+}
