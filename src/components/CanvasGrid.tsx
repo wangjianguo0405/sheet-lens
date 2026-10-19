@@ -55,6 +55,7 @@ import {
   type BorderEdge,
   type Cell,
   type CellStyle,
+  type DataBarCell,
   type FilterCriterion,
   type MergeRect,
   type RichRun,
@@ -2132,6 +2133,12 @@ export function CanvasGrid({
       richIndex.set(cellKey(sheetCols, cell.row, cell.col), cell.runs);
     }
 
+    /** The data bars by cell, for the bars drawn over the cell's fill. */
+    const barIndex = new Map<number, DataBarCell>();
+    for (const bar of layout.dataBars ?? []) {
+      barIndex.set(cellKey(sheetCols, bar.row, bar.col), bar);
+    }
+
     return {
       cols,
       rows,
@@ -2170,6 +2177,7 @@ export function CanvasGrid({
       printArea,
       outsidePrint,
       cellRich: richIndex,
+      dataBars: barIndex,
       theme: canvasTheme(),
     };
   }, [

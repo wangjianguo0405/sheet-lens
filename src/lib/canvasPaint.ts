@@ -36,6 +36,7 @@ import type {
   BorderEdge,
   Cell,
   CellStyle,
+  DataBarCell,
   DataValidation,
   MergeRect,
   RichRun,
@@ -180,6 +181,8 @@ export interface GridView {
    * text with different runs. Empty for most files.
    */
   cellRich: Map<number, RichRun[]>;
+  /** Data bars by cell, for the bars Excel draws over the fill. Sparse. */
+  dataBars: Map<number, DataBarCell>;
   theme: CanvasTheme;
 }
 
@@ -219,6 +222,18 @@ function fill(
   fillRects += 1;
   ctx.fillStyle = color;
   ctx.fillRect(x, y, w, h);
+}
+
+/**
+ * A `#RRGGBB` colour mixed toward white, which is the light end of a data bar.
+ * Measured off Excel's own render: the bar's right edge is about four fifths of
+ * the way to white, whichever colour the rule names.
+ */
+function lighten(hex: string, amount: number): string {
+  if (hex.length !== 7) return hex;
+  const channel = (at: number) => parseInt(hex.slice(at, at + 2), 16);
+  const mix = (value: number) => Math.round(value + (255 - value) * amount);
+  return `rgb(${mix(channel(1))}, ${mix(channel(3))}, ${mix(channel(5))})`;
 }
 
 /** A line as one filled rectangle — see the module note on why not a stroke. */
@@ -1284,6 +1299,19 @@ function paintCellSurface(
     if (!page) fill(ctx, x, y, w, h, OUTSIDE_PRINT);
   } else if (own) {
     fill(ctx, x, y, w, h, own);
+  }
+
+  // Excel draws a data bar over the cell's fill and under its gridline, as a
+  // gradient that runs from the rule's colour to a much lighter one across the
+  // bar's own width.
+  const bar = view.dataBars.get(cellKey(view.sheetCols, sheetRow, col));
+  if (bar && bar.fraction > 0) {
+    const width = w * bar.fraction;
+    const gradient = ctx.createLinearGradient(x, y, x + width, y);
+    gradient.addColorStop(0, bar.color);
+    gradient.addColorStop(1, lighten(bar.color, 0.83));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, width, h);
   }
 
   // The hairline grid, before the borders so a border wins where both land. It

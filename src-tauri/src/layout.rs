@@ -527,6 +527,19 @@ pub struct SheetLayout {
     /// different formatting — a breadcrumb whose current page is red — and the
     /// text alone cannot tell the two apart. Sparse by nature.
     pub rich_cells: Vec<RichCell>,
+    /// Cells a data-bar rule draws a bar in, with the share of the cell's width
+    /// the bar takes. Sparse by nature.
+    pub data_bars: Vec<DataBarCell>,
+}
+
+/// One cell's data bar: its colour and how much of the cell it fills.
+#[derive(Serialize, Clone)]
+pub struct DataBarCell {
+    pub row: u32,
+    pub col: u32,
+    pub color: String,
+    /// 0 is no bar, 1 fills the cell's width.
+    pub fraction: f64,
 }
 
 /// One cell's runs. The position is the cell's own, because two cells spelling
@@ -632,6 +645,7 @@ impl SheetLayout {
             drawings: Vec::new(),
             drawing_rel: None,
             rich_cells: Vec::new(),
+            data_bars: Vec::new(),
         }
     }
 }
@@ -719,6 +733,12 @@ impl Cache {
 
     pub(crate) fn shared_strings(&self) -> &[String] {
         &self.shared_strings
+    }
+
+    /// The theme's colour slots, which a rule's `theme`/`tint` colours resolve
+    /// against.
+    pub(crate) fn theme(&self) -> &[Option<String>] {
+        &self.theme
     }
 
     pub fn load(&mut self, path: &str) -> Result<(), String> {

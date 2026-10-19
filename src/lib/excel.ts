@@ -154,6 +154,15 @@ export interface RichCell {
   runs: RichRun[];
 }
 
+/** One cell's data bar: its colour and the share of the cell's width it fills. */
+export interface DataBarCell {
+  row: number;
+  col: number;
+  color: string;
+  /** 0 is no bar, 1 fills the cell. */
+  fraction: number;
+}
+
 export interface AutoFilter {
   /** Sheet row holding the filter buttons. */
   row: number;
@@ -422,6 +431,8 @@ export interface SheetLayout {
    * cells spelling the same text may carry different runs.
    */
   richCells: RichCell[];
+  /** Cells a data-bar rule draws in, with the share of the cell each fills. */
+  dataBars: DataBarCell[];
 }
 
 export interface ValueCount {

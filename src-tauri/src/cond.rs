@@ -46,19 +46,53 @@ pub struct Rule {
     priority: u32,
     /// A rule that fires with this set is the last one looked at for that cell.
     stop_if_true: bool,
-    /// Index into the workbook's `<dxfs>`.
-    patch: usize,
+    /// What the rule paints, when it fires.
+    paint: Paint,
     /// The cells the rule covers. Each range is its own anchor: a rule's formula
     /// is written relative to the top-left of the range it sits on.
     ranges: Vec<MergeRect>,
     matcher: Matcher,
 }
 
+/// What a firing rule puts on the cell. A `dxf` is the same for every cell it
+/// covers; a colour scale and a data bar are computed from the cell's own value
+/// against the values in the rule's range.
+enum Paint {
+    Dxf(usize),
+    ColorScale(ColorScale),
+    DataBar(DataBar),
+}
+
+/// A colour scale: two or three stops, each a position in the range and the
+/// colour the cell takes there.
+struct ColorScale {
+    points: Vec<ScalePoint>,
+    colors: Vec<String>,
+}
+
+/// A data bar: the bar's colour, and the two points its length runs between.
+struct DataBar {
+    color: String,
+    points: [ScalePoint; 2],
+}
+
+/// Where a stop sits. Excel writes the first and last as `min`/`max`, and a
+/// middle stop as a `formula` — which for a fixed position is just the number.
+#[derive(Clone, Debug)]
+enum ScalePoint {
+    Min,
+    Max,
+    Number(f64),
+    Percent(f64),
+    Percentile(f64),
+}
+
 /// What makes a rule fire for a cell.
 ///
-/// The types that paint through a `dxf` are here. Colour scales, data bars and
-/// icon sets are drawings rather than formats and are left out: a rule this
-/// cannot read paints nothing rather than something wrong.
+/// The types that paint through a `dxf` are here, together with the drawing
+/// types a cell's position decides. Icon sets are left out: their marks are
+/// assets rather than a colour, and a rule this cannot read paints nothing
+/// rather than something wrong.
 enum Matcher {
     /// `expression`: the formula has to evaluate to TRUE.
     Expression(Formula),
@@ -75,6 +109,8 @@ enum Matcher {
     /// `duplicateValues` / `uniqueValues`: whether the value repeats among the
     /// rule's own ranges. Blanks never count either way.
     Duplicate { keep_duplicates: bool },
+    /// A colour scale or a data bar covers its whole range.
+    Always,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -116,7 +152,7 @@ fn cell_op(name: &str) -> Option<CellOp> {
 /// A rule whose operands cannot be read is dropped here rather than at every
 /// cell: there is nothing to evaluate it with, and a rule that never fires
 /// paints nothing, which is what not being there looks like too.
-pub fn rules(xml: &str) -> Vec<Rule> {
+pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
     let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
     let mut out = Vec::new();
@@ -125,6 +161,8 @@ pub fn rules(xml: &str) -> Vec<Rule> {
     let mut current: Option<Pending> = None;
     let mut in_formula = false;
     let mut formula = String::new();
+    // Inside `<colorScale>` or `<dataBar>`: `true` for the former.
+    let mut collecting: Option<bool> = None;
 
     loop {
         buf.clear();
@@ -146,6 +184,22 @@ pub fn rules(xml: &str) -> Vec<Rule> {
                             }
                         }
                         other => current = other,
+                    }
+                }
+                b"colorScale" if current.is_some() => collecting = Some(true),
+                b"dataBar" if current.is_some() => collecting = Some(false),
+                b"cfvo" if collecting.is_some() => {
+                    if let (Some(point), Some(current)) =
+                        (scale_point(&element), current.as_mut())
+                    {
+                        current.points.push(point);
+                    }
+                }
+                b"color" if collecting.is_some() => {
+                    if let (Some(color), Some(current)) =
+                        (color_of(&element, theme), current.as_mut())
+                    {
+                        current.colors.push(color);
                     }
                 }
                 b"formula" if current.is_some() && !empty => {
@@ -173,7 +227,9 @@ pub fn rules(xml: &str) -> Vec<Rule> {
                         current.formulas.push(std::mem::take(&mut formula));
                     }
                 }
+                b"colorScale" | b"dataBar" => collecting = None,
                 b"cfRule" => {
+                    collecting = None;
                     if let Some(pending) = current.take() {
                         if let Some(rule) = finish(pending, &sqref) {
                             out.push(rule);
@@ -189,14 +245,16 @@ pub fn rules(xml: &str) -> Vec<Rule> {
     out
 }
 
-/// A `<cfRule>` opened but not yet finished: which type it is, and the
-/// `<formula>` children read so far.
+/// A `<cfRule>` opened but not yet finished: which type it is, and the children
+/// read so far.
 struct Pending {
     priority: u32,
     stop_if_true: bool,
-    patch: usize,
+    patch: Option<usize>,
     kind: Kind,
     formulas: Vec<String>,
+    points: Vec<ScalePoint>,
+    colors: Vec<String>,
 }
 
 enum Kind {
@@ -204,13 +262,15 @@ enum Kind {
     CellIs(CellOp),
     Text(TextTest, String),
     Duplicate(bool),
+    ColorScale,
+    DataBar,
 }
 
 /// The rule a `<cfRule>` element names, if this reader has a way to evaluate it.
-/// A rule with no `dxfId` paints no format, so colour scales, data bars and icon
-/// sets stop here.
+/// A rule with no `dxfId` paints no format unless it is a colour scale or a data
+/// bar, whose paint is computed from the cell; icon sets stop here.
 fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
-    let patch = attr(element, b"dxfId").and_then(|v| v.parse::<usize>().ok())?;
+    let patch = attr(element, b"dxfId").and_then(|v| v.parse::<usize>().ok());
     let kind = match attr(element, b"type").as_deref() {
         Some("expression") => Kind::Expression,
         Some("cellIs") => Kind::CellIs(cell_op(&attr(element, b"operator")?)?),
@@ -220,8 +280,13 @@ fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
         Some("endsWith") => Kind::Text(TextTest::Ends, attr(element, b"text")?),
         Some("duplicateValues") => Kind::Duplicate(true),
         Some("uniqueValues") => Kind::Duplicate(false),
+        Some("colorScale") => Kind::ColorScale,
+        Some("dataBar") => Kind::DataBar,
         _ => return None,
     };
+    if patch.is_none() && !matches!(kind, Kind::ColorScale | Kind::DataBar) {
+        return None;
+    }
     Some(Pending {
         priority: attr(element, b"priority")
             .and_then(|v| v.parse::<u32>().ok())
@@ -231,11 +296,29 @@ fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
         patch,
         kind,
         formulas: Vec::new(),
+        points: Vec::new(),
+        colors: Vec::new(),
+    })
+}
+
+/// One `<cfvo>`: where a colour-scale or data-bar stop sits.
+fn scale_point(element: &quick_xml::events::BytesStart) -> Option<ScalePoint> {
+    let value = attr(element, b"val").and_then(|v| v.parse::<f64>().ok());
+    Some(match attr(element, b"type").as_deref()? {
+        "min" => ScalePoint::Min,
+        "max" => ScalePoint::Max,
+        "num" => ScalePoint::Number(value?),
+        "percent" => ScalePoint::Percent(value?),
+        "percentile" => ScalePoint::Percentile(value?),
+        // Excel normalises a middle stop of a colour scale to a formula, and a
+        // fixed position there is simply its number.
+        "formula" => ScalePoint::Number(value?),
+        _ => return None,
     })
 }
 
 fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
-    let matcher = match pending.kind {
+    let matcher = match &pending.kind {
         Kind::Expression => Matcher::Expression(Formula::parse(pending.formulas.first()?)?),
         Kind::CellIs(op) => {
             let first = Formula::parse(pending.formulas.first()?)?;
@@ -245,15 +328,45 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
                 }
                 _ => None,
             };
-            Matcher::CellIs { op, first, second }
+            Matcher::CellIs {
+                op: *op,
+                first,
+                second,
+            }
         }
-        Kind::Text(test, needle) => Matcher::Text { test, needle },
-        Kind::Duplicate(keep_duplicates) => Matcher::Duplicate { keep_duplicates },
+        Kind::Text(test, needle) => Matcher::Text {
+            test: *test,
+            needle: needle.clone(),
+        },
+        Kind::Duplicate(keep_duplicates) => Matcher::Duplicate {
+            keep_duplicates: *keep_duplicates,
+        },
+        Kind::ColorScale | Kind::DataBar => Matcher::Always,
+    };
+    let paint = match pending.kind {
+        Kind::ColorScale => {
+            if pending.points.len() < 2 || pending.points.len() != pending.colors.len() {
+                return None;
+            }
+            Paint::ColorScale(ColorScale {
+                points: pending.points,
+                colors: pending.colors,
+            })
+        }
+        Kind::DataBar => {
+            let [min, max]: [ScalePoint; 2] =
+                pending.points.clone().try_into().ok()?;
+            Paint::DataBar(DataBar {
+                color: pending.colors.first()?.clone(),
+                points: [min, max],
+            })
+        }
+        _ => Paint::Dxf(pending.patch?),
     };
     Some(Rule {
         priority: pending.priority,
         stop_if_true: pending.stop_if_true,
-        patch: pending.patch,
+        paint,
         ranges: sqref.to_vec(),
         matcher,
     })
@@ -290,7 +403,9 @@ impl Rule {
                 }
                 self.range_columns(out);
             }
-            Matcher::Text { .. } | Matcher::Duplicate { .. } => self.range_columns(out),
+            Matcher::Text { .. } | Matcher::Duplicate { .. } | Matcher::Always => {
+                self.range_columns(out)
+            }
         }
     }
 
@@ -329,6 +444,118 @@ impl Rule {
         }
         out
     }
+
+    /// The numbers in the rule's own ranges, ascending. A colour scale and a
+    /// data bar both measure a cell against this: the ends of the range, a
+    /// percentile of it, or a fixed position in it.
+    fn numbers(
+        &self,
+        values: &HashMap<(u32, u32), Value>,
+        rows: u32,
+        cols: u32,
+    ) -> Vec<f64> {
+        let mut out = Vec::new();
+        for rect in &self.ranges {
+            let end_row = rect.row.saturating_add(rect.rows).min(rows);
+            let end_col = rect.col.saturating_add(rect.cols).min(cols);
+            for row in rect.row..end_row {
+                for col in rect.col..end_col {
+                    if let Some(Value::Number(number)) = values.get(&(row, col)) {
+                        out.push(*number);
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        out
+    }
+}
+
+impl ColorScale {
+    /// The colour a value takes on this scale. A value outside the stops takes
+    /// the end colour, which is what Excel does with a clipped scale.
+    fn color(&self, context: &Context, numbers: &[f64]) -> Option<String> {
+        let stops: Vec<f64> = self
+            .points
+            .iter()
+            .map(|point| point.value(numbers))
+            .collect::<Option<Vec<f64>>>()?;
+        let value = number(&context.value())?;
+        for index in 1..stops.len() {
+            if value <= stops[index] || index == stops.len() - 1 {
+                let span = stops[index] - stops[index - 1];
+                let t = if span == 0.0 {
+                    0.0
+                } else {
+                    ((value - stops[index - 1]) / span).clamp(0.0, 1.0)
+                };
+                return Some(mix(&self.colors[index - 1], &self.colors[index], t));
+            }
+        }
+        self.colors.first().cloned()
+    }
+}
+
+impl DataBar {
+    /// The share of the cell's width the bar takes, or None when the value is
+    /// not a number or the ends do not resolve.
+    fn share(&self, context: &Context, numbers: &[f64]) -> Option<f64> {
+        let lo = self.points[0].value(numbers)?;
+        let hi = self.points[1].value(numbers)?;
+        if hi <= lo {
+            return None;
+        }
+        let value = number(&context.value())?;
+        Some(((value - lo) / (hi - lo)).clamp(0.0, 1.0))
+    }
+}
+
+impl ScalePoint {
+    fn value(&self, numbers: &[f64]) -> Option<f64> {
+        match self {
+            ScalePoint::Min => numbers.first().copied(),
+            ScalePoint::Max => numbers.last().copied(),
+            ScalePoint::Number(value) => Some(*value),
+            ScalePoint::Percent(percent) => {
+                let (min, max) = (numbers.first()?, numbers.last()?);
+                Some(min + (max - min) * percent / 100.0)
+            }
+            // The nearest value at or above the percentile — Excel's own reading
+            // of a percentile stop, measured against a colour scale: with ten
+            // values the 50th lands on the fifth.
+            ScalePoint::Percentile(percent) => {
+                let count = numbers.len();
+                if count == 0 {
+                    return None;
+                }
+                let rank = (percent / 100.0 * count as f64).ceil() as usize;
+                let index = rank.saturating_sub(1).min(count - 1);
+                numbers.get(index).copied()
+            }
+        }
+    }
+}
+
+/// Interpolates two `#RRGGBB` colours channel by channel, which is how Excel
+/// moves between a scale's stops.
+fn mix(from: &str, to: &str, t: f64) -> String {
+    let channel = |hex: &str, range: std::ops::Range<usize>| -> f64 {
+        if hex.len() != 7 {
+            return 0.0;
+        }
+        u8::from_str_radix(&hex[range], 16).unwrap_or(0) as f64
+    };
+    let blend = |range: std::ops::Range<usize>| -> u8 {
+        let a = channel(from, range.clone());
+        let b = channel(to, range);
+        (a + (b - a) * t).round().clamp(0.0, 255.0) as u8
+    };
+    format!(
+        "#{:02X}{:02X}{:02X}",
+        blend(1..3),
+        blend(3..5),
+        blend(5..7)
+    )
 }
 
 /// Reads the workbook's `<dxfs>`.
@@ -606,10 +833,7 @@ pub fn apply(xml: &str, cache: &Cache, layout: &mut SheetLayout) {
         return;
     }
     let patches = cache.patches();
-    if patches.is_empty() {
-        return;
-    }
-    let rules = rules(xml);
+    let rules = rules(xml, cache.theme());
     if rules.is_empty() {
         return;
     }
@@ -635,7 +859,13 @@ fn fold(
     rules: &[Rule],
     values: &HashMap<(u32, u32), Value>,
 ) {
-    let mut ordered: Vec<&Rule> = rules.iter().filter(|rule| rule.patch < patches.len()).collect();
+    let mut ordered: Vec<&Rule> = rules
+        .iter()
+        .filter(|rule| match rule.paint {
+            Paint::Dxf(index) => index < patches.len(),
+            _ => true,
+        })
+        .collect();
     ordered.sort_by_key(|rule| rule.priority);
     if ordered.is_empty() {
         return;
@@ -647,6 +877,17 @@ fn fold(
         .iter()
         .map(|rule| match &rule.matcher {
             Matcher::Duplicate { .. } => Some(rule.value_counts(values, layout.rows, layout.cols)),
+            _ => None,
+        })
+        .collect();
+    // The numbers a colour scale or data bar measures against, likewise once
+    // per rule.
+    let numbers: Vec<Option<Vec<f64>>> = ordered
+        .iter()
+        .map(|rule| match &rule.paint {
+            Paint::ColorScale(_) | Paint::DataBar(_) => {
+                Some(rule.numbers(values, layout.rows, layout.cols))
+            }
             _ => None,
         })
         .collect();
@@ -689,6 +930,7 @@ fn fold(
         .map(|(index, style)| (style.clone(), index as u32))
         .collect();
     let mut rebuilt: Vec<(u32, Vec<[u32; 3]>)> = Vec::new();
+    let mut bars: Vec<crate::layout::DataBarCell> = Vec::new();
 
     for (&row, spans) in &spans {
         // Every cell a rule fires on. Properties accumulate in priority order,
@@ -696,6 +938,7 @@ fn fold(
         // rule supply the property a higher-priority one leaves alone. A rule
         // that stops when it fires ends the matter for that cell.
         let mut fired: BTreeMap<u32, Patch> = BTreeMap::new();
+        let mut barred: BTreeMap<u32, (String, f64)> = BTreeMap::new();
         let mut stopped: BTreeSet<u32> = BTreeSet::new();
         for span in spans {
             for col in span.first_col..span.last_col {
@@ -712,11 +955,44 @@ fn fold(
                 if !span.rule.matcher.matches(&context, counts[span.index].as_ref()) {
                     continue;
                 }
-                merge(fired.entry(col).or_default(), &patches[span.rule.patch]);
+                let numbers = numbers[span.index].as_deref().unwrap_or(&[]);
+                match &span.rule.paint {
+                    Paint::Dxf(index) => {
+                        merge(fired.entry(col).or_default(), &patches[*index]);
+                    }
+                    Paint::ColorScale(scale) => {
+                        if let Some(fill) = scale.color(&context, numbers) {
+                            merge(
+                                fired.entry(col).or_default(),
+                                &Patch {
+                                    fill: Some(fill),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
+                    Paint::DataBar(bar) => {
+                        // Only the first bar to reach a cell is drawn; the rules
+                        // are already in priority order.
+                        if !barred.contains_key(&col) {
+                            if let Some(fraction) = bar.share(&context, numbers) {
+                                barred.insert(col, (bar.color.clone(), fraction));
+                            }
+                        }
+                    }
+                }
                 if span.rule.stop_if_true {
                     stopped.insert(col);
                 }
             }
+        }
+        for (&col, (color, fraction)) in &barred {
+            bars.push(crate::layout::DataBarCell {
+                row,
+                col,
+                color: color.clone(),
+                fraction: *fraction,
+            });
         }
         if fired.is_empty() {
             continue;
@@ -748,6 +1024,7 @@ fn fold(
     for (row, runs) in rebuilt {
         layout.cell_runs.insert(row, runs);
     }
+    layout.data_bars = bars;
 }
 
 /// One rule's range, as it applies to a single row.
@@ -976,6 +1253,7 @@ impl Matcher {
                     count == 1
                 }
             }
+            Matcher::Always => true,
         }
     }
 }
@@ -1711,10 +1989,10 @@ mod tests {
     #[test]
     fn reads_an_expression_rule() {
         let xml = r#"<worksheet><conditionalFormatting sqref="B8:N161"><cfRule type="expression" dxfId="0" priority="5" stopIfTrue="1"><formula>OR(AND($G8="対象外",$H8&lt;&gt;"対象"),$H8="対象外")</formula></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml);
+        let rules = rules(xml, &[]);
         assert_eq!(rules.len(), 1);
         let rule = &rules[0];
-        assert_eq!(rule.patch, 0);
+        assert!(matches!(rule.paint, Paint::Dxf(0)));
         assert_eq!(rule.priority, 5);
         assert!(rule.stop_if_true);
         assert_eq!(rule.ranges.len(), 1);
@@ -1729,7 +2007,7 @@ mod tests {
     #[test]
     fn reads_a_cell_is_rule_and_compares_the_cell() {
         let xml = r#"<worksheet><conditionalFormatting sqref="B2:B9"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThanOrEqual"><formula>50</formula></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml);
+        let rules = rules(xml, &[]);
         assert_eq!(rules.len(), 1);
         let rule = &rules[0];
         // B, the column the rule has to read to know the cell's own value.
@@ -1746,7 +2024,7 @@ mod tests {
     #[test]
     fn a_cell_is_rule_can_ask_for_a_between() {
         let xml = r#"<worksheet><conditionalFormatting sqref="A1:A4"><cfRule type="cellIs" dxfId="0" priority="1" operator="between"><formula>10</formula><formula>20</formula></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml);
+        let rules = rules(xml, &[]);
         assert_eq!(rules.len(), 1);
         assert!(fires(&rules[0], 0, 0, &[((0, 0), Value::Number(15.0))]));
         assert!(!fires(&rules[0], 0, 0, &[((0, 0), Value::Number(25.0))]));
@@ -1763,7 +2041,7 @@ mod tests {
             <conditionalFormatting sqref="C1:C9"><cfRule type="endsWith" dxfId="0" priority="3" operator="endsWith" text="z"><formula>RIGHT(C1,1)="z"</formula></cfRule></conditionalFormatting>
             <conditionalFormatting sqref="D1:D9"><cfRule type="notContainsText" dxfId="0" priority="4" operator="notContainsText" text="q"><formula>ISERROR(SEARCH("q",D1))</formula></cfRule></conditionalFormatting>
         </worksheet>"#;
-        let rules = rules(xml);
+        let rules = rules(xml, &[]);
         assert_eq!(rules.len(), 4);
         // Excel's text tests ignore case.
         assert!(fires(&rules[0], 0, 0, &[((0, 0), text("xABCx"))]));
@@ -1781,7 +2059,7 @@ mod tests {
             <conditionalFormatting sqref="A1:A5"><cfRule type="duplicateValues" dxfId="0" priority="1"/></conditionalFormatting>
             <conditionalFormatting sqref="A1:A5"><cfRule type="uniqueValues" dxfId="0" priority="2"/></conditionalFormatting>
         </worksheet>"#;
-        let rules = rules(xml);
+        let rules = rules(xml, &[]);
         assert_eq!(rules.len(), 2, "a rule with no children is complete on its own");
         let cells = [
             ((0, 0), Value::Number(1.0)),
@@ -1803,9 +2081,65 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_colour_scale_and_mixes_between_its_stops() {
+        let xml = r#"<worksheet><conditionalFormatting sqref="B2:B11"><cfRule type="colorScale" priority="1"><colorScale><cfvo type="min"/><cfvo type="max"/><color rgb="FF0000FF"/><color rgb="FFFF0000"/></colorScale></cfRule></conditionalFormatting></worksheet>"#;
+        let rules = rules(xml, &[]);
+        assert_eq!(rules.len(), 1);
+        let Paint::ColorScale(scale) = &rules[0].paint else {
+            panic!("a colour scale");
+        };
+        let numbers = [10.0, 20.0, 30.0, 100.0];
+        let color = |value: f64| {
+            let values = HashMap::from([((0u32, 0u32), Value::Number(value))]);
+            let context = Context {
+                row: 0,
+                col: 0,
+                anchor_row: 0,
+                anchor_col: 0,
+                values: &values,
+            };
+            scale.color(&context, &numbers)
+        };
+        assert_eq!(color(10.0).as_deref(), Some("#0000FF"));
+        assert_eq!(color(100.0).as_deref(), Some("#FF0000"));
+        assert_eq!(color(55.0).as_deref(), Some("#800080"));
+        // Outside the stops the end colour stands, as Excel's clipped scale does.
+        assert_eq!(color(0.0).as_deref(), Some("#0000FF"));
+    }
+
+    #[test]
+    fn reads_a_data_bar_and_measures_the_cell() {
+        let xml = r#"<worksheet><conditionalFormatting sqref="D2:D11"><cfRule type="dataBar" priority="1"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF0000FF"/></dataBar></cfRule></conditionalFormatting></worksheet>"#;
+        let rules = rules(xml, &[]);
+        assert_eq!(rules.len(), 1);
+        let Paint::DataBar(bar) = &rules[0].paint else {
+            panic!("a data bar");
+        };
+        assert_eq!(bar.color, "#0000FF");
+        let numbers = [10.0, 100.0];
+        let share = |value: f64| {
+            let values = HashMap::from([((0u32, 0u32), Value::Number(value))]);
+            let context = Context {
+                row: 0,
+                col: 0,
+                anchor_row: 0,
+                anchor_col: 0,
+                values: &values,
+            };
+            bar.share(&context, &numbers)
+        };
+        assert_eq!(share(10.0), Some(0.0));
+        assert_eq!(share(55.0), Some(0.5));
+        assert_eq!(share(100.0), Some(1.0));
+        // A value below the range is clamped, not drawn backwards.
+        assert_eq!(share(5.0), Some(0.0));
+        assert_eq!(share(150.0), Some(1.0));
+    }
+
+    #[test]
     fn keeps_several_ranges_on_one_rule() {
         let xml = r#"<worksheet><conditionalFormatting sqref="A1:A5 C1:C5"><cfRule type="expression" dxfId="2" priority="1"><formula>$A1&gt;0</formula></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml);
+        let rules = rules(xml, &[]);
         assert_eq!(rules[0].ranges.len(), 2);
         assert_eq!(rules[0].ranges[1].col, 2);
     }
@@ -1820,7 +2154,7 @@ mod tests {
             <cfRule type="expression" dxfId="0" priority="2"><formula>Sheet2!A1&gt;0</formula></cfRule>
             <cfRule type="expression" dxfId="7" priority="3"><formula>COUNTIF($A:$A,$A1)&gt;1</formula></cfRule>
         </conditionalFormatting></worksheet>"#;
-        assert!(rules(xml).is_empty());
+        assert!(rules(xml, &[]).is_empty());
     }
 
     #[test]
@@ -1910,6 +2244,7 @@ mod tests {
 
         let rules = rules(
             r#"<conditionalFormatting sqref="A1:C4"><cfRule type="expression" dxfId="0" priority="1"><formula>$A1&gt;=2</formula></cfRule></conditionalFormatting>"#,
+            &[],
         );
         let values: HashMap<(u32, u32), Value> = (0..4)
             .map(|row| ((row, 0), Value::Number(row as f64 + 1.0)))
@@ -1942,6 +2277,7 @@ mod tests {
                 <cfRule type="expression" dxfId="0" priority="1"><formula>TRUE</formula></cfRule>
                 <cfRule type="expression" dxfId="1" priority="2"><formula>TRUE</formula></cfRule>
             </conditionalFormatting>"#,
+            &[],
         );
         let patches = vec![
             Patch {
@@ -1975,6 +2311,7 @@ mod tests {
                 <cfRule type="expression" dxfId="0" priority="1" stopIfTrue="1"><formula>TRUE</formula></cfRule>
                 <cfRule type="expression" dxfId="1" priority="2"><formula>TRUE</formula></cfRule>
             </conditionalFormatting>"#,
+            &[],
         );
         let patches = vec![
             Patch {
