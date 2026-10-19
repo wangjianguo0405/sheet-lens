@@ -69,8 +69,8 @@ function anchorOf(node: HTMLElement | null): UnhideAnchor | null {
 
 /**
  * Excel's sheet name, in whichever of black and white survives the tab's colour —
- * which is what Excel does, and what decides whether 入出力定義's light green
- * takes black type or 変更履歴's blue takes white. The weights are the usual
+ * which is what Excel does, and what decides whether a light green tab takes
+ * black type or a blue one takes white. The weights are the usual
  * luma ones, so a colour lands on the side its brightness says.
  */
 function readableOn(color: string): string {

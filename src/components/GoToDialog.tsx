@@ -69,7 +69,7 @@ export function GoToDialog({
           <DialogDescription className="text-xs">
             <Trans
               i18nKey="goTo.description"
-              values={{ ref: "DB抽出仕様!G408" }}
+              values={{ ref: "Summary!A1" }}
               components={{ code: <code /> }}
             />
           </DialogDescription>

@@ -38,9 +38,9 @@ type Shared = Arc<Store>;
 
 /// Parses every sheet's layout ahead of time.
 ///
-/// One design document's `機能定義書` sheet is 2.5 MB of XML and takes ~100 ms
-/// to walk, which is a visible stall every time the user switches to it. Doing
-/// the work up front costs nothing the user is waiting on.
+/// A 2.5 MB sheet is roughly 100 ms of XML to walk, a visible stall every time
+/// the user switches to it. Doing the work up front costs nothing the user is
+/// waiting on.
 fn warm_layouts(store: Shared, path: String, names: Vec<String>) {
     let mut cache = layout::Cache::default();
     for name in names {

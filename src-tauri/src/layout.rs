@@ -282,12 +282,12 @@ impl SheetLayout {
     /// also what it shades around.
     ///
     /// Excel's used range — what `Ctrl+End` jumps to — covers every cell the
-    /// sheet *formats*, not only the ones holding a value. Checked on `表紙` of
-    /// ESCUS0102, where the values stop at row 36 and a `Ctrl+End` lands on
-    /// `AW44`: the shading and the page's edge both run to row 44, and the
-    /// earlier reading that only value-bearing cells counted put that edge four
-    /// rows too high. Merged ranges already extend the extent, which is what
-    /// holds a merged banner open to the sheet's last column.
+    /// sheet *formats*, not only the ones holding a value. Measured in Excel on
+    /// a cover sheet whose values stop at row 36: `Ctrl+End` lands on `AW44`,
+    /// the shading and the page's edge both run to row 44, and the earlier
+    /// reading that only value-bearing cells counted put that edge four rows
+    /// too high. Merged ranges already extend the extent, which is what holds a
+    /// merged banner open to the sheet's last column.
     fn print_region(&self) -> Option<MergeRect> {
         (self.rows > 0 && self.cols > 0).then_some(MergeRect {
             row: 0,
@@ -2349,7 +2349,7 @@ mod tests {
 
     #[test]
     fn reads_explicit_column_widths_and_row_heights() {
-        let Some(layout) = sample("ロジック") else { return };
+        let Some(layout) = sample("Logic") else { return };
         // Column widths stay in the file's own unit — eight characters wide,
         // not the 61px that unit happens to be on Calibri.
         assert_eq!(layout.col_widths_chars.get(&0), Some(&8.0));
@@ -2363,7 +2363,7 @@ mod tests {
 
     #[test]
     fn undeclared_widths_fall_back_to_the_sheets_own_base_width() {
-        let Some(layout) = sample("ロジック") else { return };
+        let Some(layout) = sample("Logic") else { return };
         // The sheet writes baseColWidth="8" and never defaultColWidth, so
         // undeclared columns must be eight characters — matching Excel, not
         // something wider.
@@ -2373,7 +2373,7 @@ mod tests {
 
     #[test]
     fn stock_width_ranges_are_not_expanded_column_by_column() {
-        let Some(layout) = sample("基本情報") else { return };
+        let Some(layout) = sample("Summary") else { return };
         // Two explicit columns, not sixteen thousand.
         assert_eq!(layout.col_widths_chars.len(), 2);
         assert_eq!(layout.col_widths_chars.get(&0), Some(&16.0));
@@ -2382,7 +2382,7 @@ mod tests {
 
     #[test]
     fn reads_merged_regions() {
-        let Some(layout) = sample("基本情報") else { return };
+        let Some(layout) = sample("Summary") else { return };
         assert_eq!(layout.merges.len(), 1);
         let merge = &layout.merges[0];
         assert_eq!((merge.row, merge.col, merge.rows, merge.cols), (0, 0, 1, 2));
@@ -2390,7 +2390,7 @@ mod tests {
 
     #[test]
     fn reads_the_autofilter_range_and_applied_values() {
-        let Some(layout) = sample("DB抽出仕様") else { return };
+        let Some(layout) = sample("Query") else { return };
         let filter = layout.auto_filter.expect("autofilter should be present");
         assert_eq!(
             (filter.row, filter.col, filter.rows, filter.cols),
@@ -2405,7 +2405,7 @@ mod tests {
 
     #[test]
     fn reads_cell_alignment_and_border_together() {
-        let Some(layout) = sample("基本情報") else { return };
+        let Some(layout) = sample("Summary") else { return };
         let title = style_at(&layout, 0, 0).expect("title should be styled");
         assert_eq!(title.horizontal, Some("center"));
         assert_eq!(title.vertical, Some("middle"));
@@ -2518,7 +2518,7 @@ mod tests {
 
     #[test]
     fn reads_the_workbooks_default_font() {
-        let Some(layout) = sample("基本情報") else { return };
+        let Some(layout) = sample("Summary") else { return };
         // openpyxl writes the stock Calibri 11, which is 14.67px — not 15.
         assert_eq!(layout.font_family.as_deref(), Some("Calibri"));
         assert_eq!(layout.font_size_px, 14.67);
@@ -2534,7 +2534,7 @@ mod tests {
 
     #[test]
     fn the_extent_covers_cells_that_only_carry_a_style() {
-        let Some(layout) = sample("変更履歴") else { return };
+        let Some(layout) = sample("History") else { return };
         // Column D holds a border and no values anywhere. calamine's range stops
         // at column C, so relying on it dropped the column — and with it the
         // line closing off the table's right edge.
@@ -2543,22 +2543,22 @@ mod tests {
 
     #[test]
     fn the_layout_extent_covers_the_sheets_rows_and_named_columns() {
-        let Some(layout) = sample("基本情報") else { return };
+        let Some(layout) = sample("Summary") else { return };
         // Six rows are written out, and the A1:B1 merge names two columns.
         assert_eq!((layout.rows, layout.cols), (6, 2));
     }
 
     #[test]
     fn reads_the_gridline_visibility_setting() {
-        let Some(shown) = sample("基本情報") else { return };
+        let Some(shown) = sample("Summary") else { return };
         // No showGridLines attribute means Excel's default, which is on.
         assert!(shown.show_grid_lines);
-        assert!(!sample("変更履歴").unwrap().show_grid_lines);
+        assert!(!sample("History").unwrap().show_grid_lines);
     }
 
     #[test]
     fn reads_a_cells_own_font_size() {
-        let Some(layout) = sample("基本情報") else { return };
+        let Some(layout) = sample("Summary") else { return };
         let title = style_at(&layout, 0, 0).expect("title should be styled");
         assert!(title.bold);
         // 22pt is 29.33px, against a 14.67px default — rendering it at the
@@ -2571,7 +2571,7 @@ mod tests {
 
     #[test]
     fn reads_a_cells_background_fill() {
-        let Some(layout) = sample("基本情報") else { return };
+        let Some(layout) = sample("Summary") else { return };
         let title = style_at(&layout, 0, 0).expect("title should be styled");
         assert_eq!(title.fill.as_deref(), Some("#DEEBF7"));
         // A cell that declares no fill carries none.
@@ -2813,19 +2813,19 @@ mod tests {
 
     #[test]
     fn plain_sheets_report_no_merges_or_filter() {
-        let Some(layout) = sample("ロジック") else { return };
+        let Some(layout) = sample("Logic") else { return };
         assert!(layout.merges.is_empty());
         assert!(layout.auto_filter.is_none());
     }
 
     /// The fallback is the sheet's used range — every cell it formats, with
-    /// merged ranges folded in during the parse. `Ctrl+End` on `表紙` of
-    /// ESCUS0102 lands on `AW44` while its values stop at row 36, which is what
-    /// put the page's edge back down on row 44.
+    /// merged ranges folded in during the parse. On a cover sheet whose values
+    /// stop at row 36, `Ctrl+End` lands on `AW44`, which is what put the page's
+    /// edge back down on row 44.
     #[test]
     fn the_print_fallback_is_the_sheets_used_range() {
         let mut layout = SheetLayout::empty();
-        // `表紙` of ESCUS0102, to scale: formatted out to 44 rows and 49 columns.
+        // That cover sheet, to scale: formatted out to 44 rows and 49 columns.
         layout.rows = 44;
         layout.cols = 49;
 
@@ -2842,25 +2842,25 @@ mod tests {
     fn reads_a_print_area_by_the_sheet_it_is_scoped_to() {
         let xml = r#"<workbook>
             <sheets>
-                <sheet name="表紙" sheetId="1"/>
-                <sheet name="入出力定義" sheetId="2"/>
+                <sheet name="Cover" sheetId="1"/>
+                <sheet name="Interface" sheetId="2"/>
                 <sheet name="A!B" sheetId="3"/>
             </sheets>
             <definedNames>
-                <definedName name="_xlnm.Print_Area" localSheetId="1">表紙!$A$1:$K$20</definedName>
+                <definedName name="_xlnm.Print_Area" localSheetId="1">Cover!$A$1:$K$20</definedName>
                 <definedName name="_xlnm.Print_Area" localSheetId="2">$B$2:$C$5</definedName>
-                <definedName name="_xlnm.Print_Area">表紙!$D$4:$E$9</definedName>
-                <definedName name="_xlnm.Print_Titles">表紙!$1:$1</definedName>
+                <definedName name="_xlnm.Print_Area">Cover!$D$4:$E$9</definedName>
+                <definedName name="_xlnm.Print_Titles">Cover!$1:$1</definedName>
             </definedNames>
         </workbook>"#;
         let areas = print_area_names(xml);
 
-        // The scope says 入出力定義 and the formula still says 表紙: the scope wins.
-        assert_eq!(areas.get("入出力定義").map(String::as_str), Some("$A$1:$K$20"));
+        // The scope says Interface and the formula still says Cover: the scope wins.
+        assert_eq!(areas.get("Interface").map(String::as_str), Some("$A$1:$K$20"));
         // A local name may leave the sheet out of its formula altogether.
         assert_eq!(areas.get("A!B").map(String::as_str), Some("$B$2:$C$5"));
         // A name with no scope says which sheet it is for in the formula.
-        assert_eq!(areas.get("表紙").map(String::as_str), Some("$D$4:$E$9"));
+        assert_eq!(areas.get("Cover").map(String::as_str), Some("$D$4:$E$9"));
         // Only print areas are worth keeping.
         assert_eq!(areas.len(), 3);
     }
@@ -2870,7 +2870,7 @@ mod tests {
     /// still grey out past their last cell instead of running white to the edge.
     #[test]
     fn without_a_print_area_the_used_range_stands_in() {
-        let Some(layout) = sample("基本情報") else { return };
+        let Some(layout) = sample("Summary") else { return };
         let area = layout.print_area.expect("the fallback should stand in");
         assert!(area.rows >= layout.rows && area.cols >= layout.cols);
         // Guards against a vacuous pass on a degenerate sheet.
@@ -2937,16 +2937,16 @@ mod tests {
     #[test]
     fn reads_the_sheets_the_workbook_hides() {
         let xml = r#"<workbook><sheets>
-            <sheet name="表紙" sheetId="1" r:id="rId1"/>
+            <sheet name="Cover" sheetId="1" r:id="rId1"/>
             <sheet name="DFD" sheetId="2" state="hidden" r:id="rId2"/>
             <sheet name="入力規則" sheetId="3" state="veryHidden" r:id="rId3"/>
-            <sheet name="入出力定義" sheetId="4" state="visible" r:id="rId4"/>
+            <sheet name="Interface" sheetId="4" state="visible" r:id="rId4"/>
         </sheets></workbook>"#;
         let hidden = hidden_in_workbook(xml);
         assert!(hidden.contains("DFD"));
         assert!(hidden.contains("入力規則"), "veryHidden is hidden too");
-        assert!(!hidden.contains("表紙"), "no state at all means shown");
-        assert!(!hidden.contains("入出力定義"), "and so does saying visible");
+        assert!(!hidden.contains("Cover"), "no state at all means shown");
+        assert!(!hidden.contains("Interface"), "and so does saying visible");
     }
 
     /// The style pass has to reach the end of the sheet.
@@ -2964,7 +2964,7 @@ mod tests {
             return;
         };
         let sheet =
-            std::env::var("SHEETLENS_SHEET").unwrap_or_else(|_| "機能定義書".to_string());
+            std::env::var("SHEETLENS_SHEET").unwrap_or_else(|_| "Spec".to_string());
         let layout = read_cached(&mut Cache::default(), &path, &sheet).expect("layout");
 
         let deepest = layout.cell_runs.keys().max().map(|row| row + 1).unwrap_or(0);

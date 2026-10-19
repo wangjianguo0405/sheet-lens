@@ -115,10 +115,9 @@ const SEP = "\u0000";
 /**
  * Names one sheet of one workbook.
  *
- * These documents share every sheet name — `機能定義書`, `入出力定義`,
- * `画面レイアウト` — so anything that remembers something about a sheet has to
- * say which workbook's. A name alone is what let a second file read the first
- * one's cells.
+ * A sheet name alone does not say which workbook it belongs to, so anything
+ * that remembers something about a sheet has to carry the workbook too. A name
+ * alone is what let a second file read the first one's cells.
  */
 const sheetIdentity = (path: string, sheet: string) => `${path}${SEP}${sheet}`;
 

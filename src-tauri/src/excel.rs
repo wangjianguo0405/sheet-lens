@@ -817,9 +817,9 @@ mod tests {
     fn lists_every_sheet_with_its_size() {
         let Some(book) = sample() else { return };
         let names: Vec<_> = book.info.sheets.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["基本情報", "DB抽出仕様", "ロジック", "変更履歴"]);
+        assert_eq!(names, ["Summary", "Query", "Logic", "History"]);
 
-        let logic = book.info.sheets.iter().find(|s| s.name == "ロジック").unwrap();
+        let logic = book.info.sheets.iter().find(|s| s.name == "Logic").unwrap();
         assert_eq!((logic.rows, logic.cols), (12001, 4));
     }
 
@@ -828,7 +828,7 @@ mod tests {
     #[test]
     fn a_current_region_is_bounded_by_blank_rows_and_columns() {
         let Some(book) = sample() else { return };
-        for sheet in ["基本情報", "ロジック", "変更履歴"] {
+        for sheet in ["Summary", "Logic", "History"] {
             for (row, col) in [(0, 0), (2, 1), (17, 3), (500, 0), (11999, 3)] {
                 let region = book.current_region(sheet, row, col).expect("sheet exists");
                 assert!(region.rows >= 1 && region.cols >= 1, "{sheet}");
@@ -878,16 +878,16 @@ mod tests {
         let Some(book) = sample() else { return };
 
         // Row 0 is the merged title, so the header row is row 1.
-        let title = book.cells("基本情報", 0, 0, 1, 1).unwrap();
-        assert_eq!(title[0][0].text, "基本情報");
+        let title = book.cells("Summary", 0, 0, 1, 1).unwrap();
+        assert_eq!(title[0][0].text, "Summary");
 
-        let head = book.cells("基本情報", 1, 0, 2, 2).unwrap();
+        let head = book.cells("Summary", 1, 0, 2, 2).unwrap();
         assert_eq!(head[0][0].text, "項目");
         assert_eq!(head[0][1].text, "内容");
         assert_eq!(head[1][1].text, "サンプル機能A");
 
         // Row 0 holds the header, so row 3 is the record whose "行" is 3.
-        let logic = book.cells("ロジック", 3, 0, 1, 4).unwrap();
+        let logic = book.cells("Logic", 3, 0, 1, 4).unwrap();
         assert_eq!(logic[0][0].kind, "number");
         assert_eq!(logic[0][0].text, "3");
         assert_eq!(logic[0][1].text, "Step 3");
@@ -1084,7 +1084,7 @@ mod tests {
     #[test]
     fn paging_clamps_at_the_last_row() {
         let Some(book) = sample() else { return };
-        let tail = book.cells("変更履歴", 2, 0, 128, 32).unwrap();
+        let tail = book.cells("History", 2, 0, 128, 32).unwrap();
         assert_eq!(tail.len(), 1);
         assert_eq!(tail[0][2].text, "サンプル日付項目 の条件を追加");
     }
@@ -1093,11 +1093,11 @@ mod tests {
     fn search_covers_japanese_text_across_sheets() {
         let Some(book) = sample() else { return };
         let hits = book.search(None, &Matcher::new("サンプル日付項目", false, false));
-        assert!(hits.iter().any(|h| h.sheet == "DB抽出仕様"));
-        assert!(hits.iter().any(|h| h.sheet == "変更履歴"));
+        assert!(hits.iter().any(|h| h.sheet == "Query"));
+        assert!(hits.iter().any(|h| h.sheet == "History"));
 
-        let scoped = book.search(Some("変更履歴"), &Matcher::new("サンプル日付項目", false, false));
-        assert!(scoped.iter().all(|h| h.sheet == "変更履歴"));
+        let scoped = book.search(Some("History"), &Matcher::new("サンプル日付項目", false, false));
+        assert!(scoped.iter().all(|h| h.sheet == "History"));
 
         assert!(book.search(None, &Matcher::new("", false, false)).is_empty());
     }
@@ -1153,16 +1153,16 @@ mod tests {
         let Some(book) = sample() else { return };
 
         // The header row, with the trailing blanks past column E trimmed off.
-        let row = book.axis_values("DB抽出仕様", Some(0), None, 0, 31, 64).unwrap();
+        let row = book.axis_values("Query", Some(0), None, 0, 31, 64).unwrap();
         assert_eq!(row, ["No", "テーブル", "カラム", "条件", "備考"]);
 
         // Column A of the same sheet is a run of numbers.
         let column = book
-            .axis_values("DB抽出仕様", None, Some(0), 0, 4, 64)
+            .axis_values("Query", None, Some(0), 0, 4, 64)
             .unwrap();
         assert_eq!(column, ["No", "1", "2", "3", "4"]);
 
-        assert!(book.axis_values("DB抽出仕様", None, None, 0, 4, 64).is_err());
+        assert!(book.axis_values("Query", None, None, 0, 4, 64).is_err());
     }
 
     #[test]
@@ -1171,7 +1171,7 @@ mod tests {
 
         // The autofilter covers A1:E401, so data rows are 1..=400.
         let values = book
-            .column_values("DB抽出仕様", 4, 1, 400, None, 50)
+            .column_values("Query", 4, 1, 400, None, 50)
             .unwrap();
         let flagged = values
             .iter()
@@ -1181,7 +1181,7 @@ mod tests {
         assert_eq!(flagged.count, 36);
 
         let filtered = book
-            .column_values("DB抽出仕様", 4, 1, 400, Some("要確"), 50)
+            .column_values("Query", 4, 1, 400, Some("要確"), 50)
             .unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].value, "要確認");
@@ -1192,20 +1192,20 @@ mod tests {
         let Some(book) = sample() else { return };
 
         let matching = book
-            .filter_rows("DB抽出仕様", 1, 400, &[(4, vec!["要確認".to_owned()])], 1000)
+            .filter_rows("Query", 1, 400, &[(4, vec!["要確認".to_owned()])], 1000)
             .unwrap();
         assert_eq!(matching.len(), 36);
         assert_eq!(matching[0], 11);
         assert_eq!(matching[35], 396);
 
         // An empty criterion list matches every row in range.
-        let all = book.filter_rows("DB抽出仕様", 1, 400, &[], 1000).unwrap();
+        let all = book.filter_rows("Query", 1, 400, &[], 1000).unwrap();
         assert_eq!(all.len(), 400);
 
         // Two criteria must both hold, so nothing survives here.
         let none = book
             .filter_rows(
-                "DB抽出仕様",
+                "Query",
                 1,
                 400,
                 &[(4, vec!["要確認".to_owned()]), (0, vec!["999".to_owned()])],
