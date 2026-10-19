@@ -849,9 +849,25 @@ export function CanvasGrid({
    * The rows and columns the sheet hides. Excel draws none of them and skips the
    * number, so the gap is the only sign it gives; both take no room at all,
    * which is what puts everything after them where Excel has it.
+   *
+   * Rows inside an autofilter's range are the exception when the file carries
+   * filter criteria: Excel stores the rows its filter hides as `hidden="1"`, but
+   * that is a cached answer rather than an independent choice — Show All Data
+   * unhides every one of them and recomputes from the criteria. Reading them as
+   * the sheet's own hidden rows kept rows hidden that a new filter wanted to
+   * show, and left them hidden after the filter was cleared.
    */
   const hiddenRows = useMemo(() => {
-    const set = new Set(layout?.hiddenRows ?? []);
+    const set = new Set<number>();
+    const filter = layout?.autoFilter ?? null;
+    const filtered =
+      filter !== null && Object.keys(filter.applied ?? {}).length > 0;
+    const inside = (row: number) =>
+      filter !== null && row >= filter.row && row < filter.row + filter.rows;
+    for (const row of layout?.hiddenRows ?? []) {
+      if (filtered && inside(row)) continue;
+      set.add(row);
+    }
     for (const [row, hidden] of hiddenOverride.rows) {
       if (hidden) set.add(row);
       else set.delete(row);
