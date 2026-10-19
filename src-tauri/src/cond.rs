@@ -52,6 +52,9 @@ pub struct Rule {
     /// is written relative to the top-left of the range it sits on.
     ranges: Vec<MergeRect>,
     matcher: Matcher,
+    /// The `x14:id` a base rule names, which ties it to the extension block's
+    /// settings (a data bar's axis and negative colour live there).
+    x14_id: Option<String>,
 }
 
 /// What a firing rule puts on the cell. A `dxf` is the same for every cell it
@@ -74,7 +77,23 @@ struct ColorScale {
 /// A data bar: the bar's colour, and the two points its length runs between.
 struct DataBar {
     color: String,
+    /// What a bar below the axis is drawn in, when that differs.
+    negative_color: Option<String>,
     points: [ScalePoint; 2],
+    axis: Axis,
+    axis_color: Option<String>,
+}
+
+/// Where zero sits across the cell, which is what decides the direction a
+/// negative bar runs in.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Axis {
+    /// No axis: bars scale from the left edge over the range.
+    None,
+    /// Zero at the middle of the cell.
+    Middle,
+    /// Zero where the range's own split puts it.
+    Auto,
 }
 
 /// An icon set: a family of marks, one per level, drawn at the left of the
@@ -184,6 +203,9 @@ pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
     let mut current: Option<Pending> = None;
     let mut in_formula = false;
     let mut formula = String::new();
+    // The `x14:id` that links a base rule to its extension settings.
+    let mut in_id = false;
+    let mut id_text = String::new();
     // Inside `<colorScale>`, `<dataBar>` or `<iconSet>`.
     let mut collecting: Option<Collecting> = None;
 
@@ -241,6 +263,10 @@ pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
                     in_formula = true;
                     formula.clear();
                 }
+                b"id" if current.is_some() && !empty => {
+                    in_id = true;
+                    id_text.clear();
+                }
                 _ => {}
             },
             // A formula's `<` and `>` are written `&lt;` and `&gt;`, and each
@@ -248,6 +274,11 @@ pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
             Ok(Event::Text(text)) if in_formula => {
                 if let Ok(text) = text.xml_content(XmlVersion::default()) {
                     formula.push_str(&text);
+                }
+            }
+            Ok(Event::Text(text)) if in_id => {
+                if let Ok(text) = text.xml_content(XmlVersion::default()) {
+                    id_text.push_str(&text);
                 }
             }
             Ok(Event::GeneralRef(reference)) if in_formula => {
@@ -260,6 +291,12 @@ pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
                     in_formula = false;
                     if let Some(current) = current.as_mut() {
                         current.formulas.push(std::mem::take(&mut formula));
+                    }
+                }
+                b"id" if in_id => {
+                    in_id = false;
+                    if let Some(current) = current.as_mut() {
+                        current.x14_id = Some(std::mem::take(&mut id_text).trim().to_owned());
                     }
                 }
                 b"colorScale" | b"dataBar" | b"iconSet" => collecting = None,
@@ -292,6 +329,7 @@ struct Pending {
     colors: Vec<String>,
     family: Option<String>,
     reverse: bool,
+    x14_id: Option<String>,
 }
 
 /// Which kind of drawing element the rule's children belong to.
@@ -385,6 +423,7 @@ fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
         colors: Vec::new(),
         family: None,
         reverse: false,
+        x14_id: None,
     })
 }
 
@@ -463,7 +502,10 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
                 pending.points.clone().try_into().ok()?;
             Paint::DataBar(DataBar {
                 color: pending.colors.first()?.clone(),
+                negative_color: None,
                 points: [min, max],
+                axis: Axis::None,
+                axis_color: None,
             })
         }
         Kind::IconSet => {
@@ -484,6 +526,7 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
         paint,
         ranges: sqref.to_vec(),
         matcher,
+        x14_id: pending.x14_id,
     })
 }
 
@@ -494,6 +537,110 @@ fn sqref_of(sqref: Option<&str>) -> Vec<MergeRect> {
         .split_whitespace()
         .filter_map(parse_range)
         .collect()
+}
+
+/// What an `<x14:dataBar>` adds to a bar: where zero sits, what a negative bar
+/// is coloured, and the axis line. Modern Excel keeps these in the sheet's
+/// extension block beside a compatibility rule, which is what ties the two
+/// together.
+#[derive(Clone, Default)]
+struct X14Settings {
+    /// Absent in the file means automatic, which is the schema default.
+    axis: Option<Axis>,
+    negative_same_as_positive: bool,
+    negative_color: Option<String>,
+    axis_color: Option<String>,
+}
+
+/// The extension block's data bars, in file order, each with the GUID a base
+/// rule names.
+fn x14_bars(xml: &str, theme: &[Option<String>]) -> Vec<(String, X14Settings)> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut out = Vec::new();
+    let mut inside = false;
+    let mut id: Option<String> = None;
+    let mut is_bar = false;
+    let mut settings = X14Settings::default();
+
+    loop {
+        buf.clear();
+        let event = reader.read_event_into(&mut buf);
+        match event {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
+                match element.local_name().as_ref() {
+                    b"conditionalFormattings" => inside = true,
+                    b"conditionalFormatting" if inside => {
+                        id = None;
+                        is_bar = false;
+                        settings = X14Settings::default();
+                    }
+                    b"cfRule" if inside => {
+                        id = attr(&element, b"id");
+                        is_bar = attr(&element, b"type").as_deref() == Some("dataBar");
+                    }
+                    b"dataBar" if inside && is_bar => {
+                        settings.axis = Some(match attr(&element, b"axisPosition").as_deref() {
+                            Some("none") => Axis::None,
+                            Some("middle") => Axis::Middle,
+                            _ => Axis::Auto,
+                        });
+                        settings.negative_same_as_positive =
+                            flag(attr(&element, b"negativeBarColorSameAsPositive"));
+                    }
+                    b"negativeFillColor" if inside && is_bar => {
+                        settings.negative_color = color_of(&element, theme);
+                    }
+                    b"axisColor" if inside && is_bar => {
+                        settings.axis_color = color_of(&element, theme);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(element)) => match element.local_name().as_ref() {
+                b"conditionalFormatting" if inside => {
+                    if is_bar {
+                        if let Some(id) = id.take() {
+                            out.push((id, std::mem::take(&mut settings)));
+                        }
+                    }
+                }
+                b"conditionalFormattings" => inside = false,
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Ties the extension block's settings to the base rules that name them.
+///
+/// A bar written only in the extension — no compatibility rule beside it — is
+/// left alone, because Excel leaves it alone: a hand-edited file whose base
+/// rules were removed exports a picture with no bars at all. The extension is
+/// an addition to a rule, not a rule of its own.
+fn attach_x14(rules: &mut [Rule], xml: &str, theme: &[Option<String>]) {
+    let bars = x14_bars(xml, theme);
+    if bars.is_empty() {
+        return;
+    }
+    for rule in rules.iter_mut() {
+        let Some(id) = rule.x14_id.as_ref() else {
+            continue;
+        };
+        let Some((_, settings)) = bars.iter().find(|(bar_id, _)| bar_id == id) else {
+            continue;
+        };
+        if let Paint::DataBar(bar) = &mut rule.paint {
+            bar.axis = settings.axis.unwrap_or(Axis::None);
+            bar.axis_color = settings.axis_color.clone();
+            if !settings.negative_same_as_positive {
+                bar.negative_color = settings.negative_color.clone();
+            }
+        }
+    }
 }
 
 impl Rule {
@@ -613,17 +760,66 @@ impl ColorScale {
     }
 }
 
+/// One cell's bar, measured across the cell. `from` is where the bar starts
+/// and `to` where it ends, both as shares of the cell's width.
+struct Bar {
+    from: f64,
+    to: f64,
+    negative: bool,
+    color: String,
+    axis: Option<f64>,
+    axis_color: Option<String>,
+}
+
 impl DataBar {
-    /// The share of the cell's width the bar takes, or None when the value is
-    /// not a number or the ends do not resolve.
-    fn share(&self, context: &Context, numbers: &[f64]) -> Option<f64> {
-        let lo = self.points[0].value(numbers)?;
-        let hi = self.points[1].value(numbers)?;
-        if hi <= lo {
+    /// The bar a value draws, or None when the value is not a number or the
+    /// range has no width.
+    ///
+    /// Excel's own geometry: with no axis the bars scale from the left edge
+    /// over the whole range; with an axis, a positive value runs right from it
+    /// and a negative one runs left, each side scaled to its own extreme. The
+    /// automatic axis sits where the range's two sides meet —
+    /// `-min / (max - min)` — and the middle one at half the cell.
+    fn cell(&self, context: &Context, numbers: &[f64]) -> Option<Bar> {
+        let min = self.points[0].value(numbers)?;
+        let max = self.points[1].value(numbers)?;
+        if max <= min {
             return None;
         }
         let value = number(&context.value())?;
-        Some(((value - lo) / (hi - lo)).clamp(0.0, 1.0))
+        let axis = match self.axis {
+            Axis::None => 0.0,
+            Axis::Middle => 0.5,
+            Axis::Auto => {
+                if min < 0.0 && max > 0.0 {
+                    -min / (max - min)
+                } else {
+                    0.0
+                }
+            }
+        };
+        let (from, to, negative) = if self.axis == Axis::None || min >= 0.0 {
+            (0.0, ((value - min) / (max - min)).clamp(0.0, 1.0), false)
+        } else if value >= 0.0 {
+            (axis, axis + (value / max) * (1.0 - axis), false)
+        } else {
+            (axis - (-value / -min) * axis, axis, true)
+        };
+        let color = if negative {
+            self.negative_color
+                .clone()
+                .unwrap_or_else(|| self.color.clone())
+        } else {
+            self.color.clone()
+        };
+        Some(Bar {
+            from,
+            to,
+            negative,
+            color,
+            axis: (self.axis != Axis::None && min < 0.0 && max > 0.0).then_some(axis),
+            axis_color: self.axis_color.clone(),
+        })
     }
 }
 
@@ -971,7 +1167,8 @@ pub fn apply(xml: &str, cache: &Cache, layout: &mut SheetLayout) {
         return;
     }
     let patches = cache.patches();
-    let rules = rules(xml, cache.theme());
+    let mut rules = rules(xml, cache.theme());
+    attach_x14(&mut rules, xml, cache.theme());
     if rules.is_empty() {
         return;
     }
@@ -1083,7 +1280,7 @@ fn fold(
         // rule supply the property a higher-priority one leaves alone. A rule
         // that stops when it fires ends the matter for that cell.
         let mut fired: BTreeMap<u32, Patch> = BTreeMap::new();
-        let mut barred: BTreeMap<u32, (String, f64)> = BTreeMap::new();
+        let mut barred: BTreeMap<u32, Bar> = BTreeMap::new();
         let mut marked: BTreeMap<u32, (String, u8)> = BTreeMap::new();
         let mut stopped: BTreeSet<u32> = BTreeSet::new();
         for span in spans {
@@ -1125,8 +1322,8 @@ fn fold(
                         // Only the first bar to reach a cell is drawn; the rules
                         // are already in priority order.
                         if !barred.contains_key(&col) {
-                            if let Some(fraction) = bar.share(&context, numbers) {
-                                barred.insert(col, (bar.color.clone(), fraction));
+                            if let Some(cell) = bar.cell(&context, numbers) {
+                                barred.insert(col, cell);
                             }
                         }
                     }
@@ -1144,12 +1341,16 @@ fn fold(
                 }
             }
         }
-        for (&col, (color, fraction)) in &barred {
+        for (&col, bar) in &barred {
             bars.push(crate::layout::DataBarCell {
                 row,
                 col,
-                color: color.clone(),
-                fraction: *fraction,
+                color: bar.color.clone(),
+                from: bar.from,
+                to: bar.to,
+                negative: bar.negative,
+                axis: bar.axis,
+                axis_color: bar.axis_color.clone(),
             });
         }
         for (&col, (family, level)) in &marked {
@@ -2353,7 +2554,7 @@ mod tests {
         };
         assert_eq!(bar.color, "#0000FF");
         let numbers = [10.0, 100.0];
-        let share = |value: f64| {
+        let ends = |value: f64| {
             let values = HashMap::from([((0u32, 0u32), Value::Number(value))]);
             let context = Context {
                 row: 0,
@@ -2362,14 +2563,55 @@ mod tests {
                 anchor_col: 0,
                 values: &values,
             };
-            bar.share(&context, &numbers)
+            bar.cell(&context, &numbers).map(|bar| (bar.from, bar.to))
         };
-        assert_eq!(share(10.0), Some(0.0));
-        assert_eq!(share(55.0), Some(0.5));
-        assert_eq!(share(100.0), Some(1.0));
+        assert_eq!(ends(10.0), Some((0.0, 0.0)));
+        assert_eq!(ends(55.0), Some((0.0, 0.5)));
+        assert_eq!(ends(100.0), Some((0.0, 1.0)));
         // A value below the range is clamped, not drawn backwards.
-        assert_eq!(share(5.0), Some(0.0));
-        assert_eq!(share(150.0), Some(1.0));
+        assert_eq!(ends(5.0), Some((0.0, 0.0)));
+        assert_eq!(ends(150.0), Some((0.0, 1.0)));
+    }
+
+    /// With an axis, a negative value runs left of it and a positive one right,
+    /// each side scaled to its own extreme; the automatic axis sits where the
+    /// range's two sides meet.
+    #[test]
+    fn a_data_bar_with_an_axis_runs_both_ways() {
+        let numbers = [-20.0, 0.0, 50.0, 100.0];
+        let bar = DataBar {
+            color: "#0000FF".to_owned(),
+            negative_color: None,
+            points: [ScalePoint::Min, ScalePoint::Max],
+            axis: Axis::Auto,
+            axis_color: None,
+        };
+        let cell = |value: f64| {
+            let values = HashMap::from([((0u32, 0u32), Value::Number(value))]);
+            let context = Context {
+                row: 0,
+                col: 0,
+                anchor_row: 0,
+                anchor_col: 0,
+                values: &values,
+            };
+            bar.cell(&context, &numbers)
+        };
+        // The axis is at 20/120 of the cell.
+        let axis = 20.0 / 120.0;
+        let low = cell(-20.0).expect("a bar");
+        assert!(low.negative);
+        assert!((low.from - 0.0).abs() < 1e-9);
+        assert!((low.to - axis).abs() < 1e-9);
+        let high = cell(100.0).expect("a bar");
+        assert!(!high.negative);
+        assert!((high.from - axis).abs() < 1e-9);
+        assert!((high.to - 1.0).abs() < 1e-9);
+        // Zero draws no length but still marks the axis.
+        let zero = cell(0.0).expect("a bar");
+        assert!((zero.from - axis).abs() < 1e-9);
+        assert!((zero.to - axis).abs() < 1e-9);
+        assert_eq!(zero.axis, Some(axis));
     }
 
     #[test]

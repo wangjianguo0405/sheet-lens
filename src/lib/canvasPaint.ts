@@ -1054,6 +1054,17 @@ function rowFilled(view: GridView, row: number, from: number, to: number): boole
   return false;
 }
 
+/**
+ * A cell's key in one of the sparse per-cell maps, or null past the sheet's own
+ * columns. The blank area is drawn as cells too, and a key built out there
+ * collides with a real cell of the next row — the shape `inRegion` already
+ * guards the merge and run sets against.
+ */
+function keyInSheet(view: GridView, row: number, col: number): number | null {
+  if (col >= view.sheetCols) return null;
+  return cellKey(view.sheetCols, row, col);
+}
+
 export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintStats {
   const stats: PaintStats = {
     rows: 0,
@@ -1289,6 +1300,7 @@ function paintCellSurface(
   const style = view.styleAt(sheetRow, col);
   const own = style?.fill ?? null;
   const mark = view.markAt(sheetRow, col);
+  const key = keyInSheet(view, sheetRow, col);
 
   if (mark) {
     // A mark is the reader's own, so it takes the cell whole — over the file's
@@ -1307,20 +1319,31 @@ function paintCellSurface(
 
   // Excel draws a data bar over the cell's fill and under its gridline, as a
   // gradient that runs from the rule's colour to a much lighter one across the
-  // bar's own width.
-  const bar = view.dataBars.get(cellKey(view.sheetCols, sheetRow, col));
-  if (bar && bar.fraction > 0) {
-    const width = w * bar.fraction;
-    const gradient = ctx.createLinearGradient(x, y, x + width, y);
-    gradient.addColorStop(0, bar.color);
-    gradient.addColorStop(1, lighten(bar.color, 0.83));
-    ctx.fillStyle = gradient;
-    ctx.fillRect(x, y, width, h);
+  // bar's own width. Its dark end stays on the axis, so a negative bar — which
+  // runs right to left — reads light at its far end.
+  const bar = key === null ? undefined : view.dataBars.get(key);
+  if (bar) {
+    const from = x + w * Math.min(bar.from, bar.to);
+    const to = x + w * Math.max(bar.from, bar.to);
+    if (to > from) {
+      const gradient = ctx.createLinearGradient(from, y, to, y);
+      const light = lighten(bar.color, 0.83);
+      gradient.addColorStop(0, bar.negative ? light : bar.color);
+      gradient.addColorStop(1, bar.negative ? bar.color : light);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(from, y, to - from, h);
+    }
+    if (bar.axis !== null && bar.axis !== undefined) {
+      // A crisp pixel, the way Excel draws the axis; a fractional x would be
+      // spread over two pixels and read grey.
+      ctx.fillStyle = bar.axisColor ?? "#000000";
+      ctx.fillRect(Math.round(x + w * bar.axis), y, 1, h);
+    }
   }
 
   // An icon-set mark sits at the cell's left, centred vertically. The value is
   // still drawn, moved right past the mark — see paintCellText.
-  const icon = view.icons.get(cellKey(view.sheetCols, sheetRow, col));
+  const icon = key === null ? undefined : view.icons.get(key);
   if (icon) {
     paintConditionalIcon(
       ctx,
@@ -1348,7 +1371,7 @@ function paintCellSurface(
   // is one box, so only its outer edges are drawn. Without this every cell kept
   // its own left and right rule, and a header centred across a dozen columns
   // came out as a dozen little boxes.
-  const run = view.centerRuns.at.get(cellKey(view.sheetCols, sheetRow, col));
+  const run = key === null ? undefined : view.centerRuns.at.get(key);
   paintEdges(
     ctx,
     view,
@@ -1383,6 +1406,7 @@ function paintCellText(
   const x = ox + view.cols.offsets[col];
   const w = spanAt(view.cols.offsets, col);
   const style = view.styleAt(sheetRow, col);
+  const key = keyInSheet(view, sheetRow, col);
 
   const isFilterHeader =
     view.autoFilter !== null &&
@@ -1399,7 +1423,7 @@ function paintCellText(
     padRight = pad.right;
   }
   // An icon-set mark takes the cell's left edge, so the value starts past it.
-  if (view.icons.has(cellKey(view.sheetCols, sheetRow, col))) {
+  if (key !== null && view.icons.has(key)) {
     padLeft += ICON_INSET;
   }
 
@@ -1436,7 +1460,7 @@ function paintCellText(
     cell?.kind,
     padLeft,
     padRight,
-    view.cellRich.get(cellKey(view.sheetCols, sheetRow, col)) ?? null,
+    key === null ? null : view.cellRich.get(key) ?? null,
   );
   return true;
 }

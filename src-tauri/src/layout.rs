@@ -543,14 +543,24 @@ pub struct IconCell {
     pub level: u8,
 }
 
-/// One cell's data bar: its colour and how much of the cell it fills.
+/// One cell's data bar: where it runs across the cell, and what it is drawn in.
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct DataBarCell {
     pub row: u32,
     pub col: u32,
     pub color: String,
-    /// 0 is no bar, 1 fills the cell's width.
-    pub fraction: f64,
+    /// Where the bar starts and ends, as shares of the cell's width.
+    pub from: f64,
+    pub to: f64,
+    /// Whether the bar lies left of the axis, which flips its gradient so the
+    /// dark end stays on the axis.
+    pub negative: bool,
+    /// The axis line's share of the cell, when Excel draws one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub axis: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub axis_color: Option<String>,
 }
 
 /// One cell's runs. The position is the cell's own, because two cells spelling

@@ -154,13 +154,19 @@ export interface RichCell {
   runs: RichRun[];
 }
 
-/** One cell's data bar: its colour and the share of the cell's width it fills. */
+/** One cell's data bar: where it runs across the cell, and what it is drawn in. */
 export interface DataBarCell {
   row: number;
   col: number;
   color: string;
-  /** 0 is no bar, 1 fills the cell. */
-  fraction: number;
+  /** Where the bar starts and ends, as shares of the cell's width. */
+  from: number;
+  to: number;
+  /** Whether the bar lies left of the axis; its dark end stays on the axis. */
+  negative: boolean;
+  /** The axis line's share of the cell, when Excel draws one. */
+  axis?: number | null;
+  axisColor?: string | null;
 }
 
 /** One cell's conditional icon: the family and the level drawn. */
