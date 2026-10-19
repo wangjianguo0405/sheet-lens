@@ -186,8 +186,34 @@ export interface ShapeArrow {
   length: "sm" | "med" | "lg";
 }
 
-export interface ShapeStroke {
-  color: string;
+/** One `pt` of a custom geometry: a number or a guide name, as written. */
+export type CustomPoint = [string, string];
+
+export interface ShapeCustomCommand {
+  kind: "moveTo" | "lnTo" | "cubicBezTo" | "quadBezTo" | "arcTo" | "close";
+  points: CustomPoint[];
+  /** `arcTo`'s `wR hR stAng swAng`. */
+  arc?: [string, string, string, string] | null;
+}
+
+export interface ShapeCustomPath {
+  /** The path's own coordinate space, scaled onto the shape's box. */
+  w: number;
+  h: number;
+  /** `none` means no fill; absent means `norm`. */
+  fill?: string | null;
+  /** Absent means stroked. */
+  stroke?: boolean | null;
+  commands: ShapeCustomCommand[];
+}
+
+/** A shape that carries its own geometry rather than naming a preset. */
+export interface ShapeCustom {
+  guides: { name: string; formula: string }[];
+  paths: ShapeCustomPath[];
+}
+
+export interface ShapeStroke {  color: string;
   alpha: number;
   /** Already in pixels. */
   width: number;
@@ -298,6 +324,8 @@ export interface Shape {
   group?: ShapeGroup;
   /** Preset adjustments (`adj1`…), as fractions of the shape. Callouts use these. */
   adjust: number[];
+  /** Set when the file carries its own geometry instead of naming a preset. */
+  custom?: ShapeCustom | null;
 }
 
 export interface SheetLayout {

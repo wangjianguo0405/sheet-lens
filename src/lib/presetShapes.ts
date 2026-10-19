@@ -14,8 +14,11 @@
  * this file turns one entry plus a box into SVG.
  *
  * The formula language is a small prefix notation: an operator followed by a
- * fixed number of operands, each of which may itself be an operator.
+ * fixed number of operands, each of which may itself be an operator. A custom
+ * geometry in the file speaks the same language, so it is evaluated here too.
  */
+
+import type { ShapeCustom } from "@/lib/excel";
 
 interface Preset {
   /** Adjustment values: name and default formula, in the order the file lists them. */
@@ -324,6 +327,86 @@ export function resolvePreset(
         filled: path.f !== "none",
         stroked: path.s !== "false",
       });
+    }
+  }
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * A file's own geometry, resolved for a box of `w` by `h`.
+ *
+ * Each path carries its own coordinate space, which is scaled onto the box;
+ * guides are evaluated in that space, in the order the file lists them, with
+ * the same predefined names a preset starts from. Scaling is applied to the
+ * coordinates as they are emitted rather than by a transform, so a stroke keeps
+ * the width the file asked for; an `arcTo`'s radii scale with the same factors,
+ * which keeps its parametric angles valid.
+ */
+export function resolveCustom(custom: ShapeCustom, w: number, h: number): PresetPath[] | null {
+  const out: PresetPath[] = [];
+  for (const path of custom.paths) {
+    const pw = path.w > 0 ? path.w : w;
+    const ph = path.h > 0 ? path.h : h;
+    const vars = new Map<string, number>();
+    baseGuides(pw, ph, vars);
+    for (const guide of custom.guides) {
+      vars.set(guide.name, formula(guide.formula, vars));
+    }
+    const sx = w / pw;
+    const sy = h / ph;
+    const x = (text: string) => formula(text, vars) * sx;
+    const y = (text: string) => formula(text, vars) * sy;
+
+    let d = "";
+    for (const command of path.commands) {
+      const [p0, p1, p2] = command.points;
+      switch (command.kind) {
+        case "moveTo":
+          if (p0) d += `M${round(x(p0[0]))} ${round(y(p0[1]))}`;
+          break;
+        case "lnTo":
+          if (p0) d += `L${round(x(p0[0]))} ${round(y(p0[1]))}`;
+          break;
+        case "cubicBezTo":
+          if (p1 && p2) {
+            d += `C${round(x(p0[0]))} ${round(y(p0[1]))} ${round(x(p1[0]))} ${round(
+              y(p1[1]),
+            )} ${round(x(p2[0]))} ${round(y(p2[1]))}`;
+          }
+          break;
+        case "quadBezTo":
+          if (p1) {
+            d += `Q${round(x(p0[0]))} ${round(y(p0[1]))} ${round(x(p1[0]))} ${round(
+              y(p1[1]),
+            )}`;
+          }
+          break;
+        case "arcTo": {
+          const arc = command.arc;
+          if (!arc) break;
+          // The same conversion the preset table's arcs need, after scaling:
+          // work back to the centre the radii imply, then out to the far end.
+          const rx = formula(arc[0], vars) * sx;
+          const ry = formula(arc[1], vars) * sy;
+          const start = formula(arc[2], vars) * ANGLE;
+          const sweep = formula(arc[3], vars) * ANGLE;
+          const [fromX, fromY] = currentPoint(d, vars);
+          const centreX = fromX - rx * Math.cos(start);
+          const centreY = fromY - ry * Math.sin(start);
+          const endX = centreX + rx * Math.cos(start + sweep);
+          const endY = centreY + ry * Math.sin(start + sweep);
+          const large = Math.abs(sweep) > Math.PI ? 1 : 0;
+          const direction = sweep >= 0 ? 1 : 0;
+          d += `A${round(rx)} ${round(ry)} 0 ${large} ${direction} ${round(endX)} ${round(endY)}`;
+          break;
+        }
+        case "close":
+          d += "Z";
+          break;
+      }
+    }
+    if (d) {
+      out.push({ d, filled: path.fill !== "none", stroked: path.stroke !== false });
     }
   }
   return out.length > 0 ? out : null;

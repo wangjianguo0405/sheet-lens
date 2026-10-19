@@ -8,7 +8,13 @@ import {
   subscribeShapeDebug,
 } from "@/lib/debugPanels";
 import { readMedia, type Shape, type ShapeArrow, type ShapeStroke } from "@/lib/excel";
-import { loadPresets, presetsReady, resolvePreset, type PresetPath } from "@/lib/presetShapes";
+import {
+  loadPresets,
+  presetsReady,
+  resolveCustom,
+  resolvePreset,
+  type PresetPath,
+} from "@/lib/presetShapes";
 
 /** Each gradient needs its own id; shapes are addressed by position in the list. */
 function gradientId(prefix: string, index: number): string {
@@ -580,9 +586,12 @@ export const ShapeLayer = memo(function ShapeLayer({
             : shape.fill.color
           : "none";
         /** The preset's own paths for this box, or its outline until we have them. */
-        const paths = resolvePreset(shape.kind, gw, gh, shape.adjust) ?? [
-          boxOutline(gw, gh),
-        ];
+        /** The shape's own paths, else the preset's, else its outline. */
+        const paths =
+          (shape.custom ? resolveCustom(shape.custom, gw, gh) : null) ??
+          resolvePreset(shape.kind, gw, gh, shape.adjust) ?? [
+            boxOutline(gw, gh),
+          ];
 
         const image = shape.media ? media.get(shape.media) : undefined;
         const mime = shape.media ? mimeOf(shape.media) : null;

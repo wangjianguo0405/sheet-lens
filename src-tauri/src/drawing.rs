@@ -61,10 +61,56 @@ pub struct Shape {
     /// group's anchor box, which the renderer resolves with its own widths.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<GroupFrame>,
+    /// Set when the file carries its own geometry instead of naming a preset:
+    /// a guide list and one or more paths, in the path's own coordinates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom: Option<CustomGeometry>,
     /// Preset adjustments in the order the preset declares them (`adj1`…), in
     /// the file's own units — hundred-thousandths. The renderer feeds them
     /// straight into the preset's formulas, which divide by 100000 themselves.
     pub adjust: Vec<f64>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomGeometry {
+    /// `gdLst`: named values the points are built from, in evaluation order.
+    pub guides: Vec<CustomGuide>,
+    pub paths: Vec<CustomPath>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomGuide {
+    pub name: String,
+    pub formula: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomPath {
+    /// The path's own coordinate space, scaled onto the shape's box.
+    pub w: f64,
+    pub h: f64,
+    /// `norm`, `none`, `lighten`, `darken`…; absent means `norm`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill: Option<String>,
+    /// Absent means stroked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<bool>,
+    pub commands: Vec<CustomCommand>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCommand {
+    /// `moveTo`, `lnTo`, `cubicBezTo`, `quadBezTo`, `arcTo` or `close`.
+    pub kind: String,
+    /// Coordinates as the file wrote them: a number or a guide's name.
+    pub points: Vec<[String; 2]>,
+    /// `arcTo`'s `wR hR stAng swAng`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arc: Option<[String; 4]>,
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
@@ -437,6 +483,8 @@ struct Parser<'a> {
     size: (f64, f64),
     pos: (f64, f64),
     current: Option<Shape>,
+    /// The custom geometry being read, until its `custGeom` closes.
+    custom: Option<CustomGeometry>,
     fill: ExplicitFill,
     line: LineSpec,
     refs: StyleRefs,
@@ -517,6 +565,7 @@ impl<'a> Parser<'a> {
             size: (0.0, 0.0),
             pos: (0.0, 0.0),
             current: None,
+            custom: None,
             fill: None,
             line: LineSpec::default(),
             refs: StyleRefs::default(),
@@ -553,6 +602,17 @@ impl<'a> Parser<'a> {
             group_fill: None,
             shape_group_fill: false,
         }
+    }
+
+    /// Opens a command on the custom path being read.
+    fn custom_command(&mut self, kind: &[u8]) -> Option<&mut CustomCommand> {
+        let path = self.custom.as_mut()?.paths.last_mut()?;
+        path.commands.push(CustomCommand {
+            kind: String::from_utf8_lossy(kind).into_owned(),
+            points: Vec::new(),
+            arc: None,
+        });
+        path.commands.last_mut()
     }
 
     /// The local name of the element enclosing the one being read.
@@ -717,6 +777,7 @@ impl<'a> Parser<'a> {
                     },
                     ..Shape::default()
                 });
+                self.custom = None;
                 self.fill = None;
                 self.line = LineSpec::default();
                 self.refs = StyleRefs::default();
@@ -797,6 +858,63 @@ impl<'a> Parser<'a> {
                     if shape.kind.is_empty() {
                         shape.kind = attr(element, b"prst").unwrap_or_else(|| "rect".to_owned());
                     }
+                }
+            }
+            b"custGeom" => self.custom = Some(CustomGeometry::default()),
+            // The guide list belongs to a custom geometry; `avLst` has `gd`s of
+            // its own, which are read as preset adjustments below.
+            b"gd" if parent == b"gdLst" => {
+                if let Some(custom) = self.custom.as_mut() {
+                    custom.guides.push(CustomGuide {
+                        name: attr(element, b"name").unwrap_or_default(),
+                        formula: attr(element, b"fmla").unwrap_or_default(),
+                    });
+                }
+            }
+            b"path" if parent == b"pathLst" => {
+                if let Some(custom) = self.custom.as_mut() {
+                    custom.paths.push(CustomPath {
+                        w: num_attr(element, b"w").unwrap_or(0.0),
+                        h: num_attr(element, b"h").unwrap_or(0.0),
+                        fill: attr(element, b"fill"),
+                        stroke: attr(element, b"stroke")
+                            .map(|value| value == "1" || value == "true"),
+                        commands: Vec::new(),
+                    });
+                }
+            }
+            b"moveTo" | b"lnTo" | b"cubicBezTo" | b"quadBezTo" | b"close"
+                if parent == b"path" =>
+            {
+                self.custom_command(name);
+            }
+            b"arcTo" if parent == b"path" => {
+                let arc = [
+                    attr(element, b"wR").unwrap_or_default(),
+                    attr(element, b"hR").unwrap_or_default(),
+                    attr(element, b"stAng").unwrap_or_default(),
+                    attr(element, b"swAng").unwrap_or_default(),
+                ];
+                if let Some(command) = self.custom_command(name) {
+                    command.arc = Some(arc);
+                }
+            }
+            b"pt" if matches!(
+                parent.as_slice(),
+                b"moveTo" | b"lnTo" | b"cubicBezTo" | b"quadBezTo"
+            ) =>
+            {
+                let point = [
+                    attr(element, b"x").unwrap_or_else(|| "0".to_owned()),
+                    attr(element, b"y").unwrap_or_else(|| "0".to_owned()),
+                ];
+                if let Some(command) = self
+                    .custom
+                    .as_mut()
+                    .and_then(|custom| custom.paths.last_mut())
+                    .and_then(|path| path.commands.last_mut())
+                {
+                    command.points.push(point);
                 }
             }
             // `fmla="val 18750"` is thousandths of a percent of the shape size.
@@ -947,6 +1065,16 @@ impl<'a> Parser<'a> {
                     italic: self.text_italic.unwrap_or(false),
                     ..Run::default()
                 })
+            }
+            // An explicit line break inside a paragraph. It is a run of its own
+            // so the renderer's `pre-wrap` turns it into the break Excel draws.
+            b"br" if parent == b"p" => {
+                if let Some(para) = self.paras.last_mut() {
+                    para.push(Run {
+                        text: "\n".to_owned(),
+                        ..Run::default()
+                    });
+                }
             }
             // A run's own `rPr` is the most specific text formatting; a
             // paragraph's `defRPr` sits under it, and a shape's `lstStyle` is
@@ -1103,6 +1231,16 @@ impl<'a> Parser<'a> {
                 self.groups.pop();
             }
             b"sp" | b"cxnSp" | b"pic" | b"graphicFrame" => self.finish(),
+            b"custGeom" => {
+                if let Some(shape) = self.current.as_mut() {
+                    if let Some(custom) = self.custom.take() {
+                        if shape.kind.is_empty() {
+                            shape.kind = "custom".to_owned();
+                        }
+                        shape.custom = Some(custom);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1756,8 +1894,53 @@ mod tests {
         assert_eq!(round.miter_limit, None);
     }
 
+    /// `<a:br/>` is an explicit line break, kept inside its paragraph so the
+    /// renderer's `pre-wrap` preserves it.
     #[test]
-    fn a_line_without_a_colour_takes_the_style_refs_black() {        let theme = vec![Some("#FFFFFF".to_owned()), Some("#0D0D0D".to_owned())];
+    fn reads_a_line_break_inside_a_paragraph() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:r><a:t>a</a:t></a:r><a:br/><a:r><a:t>b</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let text = shapes[0].text.as_ref().expect("text");
+        assert_eq!(text.paras.len(), 1);
+        let joined: String = text.paras[0].iter().map(|run| run.text.as_str()).collect();
+        assert_eq!(joined, "a\nb");
+    }
+
+    /// A custom geometry carries its own guides and paths, with points written
+    /// as numbers or as guide names.
+    #[test]
+    fn reads_a_custom_geometry() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:custGeom><a:avLst/><a:gdLst><a:gd name="g1" fmla="*/ h 2 3"/></a:gdLst><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="0" b="0"/><a:pathLst><a:path w="100" h="100"><a:moveTo><a:pt x="0" y="g1"/></a:moveTo><a:lnTo><a:pt x="100" y="g1"/></a:lnTo><a:lnTo><a:pt x="50" y="0"/></a:lnTo><a:close/></a:path><a:path w="100" h="100" fill="none" stroke="0"><a:moveTo><a:pt x="0" y="50"/></a:moveTo><a:arcTo wR="40" hR="40" stAng="10800000" swAng="10800000"/></a:path></a:pathLst></a:custGeom></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let shape = &shapes[0];
+        assert_eq!(shape.kind, "custom");
+        let custom = shape.custom.as_ref().expect("custom geometry");
+        assert_eq!(custom.guides.len(), 1);
+        assert_eq!(custom.guides[0].name, "g1");
+        assert_eq!(custom.guides[0].formula, "*/ h 2 3");
+        assert_eq!(custom.paths.len(), 2);
+
+        let first = &custom.paths[0];
+        assert_eq!((first.w, first.h), (100.0, 100.0));
+        assert_eq!(first.fill, None);
+        assert_eq!(first.stroke, None);
+        assert_eq!(first.commands.len(), 4);
+        assert_eq!(first.commands[0].kind, "moveTo");
+        assert_eq!(first.commands[0].points[0], ["0".to_owned(), "g1".to_owned()]);
+        assert_eq!(first.commands[3].kind, "close");
+
+        let second = &custom.paths[1];
+        assert_eq!(second.fill.as_deref(), Some("none"));
+        assert_eq!(second.stroke, Some(false));
+        let arc = second.commands[1].arc.as_ref().expect("arc");
+        assert_eq!(arc, &["40".to_owned(), "40".to_owned(), "10800000".to_owned(), "10800000".to_owned()]);
+    }
+
+    /// A line without a colour takes the style refs' black — the callout's own
+    /// case, where every colour comes from the theme.
+    #[test]
+    fn a_line_without_a_colour_takes_the_style_refs_black() {
+        let theme = vec![Some("#FFFFFF".to_owned()), Some("#0D0D0D".to_owned())];
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="leftBrace"><a:avLst/></a:prstGeom><a:ln w="19050"/></xdr:spPr><xdr:style><a:lnRef idx="1"><a:schemeClr val="dk1"/></a:lnRef><a:fillRef idx="0"><a:schemeClr val="dk1"/></a:fillRef></xdr:style></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
         let shapes = parse(xml, &grid(), &theme, &[0.5], &HashMap::new());
         let shape = &shapes[0];
