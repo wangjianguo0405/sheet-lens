@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ListFilter, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { columnValues, type ValueCount } from "@/lib/excel";
-import { cn } from "@/lib/utils";
 
 interface FilterButtonProps {
   path: string;
@@ -23,6 +22,8 @@ interface FilterButtonProps {
   lastRow: number;
   selected: string[];
   onApply: (values: string[] | null) => void;
+  /** The grid's own zoom, so the button scales with the cells it sits in. */
+  zoom: number;
 }
 
 export function FilterButton({
@@ -33,6 +34,7 @@ export function FilterButton({
   lastRow,
   selected,
   onApply,
+  zoom,
 }: FilterButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -93,18 +95,35 @@ export function FilterButton({
           // The cell underneath selects on click; the button must not.
           onClick={(event) => event.stopPropagation()}
           aria-label={isFiltered ? t("filter.edit") : t("filter.column")}
-          className={cn(
-            // Excel pins this to the right edge of the header cell, centred
-            // vertically — not trailing the text wherever it happens to end.
-            // `pointer-events-auto` because the canvas grid puts this inside a
-            // click-through overlay, where the default would swallow the press.
-            "pointer-events-auto absolute top-1/2 right-0.5 flex size-3.5 -translate-y-1/2 items-center justify-center rounded-sm",
-            isFiltered
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-accent",
-          )}
+          // Measured off Excel's own render (CopyPicture of a filtered range):
+          // a 17 px square pinned to the bottom-right corner with a 1 px inset,
+          // a 1 px #a6acb3 edge and a white-to-grey face. A filtered column does
+          // not change the button — only the glyph, a caret becomes a funnel.
+          // `pointer-events-auto` because the canvas grid puts this inside a
+          // click-through overlay, where the default would swallow the press.
+          style={{
+            width: 17 * zoom,
+            height: 17 * zoom,
+            right: zoom,
+            bottom: zoom,
+          }}
+          className="pointer-events-auto absolute flex items-center justify-center border border-[#a6acb3] bg-linear-to-b from-[#feffff] to-[#eff2f7] text-[#656769] hover:brightness-[0.97]"
         >
-          <ListFilter className="size-3" />
+          <svg
+            width={9 * zoom}
+            height={9 * zoom}
+            viewBox="0 0 9 9"
+            aria-hidden="true"
+            fill="currentColor"
+          >
+            {isFiltered ? (
+              // Excel's applied-filter mark: a funnel with a small caret under it.
+              <path d="M0 0h9L5.7 4.2v2.1H3.3V4.2z M2.7 7.4h3.6L4.5 9z" />
+            ) : (
+              // The plain caret, 7 x 4 and centred.
+              <path d="M1 2.5h7L4.5 6.5z" />
+            )}
+          </svg>
         </button>
       </PopoverTrigger>
 

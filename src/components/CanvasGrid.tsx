@@ -2152,7 +2152,7 @@ export function CanvasGrid({
           : [],
       ants: antsRef.current,
       merges,
-      mergeView: { shown: shownMerges, covered: coveredMerges },
+      mergeView: { shown: shownMerges, covered: coveredMerges, at: mergeIndex },
       centerRuns: { shown: shownRuns, covered: coveredRuns, at: runIndex },
       autoFilter,
       filtering: visibleRows !== null && filters.size > 0,
@@ -2314,6 +2314,12 @@ export function CanvasGrid({
             stats.styleResolved += part.styleResolved;
             stats.styleMemoHits += part.styleMemoHits;
           }
+          // Excel marks a frozen split with a rule darker than a gridline, drawn
+          // across the gutters as well and kept when gridlines are turned off.
+          // Every pane is clipped to its own region, so this goes in after them.
+          ctx.fillStyle = view.theme.freezeLine;
+          if (fr > 0 && fh > 0) ctx.fillRect(0, gy + fh, view.width, 1);
+          if (fc > 0 && fw > 0) ctx.fillRect(gx + fw, 0, 1, view.height);
           perf.current.stats = stats;
           // Only real base passes enter the window: an overlay-only frame runs
           // no base pass, and folding a zero in would drag the median down to a
@@ -3765,6 +3771,7 @@ export function CanvasGrid({
                   firstRow={autoFilter.row + 1}
                   lastRow={autoFilter.row + autoFilter.rows - 1}
                   selected={filters.get(col) ?? []}
+                  zoom={zoom / 100}
                   onApply={(values) => {
                     const next = new Map(filters);
                     if (values && values.length > 0) next.set(col, values);

@@ -29,6 +29,13 @@ export interface CanvasTheme {
   foreground: string;
   /** Gridlines — `border-border/60`, i.e. the border colour at 60% alpha. */
   gridline: string;
+  /**
+   * The rule Excel draws along a frozen split. Not a palette token: Excel keeps
+   * it the same whatever the document looks like, and it is drawn even with
+   * gridlines turned off. Measured off a captured Normal view: #9B9B9B beside a
+   * #E0E0E0 gridline.
+   */
+  freezeLine: string;
   /** The full-strength border colour, for an explicit cell border of no colour. */
   border: string;
   /** Gutter background. */
@@ -48,13 +55,16 @@ const FALLBACK: CanvasTheme = {
   background: "oklch(1 0 0)",
   foreground: "oklch(0.145 0 0)",
   gridline: "oklch(0.922 0 0 / 60%)",
+  freezeLine: "#9b9b9b",
   border: "oklch(0.922 0 0)",
   muted: "oklch(0.97 0 0)",
   mutedForeground: "oklch(0.556 0 0)",
   destructive: "oklch(0.577 0.245 27.325)",
 };
 
-const VARS: Record<keyof Omit<CanvasTheme, "gridline">, string> = {
+type TokenKey = Exclude<keyof CanvasTheme, "gridline" | "freezeLine">;
+
+const VARS: Record<TokenKey, string> = {
   background: "--background",
   foreground: "--foreground",
   border: "--border",
@@ -134,12 +144,9 @@ export function canvasTheme(): CanvasTheme {
   if (cached) return cached;
 
   const resolved: Partial<Record<keyof CanvasTheme, string>> = {};
-  const rgbaByToken: Partial<Record<keyof Omit<CanvasTheme, "gridline">, Rgba>> = {};
+  const rgbaByToken: Partial<Record<TokenKey, Rgba>> = {};
 
-  for (const [key, variable] of Object.entries(VARS) as [
-    keyof Omit<CanvasTheme, "gridline">,
-    string,
-  ][]) {
+  for (const [key, variable] of Object.entries(VARS) as [TokenKey, string][]) {
     let value: string;
     try {
       value = readVar(variable);
@@ -157,6 +164,7 @@ export function canvasTheme(): CanvasTheme {
   resolved.gridline = borderInk
     ? rgba(withAlpha(borderInk, GRIDLINE_ALPHA))
     : FALLBACK.gridline;
+  resolved.freezeLine = FALLBACK.freezeLine;
 
   cached = resolved as CanvasTheme;
   return cached;

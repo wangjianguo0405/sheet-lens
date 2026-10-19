@@ -153,7 +153,12 @@ export interface GridView {
   /** How far the marquee's dashes have crawled, in pixels. */
   ants: number;
   merges: MergeRect[];
-  mergeView: { shown: MergeRect[]; covered: Set<number> };
+  mergeView: {
+    shown: MergeRect[];
+    covered: Set<number>;
+    /** Each covered cell back to the region holding it, for its fill. */
+    at: Map<number, MergeRect>;
+  };
   centerRuns: {
     shown: (MergeRect & { text: string | null })[];
     covered: Set<number>;
@@ -997,6 +1002,35 @@ function inRegion(
   return covered.has(cellKey(view.sheetCols, sheetRow, col));
 }
 
+/**
+ * Whether a cell paints a fill of its own. Gridlines are drawn under fills, so
+ * an edge either side of which something is filled is not drawn at all — Excel's
+ * own picture of a solid block has no rules inside it or along its edge, and the
+ * empty cell beside a filled one loses that edge too.
+ *
+ * A merged cell answers for its whole region: the anchor's fill is the one
+ * Excel paints, whatever the covered cells carry.
+ */
+function hasFill(view: GridView, row: number, col: number): boolean {
+  if (row < 0 || row >= view.sheetRows || col < 0 || col >= view.sheetCols) {
+    return false;
+  }
+  const merge = view.mergeView.at.get(cellKey(view.sheetCols, row, col));
+  const at = merge ?? { row, col };
+  return (view.styleAt(at.row, at.col)?.fill ?? null) !== null;
+}
+
+/** Whether any cell of a column/row stretch is filled, for a span's own edges. */
+function columnFilled(view: GridView, col: number, from: number, to: number): boolean {
+  for (let row = from; row <= to; row += 1) if (hasFill(view, row, col)) return true;
+  return false;
+}
+
+function rowFilled(view: GridView, row: number, from: number, to: number): boolean {
+  for (let col = from; col <= to; col += 1) if (hasFill(view, row, col)) return true;
+  return false;
+}
+
 export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintStats {
   const stats: PaintStats = {
     rows: 0,
@@ -1153,16 +1187,24 @@ function paintSpanSurface(
   const mark = view.markAt(rect.row, rect.col);
   fillBlock(ctx, view, page, x, y, w, h, mark ?? style?.fill ?? null);
 
+  const lastRow = rect.row + rect.rows - 1;
+  const lastCol = rect.col + rect.cols - 1;
+
+  // Gridlines sit under fills: a region carrying one loses its own rules, and
+  // so does an edge whose neighbour is filled.
   if (view.showGrid) {
-    line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
-    line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
+    const filled = (style?.fill ?? null) !== null;
+    if (!filled && !columnFilled(view, lastCol + 1, rect.row, lastRow)) {
+      line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
+    }
+    if (!filled && !rowFilled(view, lastRow + 1, rect.col, lastCol)) {
+      line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
+    }
   }
 
   // The region's outline, resolved one boundary cell at a time, exactly as the
   // DOM renderer did — sides facing another cell of the same region are not
   // edges and are left out.
-  const lastRow = rect.row + rect.rows - 1;
-  const lastCol = rect.col + rect.cols - 1;
   for (let r = rect.row; r <= lastRow; r += 1) {
     const at = view.displayOfRow(r);
     if (at < 0) continue;
@@ -1240,10 +1282,16 @@ function paintCellSurface(
     fill(ctx, x, y, w, h, own);
   }
 
-  // The hairline grid, before the borders so a border wins where both land.
+  // The hairline grid, before the borders so a border wins where both land. It
+  // lies under fills as well: an edge with a filled cell on either side is not
+  // drawn, which is what turns a filled block into a solid rectangle.
   if (view.showGrid) {
-    line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
-    line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
+    if (!own && !hasFill(view, sheetRow, col + 1)) {
+      line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
+    }
+    if (!own && !hasFill(view, sheetRow + 1, col)) {
+      line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
+    }
   }
 
   // Excel drops the borders between the cells of a Center-Across run: the run
