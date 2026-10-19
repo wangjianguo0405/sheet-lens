@@ -2197,6 +2197,11 @@ fn parse_sheet<R: BufRead>(
                         // different runs.
                         rich_cell = (attr(&element, b"t").as_deref() == Some("s"))
                             .then_some((row, col));
+                        // The sheet's extent is where its cells are, styled or
+                        // not: a conditional format has to reach an unstyled
+                        // cell, and it is clamped to this extent.
+                        extent_rows = extent_rows.max(row + 1);
+                        extent_cols = extent_cols.max(col + 1);
                         let Some(index) = attr(&element, b"s")
                             .and_then(|v| v.parse::<usize>().ok())
                         else {
@@ -2214,8 +2219,6 @@ fn parse_sheet<R: BufRead>(
                             pending_row = row;
                         }
                         pending.push((col, intern(&mut layout.styles, &mut style_ids, style)));
-                        extent_rows = extent_rows.max(row + 1);
-                        extent_cols = extent_cols.max(col + 1);
                     }
                     b"mergeCell" => {
                         if layout.merges.len() >= MAX_MERGES {

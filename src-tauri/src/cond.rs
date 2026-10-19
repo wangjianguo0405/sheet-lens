@@ -8,9 +8,10 @@
 //! it shifted from the top-left corner of the range it sits on. What comes out
 //! is folded straight into the cell's style, so the renderer knows none of it.
 //!
-//! Only the rule types a formula expresses are read. Colour scales, data bars
-//! and icon sets are drawings rather than formats, and a rule this cannot read
-//! paints nothing rather than something wrong.
+//! The rule types that paint through a `dxf` are read: an expression, a
+//! comparison against the cell itself (`cellIs`), a text test, and duplicates.
+//! Colour scales, data bars and icon sets are drawings rather than formats, and
+//! a rule this cannot read paints nothing rather than something wrong.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -50,12 +51,69 @@ pub struct Rule {
     /// The cells the rule covers. Each range is its own anchor: a rule's formula
     /// is written relative to the top-left of the range it sits on.
     ranges: Vec<MergeRect>,
-    formula: Formula,
+    matcher: Matcher,
+}
+
+/// What makes a rule fire for a cell.
+///
+/// The types that paint through a `dxf` are here. Colour scales, data bars and
+/// icon sets are drawings rather than formats and are left out: a rule this
+/// cannot read paints nothing rather than something wrong.
+enum Matcher {
+    /// `expression`: the formula has to evaluate to TRUE.
+    Expression(Formula),
+    /// `cellIs`: the cell's own value against one or two operands. Excel writes
+    /// the operands as `<formula>` too — usually a constant, sometimes a cell.
+    CellIs {
+        op: CellOp,
+        first: Formula,
+        second: Option<Formula>,
+    },
+    /// `containsText` and its relatives, against the cell's own text. Excel
+    /// matches them without regard to case.
+    Text { test: TextTest, needle: String },
+    /// `duplicateValues` / `uniqueValues`: whether the value repeats among the
+    /// rule's own ranges. Blanks never count either way.
+    Duplicate { keep_duplicates: bool },
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum CellOp {
+    Equal,
+    NotEqual,
+    Greater,
+    GreaterOrEqual,
+    Less,
+    LessOrEqual,
+    Between,
+    NotBetween,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum TextTest {
+    Contains,
+    NotContains,
+    Begins,
+    Ends,
+}
+
+fn cell_op(name: &str) -> Option<CellOp> {
+    Some(match name {
+        "equal" => CellOp::Equal,
+        "notEqual" => CellOp::NotEqual,
+        "greaterThan" => CellOp::Greater,
+        "greaterThanOrEqual" => CellOp::GreaterOrEqual,
+        "lessThan" => CellOp::Less,
+        "lessThanOrEqual" => CellOp::LessOrEqual,
+        "between" => CellOp::Between,
+        "notBetween" => CellOp::NotBetween,
+        _ => return None,
+    })
 }
 
 /// Reads a sheet's `<conditionalFormatting>` blocks.
 ///
-/// A rule whose formula cannot be read is dropped here rather than at every
+/// A rule whose operands cannot be read is dropped here rather than at every
 /// cell: there is nothing to evaluate it with, and a rule that never fires
 /// paints nothing, which is what not being there looks like too.
 pub fn rules(xml: &str) -> Vec<Rule> {
@@ -64,7 +122,7 @@ pub fn rules(xml: &str) -> Vec<Rule> {
     let mut out = Vec::new();
 
     let mut sqref: Vec<MergeRect> = Vec::new();
-    let mut current: Option<(u32, bool, usize, String)> = None;
+    let mut current: Option<Pending> = None;
     let mut in_formula = false;
     let mut formula = String::new();
 
@@ -77,19 +135,18 @@ pub fn rules(xml: &str) -> Vec<Rule> {
                 b"conditionalFormatting" => {
                     sqref = sqref_of(attr(&element, b"sqref").as_deref());
                 }
-                // Only an expression rule carries a formula to evaluate, and
-                // only a rule with a format has anything to paint.
-                b"cfRule" if attr(&element, b"type").as_deref() == Some("expression") => {
-                    current = attr(&element, b"dxfId")
-                        .and_then(|v| v.parse::<usize>().ok())
-                        .map(|patch| {
-                            let priority = attr(&element, b"priority")
-                                .and_then(|v| v.parse::<u32>().ok())
-                                .unwrap_or(u32::MAX);
-                            let stop = attr(&element, b"stopIfTrue")
-                                .is_some_and(|v| v == "1" || v == "true");
-                            (priority, stop, patch, String::new())
-                        });
+                b"cfRule" => {
+                    let pending = pending_rule(&element);
+                    // A rule with no children — `duplicateValues` is written that
+                    // way — is complete the moment it opens.
+                    match pending {
+                        Some(pending) if empty => {
+                            if let Some(rule) = finish(pending, &sqref) {
+                                out.push(rule);
+                            }
+                        }
+                        other => current = other,
+                    }
                 }
                 b"formula" if current.is_some() && !empty => {
                     in_formula = true;
@@ -113,19 +170,13 @@ pub fn rules(xml: &str) -> Vec<Rule> {
                 b"formula" if in_formula => {
                     in_formula = false;
                     if let Some(current) = current.as_mut() {
-                        current.3 = std::mem::take(&mut formula);
+                        current.formulas.push(std::mem::take(&mut formula));
                     }
                 }
                 b"cfRule" => {
-                    if let Some((priority, stop_if_true, patch, text)) = current.take() {
-                        if let Some(formula) = Formula::parse(&text) {
-                            out.push(Rule {
-                                priority,
-                                stop_if_true,
-                                patch,
-                                ranges: sqref.clone(),
-                                formula,
-                            });
+                    if let Some(pending) = current.take() {
+                        if let Some(rule) = finish(pending, &sqref) {
+                            out.push(rule);
                         }
                     }
                 }
@@ -138,6 +189,76 @@ pub fn rules(xml: &str) -> Vec<Rule> {
     out
 }
 
+/// A `<cfRule>` opened but not yet finished: which type it is, and the
+/// `<formula>` children read so far.
+struct Pending {
+    priority: u32,
+    stop_if_true: bool,
+    patch: usize,
+    kind: Kind,
+    formulas: Vec<String>,
+}
+
+enum Kind {
+    Expression,
+    CellIs(CellOp),
+    Text(TextTest, String),
+    Duplicate(bool),
+}
+
+/// The rule a `<cfRule>` element names, if this reader has a way to evaluate it.
+/// A rule with no `dxfId` paints no format, so colour scales, data bars and icon
+/// sets stop here.
+fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
+    let patch = attr(element, b"dxfId").and_then(|v| v.parse::<usize>().ok())?;
+    let kind = match attr(element, b"type").as_deref() {
+        Some("expression") => Kind::Expression,
+        Some("cellIs") => Kind::CellIs(cell_op(&attr(element, b"operator")?)?),
+        Some("containsText") => Kind::Text(TextTest::Contains, attr(element, b"text")?),
+        Some("notContainsText") => Kind::Text(TextTest::NotContains, attr(element, b"text")?),
+        Some("beginsWith") => Kind::Text(TextTest::Begins, attr(element, b"text")?),
+        Some("endsWith") => Kind::Text(TextTest::Ends, attr(element, b"text")?),
+        Some("duplicateValues") => Kind::Duplicate(true),
+        Some("uniqueValues") => Kind::Duplicate(false),
+        _ => return None,
+    };
+    Some(Pending {
+        priority: attr(element, b"priority")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(u32::MAX),
+        stop_if_true: attr(element, b"stopIfTrue")
+            .is_some_and(|v| v == "1" || v == "true"),
+        patch,
+        kind,
+        formulas: Vec::new(),
+    })
+}
+
+fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
+    let matcher = match pending.kind {
+        Kind::Expression => Matcher::Expression(Formula::parse(pending.formulas.first()?)?),
+        Kind::CellIs(op) => {
+            let first = Formula::parse(pending.formulas.first()?)?;
+            let second = match op {
+                CellOp::Between | CellOp::NotBetween => {
+                    Some(Formula::parse(pending.formulas.get(1)?)?)
+                }
+                _ => None,
+            };
+            Matcher::CellIs { op, first, second }
+        }
+        Kind::Text(test, needle) => Matcher::Text { test, needle },
+        Kind::Duplicate(keep_duplicates) => Matcher::Duplicate { keep_duplicates },
+    };
+    Some(Rule {
+        priority: pending.priority,
+        stop_if_true: pending.stop_if_true,
+        patch: pending.patch,
+        ranges: sqref.to_vec(),
+        matcher,
+    })
+}
+
 /// `sqref` holds one or more A1 ranges, space separated.
 fn sqref_of(sqref: Option<&str>) -> Vec<MergeRect> {
     sqref
@@ -148,13 +269,65 @@ fn sqref_of(sqref: Option<&str>) -> Vec<MergeRect> {
 }
 
 impl Rule {
-    /// Every column the rule's formula can read, so the value pass knows which
-    /// ones to keep. A relative reference reaches a column for every cell of its
-    /// range, which is the range's own width either side of where it is written.
+    /// Every column the rule can read, so the value pass knows which ones to
+    /// keep. A formula's relative reference reaches a column for every cell of
+    /// its range, which is the range's own width either side of where it is
+    /// written; a rule that compares the cell's own value needs the range's
+    /// columns as well.
     fn columns(&self, out: &mut HashSet<u32>) {
-        for rect in &self.ranges {
-            self.formula.columns(rect.cols.max(1), out);
+        match &self.matcher {
+            Matcher::Expression(formula) => {
+                for rect in &self.ranges {
+                    formula.columns(rect.cols.max(1), out);
+                }
+            }
+            Matcher::CellIs { first, second, .. } => {
+                for rect in &self.ranges {
+                    first.columns(rect.cols.max(1), out);
+                    if let Some(second) = second {
+                        second.columns(rect.cols.max(1), out);
+                    }
+                }
+                self.range_columns(out);
+            }
+            Matcher::Text { .. } | Matcher::Duplicate { .. } => self.range_columns(out),
         }
+    }
+
+    /// The columns its own ranges cover.
+    fn range_columns(&self, out: &mut HashSet<u32>) {
+        for rect in &self.ranges {
+            for col in rect.col..rect.col.saturating_add(rect.cols) {
+                out.insert(col);
+            }
+        }
+    }
+
+    /// How often each value appears across the rule's own ranges, for the
+    /// duplicate and unique rules. Blank cells are left out: Excel counts
+    /// neither, and an empty cell is in neither set.
+    fn value_counts(
+        &self,
+        values: &HashMap<(u32, u32), Value>,
+        rows: u32,
+        cols: u32,
+    ) -> HashMap<ValueKey, usize> {
+        let mut out: HashMap<ValueKey, usize> = HashMap::new();
+        for rect in &self.ranges {
+            let end_row = rect.row.saturating_add(rect.rows).min(rows);
+            let end_col = rect.col.saturating_add(rect.cols).min(cols);
+            for row in rect.row..end_row {
+                for col in rect.col..end_col {
+                    let Some(value) = values.get(&(row, col)) else {
+                        continue;
+                    };
+                    if let Some(key) = ValueKey::of(value) {
+                        *out.entry(key).or_default() += 1;
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
@@ -468,11 +641,21 @@ fn fold(
         return;
     }
 
+    // The multiset a duplicate or unique rule needs, built once for its whole
+    // range rather than once per cell it asks about.
+    let counts: Vec<Option<HashMap<ValueKey, usize>>> = ordered
+        .iter()
+        .map(|rule| match &rule.matcher {
+            Matcher::Duplicate { .. } => Some(rule.value_counts(values, layout.rows, layout.cols)),
+            _ => None,
+        })
+        .collect();
+
     // Which rules reach which row, in the order they are to be looked at. Built
     // up first so that a rule over a range the sheet never reaches costs nothing.
     let mut spans: BTreeMap<u32, Vec<Span<'_>>> = BTreeMap::new();
     let mut budget = MAX_CONDITIONAL_CELLS;
-    'rules: for rule in &ordered {
+    'rules: for (index, rule) in ordered.iter().enumerate() {
         for rect in &rule.ranges {
             let first_row = rect.row;
             let last_row = rect.row.saturating_add(rect.rows).min(layout.rows);
@@ -489,6 +672,7 @@ fn fold(
                 budget -= width;
                 spans.entry(row).or_default().push(Span {
                     rule,
+                    index,
                     anchor_row: rect.row,
                     anchor_col: rect.col,
                     first_col,
@@ -525,7 +709,7 @@ fn fold(
                     anchor_col: span.anchor_col,
                     values,
                 };
-                if span.rule.formula.eval(&context) != Some(Value::Bool(true)) {
+                if !span.rule.matcher.matches(&context, counts[span.index].as_ref()) {
                     continue;
                 }
                 merge(fired.entry(col).or_default(), &patches[span.rule.patch]);
@@ -569,6 +753,9 @@ fn fold(
 /// One rule's range, as it applies to a single row.
 struct Span<'a> {
     rule: &'a Rule,
+    /// Where the rule sits in the priority-ordered list, for its own precomputed
+    /// range values.
+    index: usize,
     anchor_row: u32,
     anchor_col: u32,
     first_col: u32,
@@ -684,6 +871,113 @@ struct Context<'a> {
     anchor_row: u32,
     anchor_col: u32,
     values: &'a HashMap<(u32, u32), Value>,
+}
+
+impl Context<'_> {
+    /// The value of the cell the rule is being asked about.
+    fn value(&self) -> Value {
+        self.values
+            .get(&(self.row, self.col))
+            .cloned()
+            .unwrap_or(Value::Blank)
+    }
+}
+
+/// A value as a multiset key. Text compares without regard to case, which is
+/// how Excel counts duplicates; a blank has no key at all, since it counts as
+/// no value rather than as an empty one.
+#[derive(PartialEq, Eq, Hash)]
+enum ValueKey {
+    Number(u64),
+    Text(String),
+    Bool(bool),
+}
+
+impl ValueKey {
+    fn of(value: &Value) -> Option<ValueKey> {
+        Some(match value {
+            Value::Blank => return None,
+            // `-0` and `0` are the same value to a rule.
+            Value::Number(number) => ValueKey::Number(if *number == 0.0 {
+                0f64.to_bits()
+            } else {
+                number.to_bits()
+            }),
+            Value::Text(text) => ValueKey::Text(text.to_uppercase()),
+            Value::Bool(flag) => ValueKey::Bool(*flag),
+        })
+    }
+}
+
+impl Matcher {
+    /// Whether the rule fires for the cell `context` names. `duplicates` is the
+    /// multiset of the rule's own range, built once per rule.
+    fn matches(
+        &self,
+        context: &Context,
+        duplicates: Option<&HashMap<ValueKey, usize>>,
+    ) -> bool {
+        match self {
+            Matcher::Expression(formula) => formula.eval(context) == Some(Value::Bool(true)),
+            Matcher::CellIs { op, first, second } => {
+                let Some(first) = first.eval(context) else {
+                    return false;
+                };
+                let value = context.value();
+                let order = |other: &Value| compare(&value, other);
+                match op {
+                    CellOp::Equal => order(&first).is_some_and(|order| order.is_eq()),
+                    // Excel's `<>` is true for values of different kinds, which is
+                    // the same reading its own formula language gives it.
+                    CellOp::NotEqual => !order(&first).is_some_and(|order| order.is_eq()),
+                    CellOp::Greater => order(&first).is_some_and(|order| order.is_gt()),
+                    CellOp::GreaterOrEqual => order(&first).is_some_and(|order| order.is_ge()),
+                    CellOp::Less => order(&first).is_some_and(|order| order.is_lt()),
+                    CellOp::LessOrEqual => order(&first).is_some_and(|order| order.is_le()),
+                    CellOp::Between | CellOp::NotBetween => {
+                        let Some(second) = second.as_ref().and_then(|second| second.eval(context))
+                        else {
+                            return false;
+                        };
+                        let inside = order(&first).is_some_and(|order| order.is_ge())
+                            && compare(&value, &second).is_some_and(|order| order.is_le());
+                        if *op == CellOp::Between {
+                            inside
+                        } else {
+                            !inside
+                        }
+                    }
+                }
+            }
+            Matcher::Text { test, needle } => {
+                let Value::Text(value) = context.value() else {
+                    return false;
+                };
+                let (value, needle) = (value.to_uppercase(), needle.to_uppercase());
+                match test {
+                    TextTest::Contains => value.contains(&needle),
+                    TextTest::NotContains => !value.contains(&needle),
+                    TextTest::Begins => value.starts_with(&needle),
+                    TextTest::Ends => value.ends_with(&needle),
+                }
+            }
+            Matcher::Duplicate { keep_duplicates } => {
+                let value = context.value();
+                let Some(key) = ValueKey::of(&value) else {
+                    return false;
+                };
+                let count = duplicates
+                    .and_then(|counts| counts.get(&key))
+                    .copied()
+                    .unwrap_or(0);
+                if *keep_duplicates {
+                    count > 1
+                } else {
+                    count == 1
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1345,6 +1639,24 @@ mod tests {
         Value::Text(value.to_owned())
     }
 
+    /// Whether a rule fires for one cell, with the range's values laid out as a
+    /// small sheet would.
+    fn fires(rule: &Rule, row: u32, col: u32, cells: &[((u32, u32), Value)]) -> bool {
+        let values: HashMap<(u32, u32), Value> = cells.iter().cloned().collect();
+        let context = Context {
+            row,
+            col,
+            anchor_row: 0,
+            anchor_col: 0,
+            values: &values,
+        };
+        let counts = match &rule.matcher {
+            Matcher::Duplicate { .. } => Some(rule.value_counts(&values, 8, 8)),
+            _ => None,
+        };
+        rule.matcher.matches(&context, counts.as_ref())
+    }
+
     /// The rule this whole feature was written for: a row greyed out because its
     /// judgement column says the row is out of scope. `B8:N161`, so the corner a
     /// relative reference is measured from is B8.
@@ -1412,6 +1724,82 @@ mod tests {
         let mut columns = HashSet::new();
         rule.columns(&mut columns);
         assert_eq!(columns, HashSet::from([6, 7]));
+    }
+
+    #[test]
+    fn reads_a_cell_is_rule_and_compares_the_cell() {
+        let xml = r#"<worksheet><conditionalFormatting sqref="B2:B9"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThanOrEqual"><formula>50</formula></cfRule></conditionalFormatting></worksheet>"#;
+        let rules = rules(xml);
+        assert_eq!(rules.len(), 1);
+        let rule = &rules[0];
+        // B, the column the rule has to read to know the cell's own value.
+        let mut columns = HashSet::new();
+        rule.columns(&mut columns);
+        assert_eq!(columns, HashSet::from([1]));
+        assert!(fires(rule, 1, 1, &[((1, 1), Value::Number(60.0))]));
+        assert!(fires(rule, 1, 1, &[((1, 1), Value::Number(50.0))]));
+        assert!(!fires(rule, 1, 1, &[((1, 1), Value::Number(40.0))]));
+        // An empty cell counts as zero, which is below the bound.
+        assert!(!fires(rule, 1, 1, &[]));
+    }
+
+    #[test]
+    fn a_cell_is_rule_can_ask_for_a_between() {
+        let xml = r#"<worksheet><conditionalFormatting sqref="A1:A4"><cfRule type="cellIs" dxfId="0" priority="1" operator="between"><formula>10</formula><formula>20</formula></cfRule></conditionalFormatting></worksheet>"#;
+        let rules = rules(xml);
+        assert_eq!(rules.len(), 1);
+        assert!(fires(&rules[0], 0, 0, &[((0, 0), Value::Number(15.0))]));
+        assert!(!fires(&rules[0], 0, 0, &[((0, 0), Value::Number(25.0))]));
+    }
+
+    /// Excel writes a `<formula>` for its text tests too, but the `text`
+    /// attribute says the same thing more directly, and the test is the one the
+    /// grid can evaluate without a whole formula language.
+    #[test]
+    fn reads_the_text_rules() {
+        let xml = r#"<worksheet>
+            <conditionalFormatting sqref="A1:A9"><cfRule type="containsText" dxfId="0" priority="1" operator="containsText" text="abc"><formula>NOT(ISERROR(SEARCH("abc",A1)))</formula></cfRule></conditionalFormatting>
+            <conditionalFormatting sqref="B1:B9"><cfRule type="beginsWith" dxfId="0" priority="2" operator="beginsWith" text="x"><formula>LEFT(B1,1)="x"</formula></cfRule></conditionalFormatting>
+            <conditionalFormatting sqref="C1:C9"><cfRule type="endsWith" dxfId="0" priority="3" operator="endsWith" text="z"><formula>RIGHT(C1,1)="z"</formula></cfRule></conditionalFormatting>
+            <conditionalFormatting sqref="D1:D9"><cfRule type="notContainsText" dxfId="0" priority="4" operator="notContainsText" text="q"><formula>ISERROR(SEARCH("q",D1))</formula></cfRule></conditionalFormatting>
+        </worksheet>"#;
+        let rules = rules(xml);
+        assert_eq!(rules.len(), 4);
+        // Excel's text tests ignore case.
+        assert!(fires(&rules[0], 0, 0, &[((0, 0), text("xABCx"))]));
+        assert!(!fires(&rules[0], 0, 0, &[((0, 0), text("xyz"))]));
+        assert!(!fires(&rules[0], 0, 0, &[((0, 0), Value::Number(1.0))]));
+        assert!(fires(&rules[1], 0, 1, &[((0, 1), text("Xylophone"))]));
+        assert!(fires(&rules[2], 0, 2, &[((0, 2), text("fizz"))]));
+        assert!(fires(&rules[3], 0, 3, &[((0, 3), text("abc"))]));
+        assert!(!fires(&rules[3], 0, 3, &[((0, 3), text("aqb"))]));
+    }
+
+    #[test]
+    fn reads_the_duplicate_and_unique_rules() {
+        let xml = r#"<worksheet>
+            <conditionalFormatting sqref="A1:A5"><cfRule type="duplicateValues" dxfId="0" priority="1"/></conditionalFormatting>
+            <conditionalFormatting sqref="A1:A5"><cfRule type="uniqueValues" dxfId="0" priority="2"/></conditionalFormatting>
+        </worksheet>"#;
+        let rules = rules(xml);
+        assert_eq!(rules.len(), 2, "a rule with no children is complete on its own");
+        let cells = [
+            ((0, 0), Value::Number(1.0)),
+            ((1, 0), Value::Number(2.0)),
+            ((2, 0), text("b")),
+            ((3, 0), Value::Number(2.0)),
+            ((4, 0), text("B")),
+        ];
+        // 1 is unique, 2 repeats, and "b"/"B" repeat regardless of case.
+        assert!(!fires(&rules[0], 0, 0, &cells));
+        assert!(fires(&rules[0], 1, 0, &cells));
+        assert!(fires(&rules[0], 2, 0, &cells));
+        assert!(fires(&rules[0], 4, 0, &cells));
+        // The blank A6 is in neither set.
+        assert!(!fires(&rules[0], 5, 0, &cells));
+        assert!(fires(&rules[1], 0, 0, &cells));
+        assert!(!fires(&rules[1], 1, 0, &cells));
+        assert!(!fires(&rules[1], 5, 0, &cells));
     }
 
     #[test]
