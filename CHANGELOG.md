@@ -12,6 +12,21 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [0.3.22] - 2026-10-19
+
+### Added
+
+- Conditional formatting now covers the rule types Excel draws, not just formulas: a cell compared with a value (all eight operators, `between` inclusive), text tests — contains, does not contain, begins with, ends with — ignoring case, duplicate and unique values, the highest or lowest N (or a share of the count), and above or below the average, optionally by a number of standard deviations
+- Colour scales, data bars and icon sets are drawn as well. A scale mixes its two or three colours across the range; a bar takes its length from the value and runs from its axis, negative values to the left, with Excel's axis line drawn through it; an icon set puts the family's mark at the cell's left and moves the value past it
+
+### Fixed
+
+- Gridlines lie under fills: a filled block reads as one solid rectangle, and the empty cell beside it no longer keeps the shared edge
+- A frozen split is marked with Excel's thinner, darker rule, drawn across the grid and both gutters and kept with gridlines turned off
+- The AutoFilter button is Excel's own — a 17 px square at the header cell's bottom-right, grey, with a caret that becomes a funnel once the column is filtered — instead of turning the theme colour
+- A cell's rich text is kept by the cell rather than by the string, so two cells spelling the same text with different formatting each keep their own
+- The blank area past a sheet's last column no longer shows a bar, icon or coloured run belonging to a real cell of the next row
+
 ## [0.3.21] - 2026-10-19
 
 ### Fixed
