@@ -214,6 +214,8 @@ export interface ShapeText {
   sizePt: number;
   color: string;
   align: "left" | "center" | "right";
+  /** One alignment per paragraph, when they are not all `align`. */
+  aligns?: ("left" | "center" | "right")[];
   valign: "top" | "middle" | "bottom";
   /** Excel's `wrap="none"` lets text spill past the shape, like an unstyled cell. */
   wrap: boolean;
@@ -221,6 +223,8 @@ export interface ShapeText {
   insets: [number, number, number, number];
   /** The face the shape's own `defRPr` names, which its runs inherit. */
   family?: string | null;
+  /** One flag per paragraph: right-to-left base direction. Absent when none is. */
+  rtl?: boolean[];
 }
 
 /**

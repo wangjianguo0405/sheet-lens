@@ -211,13 +211,16 @@ function strokeProps(line: ShapeStroke | null): StrokeAttrs {
   };
 }
 
+function flexSide(align: string): "center" | "flex-end" | "flex-start" {
+  return align === "center" ? "center" : align === "right" ? "flex-end" : "flex-start";
+}
+
 function textOf(shape: Shape, w: number, h: number): ReactNode {
   const text = shape.text;
   if (!text) return null;
   const justify =
     text.valign === "middle" ? "center" : text.valign === "bottom" ? "flex-end" : "flex-start";
-  const align =
-    text.align === "center" ? "center" : text.align === "right" ? "flex-end" : "flex-start";
+  const align = flexSide(text.align);
   return (
     <foreignObject width={w} height={h}>
       <div
@@ -243,28 +246,44 @@ function textOf(shape: Shape, w: number, h: number): ReactNode {
           wordBreak: "break-word",
         }}
       >
-        {text.paras.map((para, index) => (
-          // An empty paragraph is a blank line in Excel, and empty blocks have
-          // no height of their own — without this a callout's leading blank
-          // lines collapse and its text rises into whatever they were clearing.
-          // One line is `lineHeight` (1.2) of the text's own size.
-          <div key={index} style={{ minHeight: "1.2em" }}>
-            {para.map((run, runIndex) => (
-              <span
-                key={runIndex}
-                style={{
-                  fontWeight: run.bold ? 700 : undefined,
-                  fontStyle: run.italic ? "italic" : undefined,
-                  // A run that names no face keeps the shape's, so this stays
-                  // out of the way rather than restating it.
-                  fontFamily: run.family ? cellFontStack(run.family, null) : undefined,
-                }}
-              >
-                {run.text}
-              </span>
-            ))}
-          </div>
-        ))}
+        {text.paras.map((para, index) => {
+          const paraAlign = text.aligns?.[index] ?? text.align;
+          return (
+            // An empty paragraph is a blank line in Excel, and empty blocks have
+            // no height of their own — without this a callout's leading blank
+            // lines collapse and its text rises into whatever they were clearing.
+            // One line is `lineHeight` (1.2) of the text's own size.
+            <div
+              key={index}
+              // A right-to-left paragraph's base direction decides how mixed
+              // Hebrew/Arabic and Latin text orders itself; Excel keeps `algn`
+              // physical, so only the direction changes here.
+              dir={text.rtl?.[index] ? "rtl" : undefined}
+              style={{
+                minHeight: "1.2em",
+                // `algn` is per paragraph in the file; the container carries
+                // the shape's default for the ones that agree with it.
+                textAlign: paraAlign,
+                alignSelf: flexSide(paraAlign),
+              }}
+            >
+              {para.map((run, runIndex) => (
+                <span
+                  key={runIndex}
+                  style={{
+                    fontWeight: run.bold ? 700 : undefined,
+                    fontStyle: run.italic ? "italic" : undefined,
+                    // A run that names no face keeps the shape's, so this stays
+                    // out of the way rather than restating it.
+                    fontFamily: run.family ? cellFontStack(run.family, null) : undefined,
+                  }}
+                >
+                  {run.text}
+                </span>
+              ))}
+            </div>
+          );
+        })}
       </div>
     </foreignObject>
   );

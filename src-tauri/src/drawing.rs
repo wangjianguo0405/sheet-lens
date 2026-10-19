@@ -135,8 +135,12 @@ pub struct Text {
     /// Points, before the 96/72 conversion.
     pub size_pt: f64,
     pub color: String,
-    /// `left`, `center` or `right`.
+    /// `left`, `center` or `right`. The shape's default, which the container
+    /// uses; a paragraph that names its own is in `aligns`.
     pub align: String,
+    /// One alignment per paragraph, when they are not all the default.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub aligns: Vec<String>,
     /// `top`, `middle` or `bottom`.
     pub valign: String,
     /// Whether the text wraps at the shape's edge. Excel's `wrap="none"` lets it
@@ -147,6 +151,10 @@ pub struct Text {
     /// The face the shape's own `defRPr` names, for runs that name none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    /// One flag per paragraph: whether its base direction is right-to-left,
+    /// which changes the bidi order of mixed text. Empty when all are left.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rtl: Vec<bool>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -402,9 +410,16 @@ struct Parser<'a> {
     /// The gradient being collected, as its stops and its direction.
     gradient: Option<(Vec<Stop>, f64)>,
     paras: Vec<Vec<Run>>,
+    /// One base-direction flag per paragraph, parallel to `paras`.
+    para_rtl: Vec<bool>,
+    /// The direction `lstStyle` gives a paragraph that names none.
+    list_style_rtl: Option<bool>,
     run: Option<Run>,
     text_size: Option<f64>,
-    text_align: Option<String>,
+    /// One alignment per paragraph, parallel to `paras`.
+    para_align: Vec<String>,
+    /// The alignment `lstStyle` gives a paragraph that names none.
+    list_style_align: Option<String>,
     text_valign: Option<String>,
     text_wrap: Option<bool>,
     text_insets: Option<[f64; 4]>,
@@ -464,9 +479,12 @@ impl<'a> Parser<'a> {
             ref_index: 0,
             gradient: None,
             paras: Vec::new(),
+            para_rtl: Vec::new(),
+            list_style_rtl: None,
             run: None,
             text_size: None,
-            text_align: None,
+            para_align: Vec::new(),
+            list_style_align: None,
             text_valign: None,
             text_wrap: None,
             text_insets: None,
@@ -652,9 +670,12 @@ impl<'a> Parser<'a> {
                 self.line = LineSpec::default();
                 self.refs = StyleRefs::default();
                 self.paras.clear();
+                self.para_rtl.clear();
+                self.list_style_rtl = None;
                 self.run = None;
                 self.text_size = None;
-                self.text_align = None;
+                self.para_align.clear();
+                self.list_style_align = None;
                 self.text_valign = None;
                 self.text_wrap = None;
                 self.text_insets = None;
@@ -823,10 +844,35 @@ impl<'a> Parser<'a> {
                     inset(b"bIns", 3),
                 ]);
             }
-            b"p" => self.paras.push(Vec::new()),
+            b"p" => {
+                self.paras.push(Vec::new());
+                self.para_rtl.push(self.list_style_rtl.unwrap_or(false));
+                self.para_align.push(
+                    self.list_style_align
+                        .clone()
+                        .unwrap_or_else(|| "left".to_owned()),
+                );
+            }
             b"pPr" => {
-                if let Some(value) = attr(element, b"algn") {
-                    self.text_align = Some(align_of(&value));
+                if let Some(align) = attr(element, b"algn") {
+                    if let Some(slot) = self.para_align.last_mut() {
+                        *slot = align_of(&align);
+                    }
+                }
+                if let Some(rtl) = bool_attr(element, b"rtl") {
+                    if let Some(flag) = self.para_rtl.last_mut() {
+                        *flag = rtl;
+                    }
+                }
+            }
+            // The level properties in `lstStyle` are the defaults a paragraph
+            // that names no direction or alignment of its own takes.
+            b"lvl1pPr" if self.in_list_style() => {
+                if let Some(rtl) = bool_attr(element, b"rtl") {
+                    self.list_style_rtl = Some(rtl);
+                }
+                if let Some(align) = attr(element, b"algn") {
+                    self.list_style_align = Some(align_of(&align));
                 }
             }
             b"r" => {
@@ -1060,6 +1106,20 @@ impl<'a> Parser<'a> {
         // up onto the numbered markers those blank lines were making room for.
         // Only a frame with no text at all is not text.
         let paras = std::mem::take(&mut self.paras);
+        let mut rtl = std::mem::take(&mut self.para_rtl);
+        if !rtl.iter().any(|&flag| flag) {
+            rtl.clear();
+        }
+        // The shape's default is its first paragraph's; a shape whose
+        // paragraphs agree needs only that one value.
+        let mut aligns = std::mem::take(&mut self.para_align);
+        let align = aligns
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "left".to_owned());
+        if aligns.iter().all(|value| value == &align) {
+            aligns.clear();
+        }
         if paras.iter().any(|para| !para.is_empty()) {
             shape.text = Some(Text {
                 size_pt: self.text_size.unwrap_or(DEFAULT_TEXT_PT),
@@ -1069,14 +1129,16 @@ impl<'a> Parser<'a> {
                     .or_else(|| self.refs.font.clone())
                     .unwrap_or_else(|| Fill::solid(BLACK.to_owned(), 1.0))
                     .color,
-                align: self.text_align.clone().unwrap_or_else(|| "left".to_owned()),
+                align,
+                aligns,
+                rtl,
+                paras,
                 valign: self.text_valign.clone().unwrap_or_else(|| "top".to_owned()),
                 wrap: self.text_wrap.unwrap_or(true),
                 insets: self
                     .text_insets
                     .unwrap_or(DEFAULT_INSETS_EMU.map(emu_to_px)),
                 family: self.text_family.take(),
-                paras,
             });
         }
 
@@ -1528,6 +1590,39 @@ mod tests {
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:grpSp><xdr:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="190500"/><a:chOff x="0" y="0"/><a:chExt cx="100" cy="100"/></a:xfrm><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></xdr:grpSpPr><xdr:sp><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="triangle"><a:avLst/></a:prstGeom><a:grpFill/></xdr:spPr></xdr:sp></xdr:grpSp></xdr:twoCellAnchor></xdr:wsDr>"#;
         let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
         assert_eq!(shapes[0].fill.as_ref().map(|fill| fill.color.as_str()), Some("#BFBFBF"));
+    }
+
+    /// `<a:pPr rtl="1">` makes a paragraph's base direction right-to-left, and
+    /// a paragraph that names none takes the direction `lstStyle` gives.
+    #[test]
+    fn reads_the_direction_a_paragraph_flows_in() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr rtl="1"/></a:lstStyle><a:p><a:pPr rtl="1"/><a:r><a:t>a</a:t></a:r></a:p><a:p><a:pPr/><a:r><a:t>b</a:t></a:r></a:p><a:p><a:pPr rtl="0"/><a:r><a:t>c</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let text = shapes[0].text.as_ref().expect("text");
+        // The middle paragraph names none, so it takes `lstStyle`'s direction.
+        assert_eq!(text.rtl, vec![true, true, false]);
+    }
+
+    /// `algn` belongs to each paragraph; a paragraph that names none takes the
+    /// alignment `lstStyle` gives, and one value covers a shape whose
+    /// paragraphs agree.
+    #[test]
+    fn reads_each_paragraphs_alignment() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr algn="ctr"/></a:lstStyle><a:p><a:pPr algn="l"/><a:r><a:t>a</a:t></a:r></a:p><a:p><a:pPr/><a:r><a:t>b</a:t></a:r></a:p><a:p><a:pPr algn="r"/><a:r><a:t>c</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let text = shapes[0].text.as_ref().expect("text");
+        assert_eq!(text.aligns, vec!["left", "center", "right"]);
+        assert_eq!(text.align, "left");
+    }
+
+    /// Nothing is repeated when every paragraph agrees.
+    #[test]
+    fn leaves_out_alignments_that_all_agree() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:pPr algn="ctr"/><a:r><a:t>a</a:t></a:r></a:p><a:p><a:pPr algn="ctr"/><a:r><a:t>b</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let text = shapes[0].text.as_ref().expect("text");
+        assert_eq!(text.align, "center");
+        assert!(text.aligns.is_empty());
     }
 
     #[test]
