@@ -60,9 +60,11 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
   const Rule =
     variant === "dropdown" ? DropdownMenuSeparator : ContextMenuSeparator;
 
-  const swatch = (fill: string) => (
+  // Keys are positions, not colours: a theme tint can land on the same hex as
+  // one of the standard colours, and two children may not share a key.
+  const swatch = (fill: string, key: string) => (
     <Item
-      key={fill}
+      key={key}
       title={fill}
       aria-label={fill}
       // Every pick is remembered, whichever menu it was made in: the row is one
@@ -101,9 +103,9 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
    * row the tints hang from. The margin under it is the room Excel leaves before
    * the tints begin.
    */
-  const themeSwatch = (fill: string) => (
+  const themeSwatch = (fill: string, at: number) => (
     <Item
-      key={fill}
+      key={`theme ${at}`}
       title={fill}
       aria-label={fill}
       onSelect={() => {
@@ -129,9 +131,9 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
    * its neighbours below and above painted over any ring drawn outside it, so
    * the two rings this one can take are drawn inside its own square.
    */
-  const tintSwatch = (fill: string) => (
+  const tintSwatch = (fill: string, at: number) => (
     <Item
-      key={fill}
+      key={`tint ${at}`}
       title={fill}
       aria-label={fill}
       onSelect={() => {
@@ -181,11 +183,14 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
         {THEME_COLORS.slice(1).flat().map(tintSwatch)}
       </div>
       <Label className="text-[10px]">{t("palette.standard")}</Label>
-      {swatchRow(STANDARD_COLORS.map(swatch), -1)}
+      {swatchRow(
+        STANDARD_COLORS.map((fill, at) => swatch(fill, `standard ${at}`)),
+        -1,
+      )}
       <Label className="text-[10px]">{t("palette.recent")}</Label>
       {swatchRow(
         [
-          ...recent.map(swatch),
+          ...recent.map((fill, at) => swatch(fill, `recent ${at}`)),
           ...Array.from({ length: RECENT_SHOWN - recent.length }, (_, at) =>
             emptySlot(at),
           ),
