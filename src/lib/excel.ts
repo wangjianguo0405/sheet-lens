@@ -206,6 +206,13 @@ export interface ShapeRun {
    * resolved. Absent when it names none and inherits the shape's.
    */
   family?: string | null;
+  /** The face's classification, for choosing a fallback when it is missing. */
+  panose?: string | null;
+  charset?: number | null;
+  pitch?: number | null;
+  /** The east asian and complex-script faces named beside the latin one. */
+  ea?: string | null;
+  cs?: string | null;
 }
 
 export interface ShapeText {
@@ -223,6 +230,13 @@ export interface ShapeText {
   insets: [number, number, number, number];
   /** The face the shape's own `defRPr` names, which its runs inherit. */
   family?: string | null;
+  /** That face's classification, for runs that name none of their own. */
+  panose?: string | null;
+  charset?: number | null;
+  pitch?: number | null;
+  /** The east asian and complex-script faces named beside the latin one. */
+  ea?: string | null;
+  cs?: string | null;
   /** One flag per paragraph: right-to-left base direction. Absent when none is. */
   rtl?: boolean[];
 }

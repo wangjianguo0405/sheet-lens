@@ -2,7 +2,7 @@ import { memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore
 import { createPortal } from "react-dom";
 
 import { copyText } from "@/lib/clipboard";
-import { cellFontStack } from "@/lib/canvasText";
+import { shapeFontStack } from "@/lib/canvasText";
 import {
   shapeDebugEnabled,
   subscribeShapeDebug,
@@ -235,7 +235,14 @@ function textOf(shape: Shape, w: number, h: number): ReactNode {
           padding: `${text.insets[1]}px ${text.insets[2]}px ${text.insets[3]}px ${text.insets[0]}px`,
           color: text.color,
           fontSize: text.sizePt * PT_TO_PX,
-          fontFamily: text.family ? cellFontStack(text.family, null) : undefined,
+          fontFamily: shapeFontStack(
+            text.family,
+            text.ea,
+            text.cs,
+            text.panose,
+            text.charset,
+            text.pitch,
+          ),
           fontWeight: text.paras.some((para) => para.some((run) => run.bold)) ? 700 : undefined,
           lineHeight: 1.2,
           // Excel's `wrap="none"` lets the text run past the shape, the way an
@@ -275,7 +282,14 @@ function textOf(shape: Shape, w: number, h: number): ReactNode {
                     fontStyle: run.italic ? "italic" : undefined,
                     // A run that names no face keeps the shape's, so this stays
                     // out of the way rather than restating it.
-                    fontFamily: run.family ? cellFontStack(run.family, null) : undefined,
+                    fontFamily: shapeFontStack(
+                      run.family,
+                      run.ea,
+                      run.cs,
+                      run.panose,
+                      run.charset,
+                      run.pitch,
+                    ),
                   }}
                 >
                   {run.text}

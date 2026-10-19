@@ -39,8 +39,72 @@ export function cellFontStack(
   return stack;
 }
 
-const FONTS = new Map<string, string>();
+/**
+ * What to reach for when a font family the DrawingML names is not installed.
+ * The `charset` decides the script — a Korean or Chinese face should not land
+ * in a Japanese UI font — and `panose`/`pitchFamily` say what kind of face it
+ * was: serif, sans, monospaced or a script face. A browser consults a font
+ * list per character, so listing these after the named face costs nothing when
+ * that face is present.
+ */
+export function shapeFontStack(
+  family: string | null | undefined,
+  ea?: string | null,
+  cs?: string | null,
+  panose?: string | null,
+  charset?: number | null,
+  pitch?: number | null,
+): string | undefined {
+  const faces = [...new Set([family, ea, cs].filter((face): face is string => !!face))];
+  if (faces.length === 0) return undefined;
+  const generic = panoseGeneric(panose ?? null, pitch ?? null);
+  // The file writes the Windows charset as a signed byte: -128 is ShiftJIS.
+  const script = SCRIPT_FALLBACK.get(charset == null ? -1 : charset & 0xff) ?? "";
+  return `${faces.map((face) => `"${face}"`).join(", ")}, ${[generic, script, "system-ui", "sans-serif"]
+    .filter(Boolean)
+    .join(", ")}`;
+}
 
+const SCRIPT_FALLBACK = new Map<number, string>([
+  [128, CJK_FALLBACK], // ShiftJIS
+  [129, '"Malgun Gothic", Batang, Gulim, Dotum'], // Hangul
+  [130, '"Malgun Gothic", Batang, Gulim, Dotum'], // Johab
+  [134, '"Microsoft YaHei", SimSun, SimHei'], // GB2312
+  [136, '"Microsoft JhengHei", MingLiU, PMingLiU'], // Big5
+]);
+
+function panoseGeneric(panose: string | null, pitch: number | null): string | null {
+  if (panose && /^[0-9a-f]{20}$/i.test(panose)) {
+    // Panose writes its ten bytes as two hex digits each.
+    const kind = parseInt(panose.slice(0, 2), 16);
+    const serif = parseInt(panose.slice(2, 4), 16);
+    const proportion = parseInt(panose.slice(6, 8), 16);
+    // A monospaced proportion is a stronger signal than the family kind.
+    if (proportion === 3) return "monospace";
+    if (kind === 3) return "cursive";
+    if (kind === 4) return "fantasy";
+    if (kind === 2) return serif >= 2 && serif <= 9 ? "serif" : "sans-serif";
+    return "sans-serif";
+  }
+  if (pitch !== null) {
+    if (pitch & 1) return "monospace";
+    switch ((pitch >> 4) & 0xf) {
+      case 1:
+        return "serif";
+      case 3:
+        return "monospace";
+      case 4:
+        return "cursive";
+      case 5:
+        return "fantasy";
+      default:
+        return "sans-serif";
+    }
+  }
+  return null;
+}
+
+const FONTS = new Map<string, string>();
 /** The CSS `font` shorthand for a stack. Weight and slant are left out when normal. */
 export function fontString(
   stack: string,

@@ -151,6 +151,21 @@ pub struct Text {
     /// The face the shape's own `defRPr` names, for runs that name none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    /// The face's own classification — `panose`, `charset` and `pitchFamily` —
+    /// which says what to fall back to when the named face is not installed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub charset: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<u32>,
+    /// The east asian and complex-script faces beside the latin one. A browser
+    /// picks a face per character, so listing them in this order is how Excel's
+    /// own latin/ea split is reproduced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ea: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cs: Option<String>,
     /// One flag per paragraph: whether its base direction is right-to-left,
     /// which changes the bidi order of mixed text. Empty when all are left.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -166,6 +181,19 @@ pub struct Run {
     /// `<a:latin typeface>`: the face this run is written in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub charset: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<u32>,
+    /// The east asian and complex-script faces beside the latin one. A browser
+    /// picks a face per character, so listing them in this order is how Excel's
+    /// own latin/ea split is reproduced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ea: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cs: Option<String>,
 }
 
 /// The layout arithmetic a drawing needs to turn EMU offsets into cell offsets.
@@ -430,6 +458,14 @@ struct Parser<'a> {
     text_italic: Option<bool>,
     /// The face the shape's own `defRPr` names, which its runs inherit.
     text_family: Option<String>,
+    /// That face's classification, for runs that name none of their own.
+    text_panose: Option<String>,
+    text_charset: Option<i32>,
+    text_pitch: Option<u32>,
+    /// The east asian and complex-script faces the shape's own run properties
+    /// name, which its runs inherit.
+    text_ea: Option<String>,
+    text_cs: Option<String>,
     /// The theme's own font scheme, which `+mn-ea` and its like index into.
     theme_fonts: &'a HashMap<String, String>,
     /// The group transforms now open, innermost last. A shape inside one is
@@ -492,6 +528,11 @@ impl<'a> Parser<'a> {
             text_bold: None,
             text_italic: None,
             text_family: None,
+            text_panose: None,
+            text_charset: None,
+            text_pitch: None,
+            text_ea: None,
+            text_cs: None,
             groups: Vec::new(),
             group_off: (0.0, 0.0),
             group_ext: (0.0, 0.0),
@@ -683,6 +724,11 @@ impl<'a> Parser<'a> {
                 self.text_bold = None;
                 self.text_italic = None;
                 self.text_family = None;
+                self.text_panose = None;
+                self.text_charset = None;
+                self.text_pitch = None;
+                self.text_ea = None;
+                self.text_cs = None;
                 self.sp_off = (0.0, 0.0);
                 self.sp_ext = (0.0, 0.0);
                 self.shape_group_fill = false;
@@ -922,10 +968,54 @@ impl<'a> Parser<'a> {
             // the runs that name none inherit.
             b"latin" => {
                 let face = self.font_name(attr(element, b"typeface"));
+                let panose = attr(element, b"panose");
+                let charset = num_attr(element, b"charset").map(|value| value as i32);
+                let pitch = num_attr(element, b"pitchFamily")
+                    .map(|value| value.clamp(0.0, 255.0) as u32);
                 if let Some(run) = self.run.as_mut() {
                     run.family = face;
-                } else if self.text_family.is_none() || !self.in_list_style() {
-                    self.text_family = face;
+                    if panose.is_some() {
+                        run.panose = panose;
+                    }
+                    if charset.is_some() {
+                        run.charset = charset;
+                    }
+                    if pitch.is_some() {
+                        run.pitch = pitch;
+                    }
+                } else {
+                    let in_list_style = self.in_list_style();
+                    if self.text_family.is_none() || !in_list_style {
+                        self.text_family = face;
+                    }
+                    if panose.is_some() && (self.text_panose.is_none() || !in_list_style) {
+                        self.text_panose = panose;
+                    }
+                    if charset.is_some() && (self.text_charset.is_none() || !in_list_style) {
+                        self.text_charset = charset;
+                    }
+                    if pitch.is_some() && (self.text_pitch.is_none() || !in_list_style) {
+                        self.text_pitch = pitch;
+                    }
+                }
+            }
+            // The east asian and complex-script faces sit beside the latin one
+            // in the same run properties; a browser uses them per character.
+            b"ea" | b"cs" => {
+                let face = self.font_name(attr(element, b"typeface"));
+                let east = name == b"ea";
+                if let Some(run) = self.run.as_mut() {
+                    if east {
+                        run.ea = face;
+                    } else {
+                        run.cs = face;
+                    }
+                } else if east {
+                    if self.text_ea.is_none() || !self.in_list_style() {
+                        self.text_ea = face;
+                    }
+                } else if self.text_cs.is_none() || !self.in_list_style() {
+                    self.text_cs = face;
                 }
             }
             b"blip" => {
@@ -1139,6 +1229,11 @@ impl<'a> Parser<'a> {
                     .text_insets
                     .unwrap_or(DEFAULT_INSETS_EMU.map(emu_to_px)),
                 family: self.text_family.take(),
+                panose: self.text_panose.take(),
+                charset: self.text_charset.take(),
+                pitch: self.text_pitch.take(),
+                ea: self.text_ea.take(),
+                cs: self.text_cs.take(),
             });
         }
 
@@ -1659,6 +1754,20 @@ mod tests {
         assert_eq!(runs[0].family.as_deref(), Some("ＭＳ ゴシック"));
         assert_eq!(runs[1].family.as_deref(), Some("メイリオ"), "a theme slot");
         assert_eq!(runs[2].family, None, "a run that names none inherits");
+    }
+
+    /// A face carries its own classification — what a viewer should fall back
+    /// to when the named font is not installed.
+    #[test]
+    fn reads_the_classification_of_a_face() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:r><a:rPr><a:latin typeface="メイリオ" panose="020B0604030504040204" pitchFamily="50" charset="-128"/><a:ea typeface="ＭＳ ゴシック"/><a:cs typeface="Arial"/></a:rPr><a:t>x</a:t></a:r></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let run = &shapes[0].text.as_ref().expect("text").paras[0][0];
+        assert_eq!(run.panose.as_deref(), Some("020B0604030504040204"));
+        assert_eq!(run.charset, Some(-128));
+        assert_eq!(run.pitch, Some(50));
+        assert_eq!(run.ea.as_deref(), Some("ＭＳ ゴシック"));
+        assert_eq!(run.cs.as_deref(), Some("Arial"));
     }
 
     /// Excel writes a shape that only *looks* unrotated as a half turn plus both
