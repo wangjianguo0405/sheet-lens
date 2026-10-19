@@ -113,6 +113,14 @@ pub struct Stroke {
     /// line pointing nowhere.
     pub head: Option<Arrow>,
     pub tail: Option<Arrow>,
+    /// How the line joins its segments: `miter` (the default), `round` or
+    /// `bevel`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join: Option<String>,
+    /// A miter join's limit, as a multiple of the line width. Excel draws with
+    /// 8 when the file does not say, where SVG's own default is 4.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub miter_limit: Option<f64>,
 }
 
 /// An arrowhead at one end of a line, as the file names it.
@@ -337,6 +345,8 @@ struct LineSpec {
     dash: Option<String>,
     head: Option<Arrow>,
     tail: Option<Arrow>,
+    join: Option<String>,
+    miter: Option<f64>,
 }
 
 /// The `xdr:style` refs, which colour a shape that declares no colours itself.
@@ -840,6 +850,16 @@ impl<'a> Parser<'a> {
             b"prstDash" if parent == b"ln" => self.line.dash = attr(element, b"val"),
             b"headEnd" if parent == b"ln" => self.line.head = read_arrow(element),
             b"tailEnd" if parent == b"ln" => self.line.tail = read_arrow(element),
+            // Join styles. `lim` is a percentage, so 800000 is eight times the
+            // line width; a join the file does not describe is mitered.
+            b"miter" if parent == b"ln" => {
+                self.line.join = Some("miter".to_owned());
+                if let Some(limit) = num_attr(element, b"lim") {
+                    self.line.miter = Some(limit / 100_000.0);
+                }
+            }
+            b"round" if parent == b"ln" => self.line.join = Some("round".to_owned()),
+            b"bevel" if parent == b"ln" => self.line.join = Some("bevel".to_owned()),
             b"lnRef" | b"fillRef" | b"fontRef" | b"effectRef" => {
                 self.ref_slot = Some(match name {
                     b"lnRef" => Target::LnRef,
@@ -1312,6 +1332,8 @@ impl<'a> Parser<'a> {
             dash: spec.dash.clone(),
             head: spec.head.clone(),
             tail: spec.tail.clone(),
+            join: spec.join.clone(),
+            miter_limit: spec.miter,
         })
     }
 
@@ -1718,6 +1740,20 @@ mod tests {
         let text = shapes[0].text.as_ref().expect("text");
         assert_eq!(text.align, "center");
         assert!(text.aligns.is_empty());
+    }
+
+    /// A line's join is miter, round or bevel, and a miter's `lim` is a
+    /// percentage: 200000 is twice the line width.
+    #[test]
+    fn reads_the_join_of_a_line() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="triangle"><a:avLst/></a:prstGeom><a:ln w="127000"><a:solidFill><a:srgbClr val="000000"/></a:solidFill><a:miter lim="200000"/></a:ln></xdr:spPr></xdr:sp></xdr:twoCellAnchor><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>3</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="triangle"><a:avLst/></a:prstGeom><a:ln w="127000"><a:solidFill><a:srgbClr val="000000"/></a:solidFill><a:round/></a:ln></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let miter = shapes[0].line.as_ref().expect("line");
+        assert_eq!(miter.join.as_deref(), Some("miter"));
+        assert_eq!(miter.miter_limit, Some(2.0));
+        let round = shapes[1].line.as_ref().expect("line");
+        assert_eq!(round.join.as_deref(), Some("round"));
+        assert_eq!(round.miter_limit, None);
     }
 
     #[test]

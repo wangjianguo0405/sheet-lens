@@ -195,6 +195,10 @@ export interface ShapeStroke {
   dash: string | null;
   head: ShapeArrow | null;
   tail: ShapeArrow | null;
+  /** `miter` when the file names none; `round` and `bevel` are its other two. */
+  join?: "miter" | "round" | "bevel" | null;
+  /** A miter join's limit as a multiple of the line width; Excel's default is 8. */
+  miterLimit?: number | null;
 }
 
 export interface ShapeRun {

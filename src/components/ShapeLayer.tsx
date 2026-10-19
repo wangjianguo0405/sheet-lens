@@ -198,6 +198,8 @@ interface StrokeAttrs {
   strokeOpacity?: number;
   strokeDasharray?: string;
   strokeLinecap?: "butt";
+  strokeLinejoin?: "miter" | "round" | "bevel";
+  strokeMiterlimit?: number;
 }
 
 function strokeProps(line: ShapeStroke | null): StrokeAttrs {
@@ -208,6 +210,9 @@ function strokeProps(line: ShapeStroke | null): StrokeAttrs {
     strokeOpacity: line.alpha,
     strokeDasharray: dashArray(line.dash, line.width),
     strokeLinecap: "butt",
+    strokeLinejoin: line.join ?? "miter",
+    // SVG's own default limit is 4; Excel draws mitered joins out to 8.
+    strokeMiterlimit: line.miterLimit ?? 8,
   };
 }
 
