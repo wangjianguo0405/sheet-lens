@@ -2110,6 +2110,17 @@ export function CanvasGrid({
     if (frozenSheetRows > 0) addRuns(0, frozenSheetRows - 1, range.colStart, range.colEnd);
     if (frozenSheetCols > 0) addRuns(lo, hi, 0, frozenSheetCols - 1);
 
+    /**
+     * Each run's cells back to the run, so the painter can drop the borders
+     * between them — Excel draws a Center-Across run as one box.
+     */
+    const runIndex = new Map<number, MergeRect>();
+    for (const run of shownRuns) {
+      for (let c = run.col; c < run.col + run.cols; c += 1) {
+        runIndex.set(cellKey(sheetCols, run.row, c), run);
+      }
+    }
+
     return {
       cols,
       rows,
@@ -2142,7 +2153,7 @@ export function CanvasGrid({
       ants: antsRef.current,
       merges,
       mergeView: { shown: shownMerges, covered: coveredMerges },
-      centerRuns: { shown: shownRuns, covered: coveredRuns },
+      centerRuns: { shown: shownRuns, covered: coveredRuns, at: runIndex },
       autoFilter,
       filtering: visibleRows !== null && filters.size > 0,
       printArea,

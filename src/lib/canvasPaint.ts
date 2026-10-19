@@ -154,7 +154,12 @@ export interface GridView {
   ants: number;
   merges: MergeRect[];
   mergeView: { shown: MergeRect[]; covered: Set<number> };
-  centerRuns: { shown: (MergeRect & { text: string | null })[]; covered: Set<number> };
+  centerRuns: {
+    shown: (MergeRect & { text: string | null })[];
+    covered: Set<number>;
+    /** Each covered cell back to the run holding it, for its dropped edges. */
+    at: Map<number, MergeRect>;
+  };
   autoFilter: AutoFilter | null;
   /**
    * Whether a filter is hiding rows on this sheet. It decides one thing here:
@@ -1241,6 +1246,11 @@ function paintCellSurface(
     line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
   }
 
+  // Excel drops the borders between the cells of a Center-Across run: the run
+  // is one box, so only its outer edges are drawn. Without this every cell kept
+  // its own left and right rule, and a header centred across a dozen columns
+  // came out as a dozen little boxes.
+  const run = view.centerRuns.at.get(cellKey(view.sheetCols, sheetRow, col));
   paintEdges(
     ctx,
     view,
@@ -1248,6 +1258,9 @@ function paintCellSurface(
       view.styleAt,
       { row: sheetRow, col, rows: 1, cols: 1 },
       { rows: view.sheetRows, cols: view.sheetCols },
+      run
+        ? { left: col > run.col, right: col < run.col + run.cols - 1 }
+        : undefined,
     ),
     x,
     y,
