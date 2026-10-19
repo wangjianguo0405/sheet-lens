@@ -163,6 +163,14 @@ export interface DataBarCell {
   fraction: number;
 }
 
+/** One cell's conditional icon: the family and the level drawn. */
+export interface IconCell {
+  row: number;
+  col: number;
+  family: string;
+  level: number;
+}
+
 export interface AutoFilter {
   /** Sheet row holding the filter buttons. */
   row: number;
@@ -433,6 +441,8 @@ export interface SheetLayout {
   richCells: RichCell[];
   /** Cells a data-bar rule draws in, with the share of the cell each fills. */
   dataBars: DataBarCell[];
+  /** Cells an icon-set rule marks, with the level each takes. */
+  icons: IconCell[];
 }
 
 export interface ValueCount {

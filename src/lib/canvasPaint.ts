@@ -38,9 +38,11 @@ import type {
   CellStyle,
   DataBarCell,
   DataValidation,
+  IconCell,
   MergeRect,
   RichRun,
 } from "@/lib/excel";
+import { ICON_INSET, ICON_SIZE, paintConditionalIcon } from "@/lib/condIcons";
 import type { CanvasTheme } from "@/lib/canvasTheme";
 import { columnLabel } from "@/lib/column";
 import {
@@ -183,6 +185,8 @@ export interface GridView {
   cellRich: Map<number, RichRun[]>;
   /** Data bars by cell, for the bars Excel draws over the fill. Sparse. */
   dataBars: Map<number, DataBarCell>;
+  /** Conditional icon marks by cell. Sparse. */
+  icons: Map<number, IconCell>;
   theme: CanvasTheme;
 }
 
@@ -1314,6 +1318,20 @@ function paintCellSurface(
     ctx.fillRect(x, y, width, h);
   }
 
+  // An icon-set mark sits at the cell's left, centred vertically. The value is
+  // still drawn, moved right past the mark — see paintCellText.
+  const icon = view.icons.get(cellKey(view.sheetCols, sheetRow, col));
+  if (icon) {
+    paintConditionalIcon(
+      ctx,
+      x + CELL_PAD_LEFT,
+      y + (h - ICON_SIZE) / 2,
+      ICON_SIZE,
+      icon.family,
+      icon.level,
+    );
+  }
+
   // The hairline grid, before the borders so a border wins where both land. It
   // lies under fills as well: an edge with a filled cell on either side is not
   // drawn, which is what turns a filled block into a solid rectangle.
@@ -1379,6 +1397,10 @@ function paintCellText(
     const pad = pads(view, style, cell?.kind);
     padLeft = pad.left;
     padRight = pad.right;
+  }
+  // An icon-set mark takes the cell's left edge, so the value starts past it.
+  if (view.icons.has(cellKey(view.sheetCols, sheetRow, col))) {
+    padLeft += ICON_INSET;
   }
 
   // A left-aligned value with no wrap runs on into the empty cells to its

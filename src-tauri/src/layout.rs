@@ -530,6 +530,17 @@ pub struct SheetLayout {
     /// Cells a data-bar rule draws a bar in, with the share of the cell's width
     /// the bar takes. Sparse by nature.
     pub data_bars: Vec<DataBarCell>,
+    /// Cells an icon-set rule marks, with the family and the level drawn.
+    pub icons: Vec<IconCell>,
+}
+
+/// One cell's icon: the family's name and which of its marks the value takes.
+#[derive(Serialize, Clone)]
+pub struct IconCell {
+    pub row: u32,
+    pub col: u32,
+    pub family: String,
+    pub level: u8,
 }
 
 /// One cell's data bar: its colour and how much of the cell it fills.
@@ -646,6 +657,7 @@ impl SheetLayout {
             drawing_rel: None,
             rich_cells: Vec::new(),
             data_bars: Vec::new(),
+            icons: Vec::new(),
         }
     }
 }

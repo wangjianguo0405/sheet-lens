@@ -61,6 +61,7 @@ enum Paint {
     Dxf(usize),
     ColorScale(ColorScale),
     DataBar(DataBar),
+    IconSet(IconSet),
 }
 
 /// A colour scale: two or three stops, each a position in the range and the
@@ -74,6 +75,14 @@ struct ColorScale {
 struct DataBar {
     color: String,
     points: [ScalePoint; 2],
+}
+
+/// An icon set: a family of marks, one per level, drawn at the left of the
+/// cell. The points are the levels' lower ends, the first being the floor.
+struct IconSet {
+    family: String,
+    points: Vec<ScalePoint>,
+    reverse: bool,
 }
 
 /// Where a stop sits. Excel writes the first and last as `min`/`max`, and a
@@ -175,8 +184,8 @@ pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
     let mut current: Option<Pending> = None;
     let mut in_formula = false;
     let mut formula = String::new();
-    // Inside `<colorScale>` or `<dataBar>`: `true` for the former.
-    let mut collecting: Option<bool> = None;
+    // Inside `<colorScale>`, `<dataBar>` or `<iconSet>`.
+    let mut collecting: Option<Collecting> = None;
 
     loop {
         buf.clear();
@@ -200,8 +209,20 @@ pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
                         other => current = other,
                     }
                 }
-                b"colorScale" if current.is_some() => collecting = Some(true),
-                b"dataBar" if current.is_some() => collecting = Some(false),
+                b"colorScale" if current.is_some() => collecting = Some(Collecting::Scale),
+                b"dataBar" if current.is_some() => collecting = Some(Collecting::Bar),
+                b"iconSet" if current.is_some() => {
+                    collecting = Some(Collecting::Icons);
+                    if let Some(current) = current.as_mut() {
+                        // The attribute's default, per the schema: a file that
+                        // sets the family Excel calls the default writes none.
+                        current.family = Some(
+                            attr(&element, b"iconSet")
+                                .unwrap_or_else(|| "3TrafficLights1".to_owned()),
+                        );
+                        current.reverse = flag(attr(&element, b"reverse"));
+                    }
+                }
                 b"cfvo" if collecting.is_some() => {
                     if let (Some(point), Some(current)) =
                         (scale_point(&element), current.as_mut())
@@ -241,7 +262,7 @@ pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
                         current.formulas.push(std::mem::take(&mut formula));
                     }
                 }
-                b"colorScale" | b"dataBar" => collecting = None,
+                b"colorScale" | b"dataBar" | b"iconSet" => collecting = None,
                 b"cfRule" => {
                     collecting = None;
                     if let Some(pending) = current.take() {
@@ -269,6 +290,16 @@ struct Pending {
     formulas: Vec<String>,
     points: Vec<ScalePoint>,
     colors: Vec<String>,
+    family: Option<String>,
+    reverse: bool,
+}
+
+/// Which kind of drawing element the rule's children belong to.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Collecting {
+    Scale,
+    Bar,
+    Icons,
 }
 
 enum Kind {
@@ -288,6 +319,7 @@ enum Kind {
     },
     ColorScale,
     DataBar,
+    IconSet,
 }
 
 /// An optional OOXML boolean: absent means false.
@@ -329,9 +361,15 @@ fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
         },
         Some("colorScale") => Kind::ColorScale,
         Some("dataBar") => Kind::DataBar,
+        Some("iconSet") => Kind::IconSet,
         _ => return None,
     };
-    if patch.is_none() && !matches!(kind, Kind::ColorScale | Kind::DataBar) {
+    if patch.is_none()
+        && !matches!(
+            kind,
+            Kind::ColorScale | Kind::DataBar | Kind::IconSet
+        )
+    {
         return None;
     }
     Some(Pending {
@@ -345,6 +383,8 @@ fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
         formulas: Vec::new(),
         points: Vec::new(),
         colors: Vec::new(),
+        family: None,
+        reverse: false,
     })
 }
 
@@ -406,7 +446,7 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
             equal: *equal,
             deviations: *deviations,
         },
-        Kind::ColorScale | Kind::DataBar => Matcher::Always,
+        Kind::ColorScale | Kind::DataBar | Kind::IconSet => Matcher::Always,
     };
     let paint = match pending.kind {
         Kind::ColorScale => {
@@ -424,6 +464,16 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
             Paint::DataBar(DataBar {
                 color: pending.colors.first()?.clone(),
                 points: [min, max],
+            })
+        }
+        Kind::IconSet => {
+            if pending.points.len() < 2 {
+                return None;
+            }
+            Paint::IconSet(IconSet {
+                family: pending.family?,
+                points: pending.points,
+                reverse: pending.reverse,
             })
         }
         _ => Paint::Dxf(pending.patch?),
@@ -574,6 +624,27 @@ impl DataBar {
         }
         let value = number(&context.value())?;
         Some(((value - lo) / (hi - lo)).clamp(0.0, 1.0))
+    }
+}
+
+impl IconSet {
+    /// Which of the family's marks a value takes. A value below the floor still
+    /// takes the lowest mark, and `reverse` flips the family end for end.
+    fn level(&self, context: &Context, numbers: &[f64]) -> Option<u8> {
+        let value = number(&context.value())?;
+        let mut level = 0;
+        for (index, point) in self.points.iter().enumerate() {
+            if value >= point.value(numbers)? {
+                level = index;
+            }
+        }
+        let level = level.min(self.points.len() - 1);
+        let level = if self.reverse {
+            self.points.len() - 1 - level
+        } else {
+            level
+        };
+        Some(level as u8)
     }
 }
 
@@ -957,7 +1028,7 @@ fn fold(
                 Some(rule.numbers(values, layout.rows, layout.cols))
             }
             _ => match &rule.paint {
-                Paint::ColorScale(_) | Paint::DataBar(_) => {
+                Paint::ColorScale(_) | Paint::DataBar(_) | Paint::IconSet(_) => {
                     Some(rule.numbers(values, layout.rows, layout.cols))
                 }
                 _ => None,
@@ -1004,6 +1075,7 @@ fn fold(
         .collect();
     let mut rebuilt: Vec<(u32, Vec<[u32; 3]>)> = Vec::new();
     let mut bars: Vec<crate::layout::DataBarCell> = Vec::new();
+    let mut icons: Vec<crate::layout::IconCell> = Vec::new();
 
     for (&row, spans) in &spans {
         // Every cell a rule fires on. Properties accumulate in priority order,
@@ -1012,6 +1084,7 @@ fn fold(
         // that stops when it fires ends the matter for that cell.
         let mut fired: BTreeMap<u32, Patch> = BTreeMap::new();
         let mut barred: BTreeMap<u32, (String, f64)> = BTreeMap::new();
+        let mut marked: BTreeMap<u32, (String, u8)> = BTreeMap::new();
         let mut stopped: BTreeSet<u32> = BTreeSet::new();
         for span in spans {
             for col in span.first_col..span.last_col {
@@ -1057,6 +1130,14 @@ fn fold(
                             }
                         }
                     }
+                    Paint::IconSet(set) => {
+                        // Likewise, only the first icon set to reach a cell.
+                        if !marked.contains_key(&col) {
+                            if let Some(level) = set.level(&context, numbers) {
+                                marked.insert(col, (set.family.clone(), level));
+                            }
+                        }
+                    }
                 }
                 if span.rule.stop_if_true {
                     stopped.insert(col);
@@ -1069,6 +1150,14 @@ fn fold(
                 col,
                 color: color.clone(),
                 fraction: *fraction,
+            });
+        }
+        for (&col, (family, level)) in &marked {
+            icons.push(crate::layout::IconCell {
+                row,
+                col,
+                family: family.clone(),
+                level: *level,
             });
         }
         if fired.is_empty() {
@@ -1102,6 +1191,7 @@ fn fold(
         layout.cell_runs.insert(row, runs);
     }
     layout.data_bars = bars;
+    layout.icons = icons;
 }
 
 /// One rule's range, as it applies to a single row.
@@ -2371,6 +2461,41 @@ mod tests {
             &[((0, 1), Value::Number(60.0))],
             &numbers
         ));
+    }
+
+    #[test]
+    fn reads_an_icon_set_and_picks_a_level() {
+        let xml = r#"<worksheet>
+            <conditionalFormatting sqref="A2:A11"><cfRule type="iconSet" priority="1"><iconSet iconSet="3Arrows"><cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/></iconSet></cfRule></conditionalFormatting>
+            <conditionalFormatting sqref="B2:B11"><cfRule type="iconSet" priority="2"><iconSet iconSet="3TrafficLights1" reverse="1"><cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/></iconSet></cfRule></conditionalFormatting>
+        </worksheet>"#;
+        let rules = rules(xml, &[]);
+        assert_eq!(rules.len(), 2);
+        let Paint::IconSet(set) = &rules[0].paint else {
+            panic!("an icon set");
+        };
+        assert_eq!(set.family, "3Arrows");
+        let numbers = [10.0, 100.0];
+        let level = |rule: &Rule, value: f64| {
+            let Paint::IconSet(set) = &rule.paint else {
+                panic!("an icon set");
+            };
+            let values = HashMap::from([((0u32, 0u32), Value::Number(value))]);
+            let context = Context {
+                row: 0,
+                col: 0,
+                anchor_row: 0,
+                anchor_col: 0,
+                values: &values,
+            };
+            set.level(&context, &numbers)
+        };
+        assert_eq!(level(&rules[0], 10.0), Some(0));
+        assert_eq!(level(&rules[0], 50.0), Some(1));
+        assert_eq!(level(&rules[0], 100.0), Some(2));
+        // The reversed family counts from the other end.
+        assert_eq!(level(&rules[1], 100.0), Some(0));
+        assert_eq!(level(&rules[1], 10.0), Some(2));
     }
 
     #[test]

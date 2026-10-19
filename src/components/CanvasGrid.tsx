@@ -57,6 +57,7 @@ import {
   type CellStyle,
   type DataBarCell,
   type FilterCriterion,
+  type IconCell,
   type MergeRect,
   type RichRun,
   type SheetInfo,
@@ -2139,6 +2140,12 @@ export function CanvasGrid({
       barIndex.set(cellKey(sheetCols, bar.row, bar.col), bar);
     }
 
+    /** The conditional icons by cell. */
+    const iconIndex = new Map<number, IconCell>();
+    for (const icon of layout.icons ?? []) {
+      iconIndex.set(cellKey(sheetCols, icon.row, icon.col), icon);
+    }
+
     return {
       cols,
       rows,
@@ -2178,6 +2185,7 @@ export function CanvasGrid({
       outsidePrint,
       cellRich: richIndex,
       dataBars: barIndex,
+      icons: iconIndex,
       theme: canvasTheme(),
     };
   }, [
