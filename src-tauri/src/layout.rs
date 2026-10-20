@@ -147,6 +147,29 @@ pub struct CellBorder {
     pub diagonal_down: bool,
 }
 
+/// One of Excel's 18 hatch patterns, as `<patternFill patternType>` spells it.
+///
+/// The masks themselves are in the renderer, measured off Excel's own picture:
+/// an 8×8 tile of the pattern colour over the background colour, anchored at
+/// the sheet's own origin so the lines run unbroken across cell edges.
+#[derive(Serialize, Clone, PartialEq, Eq, Hash, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CellPattern {
+    /// The `<patternFill patternType>` name, e.g. `lightUp` or `gray0625`.
+    pub kind: &'static str,
+    /// The pattern's own colour — `<fgColor>`, Excel's `PatternColor`.
+    pub fg: String,
+    /// The ground under the pattern — `<bgColor>`, Excel's `Interior.Color`.
+    pub bg: String,
+}
+
+/// One `<fill>` entry in the styles table.
+#[derive(Clone)]
+enum FillSpec {
+    Solid(String),
+    Pattern(CellPattern),
+}
+
 #[derive(Serialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CellStyle {
@@ -184,6 +207,10 @@ pub struct CellStyle {
     pub color: Option<String>,
     /// The cell's background, from a solid fill.
     pub fill: Option<String>,
+    /// A hatch pattern in place of a flat background. A cell has one or the
+    /// other, never both.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<CellPattern>,
     /// Its number format, when one applies. Dates are stored as serial numbers
     /// and only this says how to show them.
     pub format: Option<String>,
@@ -220,6 +247,7 @@ impl PartialEq for CellStyle {
             && self.family == other.family
             && self.color == other.color
             && self.fill == other.fill
+            && self.pattern == other.pattern
             && self.border == other.border
     }
 }
@@ -244,6 +272,7 @@ impl std::hash::Hash for CellStyle {
         self.family.hash(state);
         self.color.hash(state);
         self.fill.hash(state);
+        self.pattern.hash(state);
         self.border.hash(state);
     }
 }
@@ -266,6 +295,7 @@ impl CellStyle {
             && self.family.is_none()
             && self.color.is_none()
             && self.fill.is_none()
+            && self.pattern.is_none()
             && self.format.is_none()
             && self.border.is_none()
     }
@@ -398,6 +428,11 @@ impl Styles {
         let family = font
             .and_then(|font| font.name.clone())
             .filter(|name| Some(name.as_str()) != default_family);
+        let (fill, pattern) = match self.fills.get(entry.fill_id).cloned().flatten() {
+            Some(FillSpec::Solid(color)) => (Some(color), None),
+            Some(FillSpec::Pattern(pattern)) => (None, Some(pattern)),
+            None => (None, None),
+        };
         let style = CellStyle {
             horizontal: entry.align.horizontal,
             vertical: entry.align.vertical,
@@ -414,7 +449,8 @@ impl Styles {
             size_px,
             family,
             color: font.and_then(|font| font.color.clone()),
-            fill: self.fills.get(entry.fill_id).and_then(|f| f.clone()),
+            fill,
+            pattern,
             format: self
                 .num_formats
                 .get(&entry.num_fmt_id)
@@ -748,8 +784,9 @@ struct Styles {
     style_xfs: Vec<Xf>,
     borders: Vec<Option<CellBorder>>,
     fonts: Vec<FontInfo>,
-    /// Background colour per `<fill>` entry; `None` for patterns and gradients.
-    fills: Vec<Option<String>>,
+    /// What each `<fill>` entry paints: a flat colour, or one of Excel's 18
+    /// hatch patterns (6 of the 118 corpus files use a pattern on a cell).
+    fills: Vec<Option<FillSpec>>,
     /// Custom `numFmtId` -> format code. Built-in ids are looked up separately.
     num_formats: HashMap<u32, String>,
     /// The workbook's `<dxfs>`: what each conditional-format rule paints.
@@ -1403,7 +1440,9 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
     let mut edge: Option<Side> = None;
     let mut font: Option<FontInfo> = None;
     let mut fill: Option<String> = None;
-    let mut fill_is_solid = false;
+    let mut fill_pattern: Option<&'static str> = None;
+    let mut fill_fg: Option<String> = None;
+    let mut fill_bg: Option<String> = None;
     let mut xf: Option<Xf> = None;
     let mut named_xf: Option<Xf> = None;
 
@@ -1428,16 +1467,23 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 b"fills" => in_fills = true,
                 b"fill" if in_fills => {
                     fill = None;
-                    fill_is_solid = false;
+                    fill_pattern = None;
+                    fill_fg = None;
+                    fill_bg = None;
                 }
                 b"patternFill" if in_fills => {
-                    fill_is_solid = attr(&element, b"patternType").as_deref() == Some("solid");
+                    fill_pattern =
+                        attr(&element, b"patternType").and_then(|kind| pattern_kind(&kind));
                 }
                 b"fgColor" if in_fills => {
-                    if fill_is_solid {
-                        fill = color_of(&element, theme);
+                    // A solid fill paints its `fgColor`; a pattern draws it as
+                    // the hatch colour over `bgColor`.
+                    fill_fg = color_of(&element, theme);
+                    if fill_pattern == Some("solid") {
+                        fill = fill_fg.clone();
                     }
                 }
+                b"bgColor" if in_fills => fill_bg = color_of(&element, theme),
                 b"fonts" => in_fonts = true,
                 b"numFmts" => in_num_fmts = true,
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
@@ -1504,13 +1550,16 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 b"color" if in_borders => color_edge(&element, border.as_mut(), edge, theme),
                 b"fill" if in_fills => styles.fills.push(None),
                 b"patternFill" if in_fills => {
-                    fill_is_solid = attr(&element, b"patternType").as_deref() == Some("solid");
+                    fill_pattern =
+                        attr(&element, b"patternType").and_then(|kind| pattern_kind(&kind));
                 }
                 b"fgColor" if in_fills => {
-                    if fill_is_solid {
-                        fill = color_of(&element, theme);
+                    fill_fg = color_of(&element, theme);
+                    if fill_pattern == Some("solid") {
+                        fill = fill_fg.clone();
                     }
                 }
+                b"bgColor" if in_fills => fill_bg = color_of(&element, theme),
                 b"font" if in_fonts => styles.fonts.push(FontInfo::default()),
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
                 b"b" | b"i" | b"u" | b"strike" if in_fonts => {
@@ -1573,7 +1622,23 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 b"fonts" => in_fonts = false,
                 b"numFmts" => in_num_fmts = false,
                 b"fills" => in_fills = false,
-                b"fill" if in_fills => styles.fills.push(fill.take()),
+                b"fill" if in_fills => {
+                    let spec = match fill_pattern.take() {
+                        Some("solid") => fill.take().map(FillSpec::Solid),
+                        Some(kind) => Some(FillSpec::Pattern(CellPattern {
+                            kind,
+                            // A file that leaves the colours out means Excel's
+                            // automatic pair: black hatch on white.
+                            fg: fill_fg.take().unwrap_or_else(|| "#000000".to_owned()),
+                            bg: fill_bg.take().unwrap_or_else(|| "#FFFFFF".to_owned()),
+                        })),
+                        None => None,
+                    };
+                    fill = None;
+                    fill_fg = None;
+                    fill_bg = None;
+                    styles.fills.push(spec);
+                }
                 b"font" if in_fonts => styles.fonts.push(font.take().unwrap_or_default()),
                 b"cellStyleXfs" => in_named_xfs = false,
                 b"cellXfs" => in_cell_xfs = false,
@@ -1752,6 +1817,32 @@ pub(crate) fn color_edge(
     if let Some(edge) = slot.as_mut() {
         edge.color = Some(color);
     }
+}
+
+/// `<patternFill patternType>` reduced to the names the renderer has tiles for.
+/// `none` and anything unknown paint nothing.
+fn pattern_kind(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "solid" => "solid",
+        "lightGray" => "lightGray",
+        "mediumGray" => "mediumGray",
+        "darkGray" => "darkGray",
+        "gray125" => "gray125",
+        "gray0625" => "gray0625",
+        "darkHorizontal" => "darkHorizontal",
+        "darkVertical" => "darkVertical",
+        "darkDown" => "darkDown",
+        "darkUp" => "darkUp",
+        "darkGrid" => "darkGrid",
+        "darkTrellis" => "darkTrellis",
+        "lightHorizontal" => "lightHorizontal",
+        "lightVertical" => "lightVertical",
+        "lightDown" => "lightDown",
+        "lightUp" => "lightUp",
+        "lightGrid" => "lightGrid",
+        "lightTrellis" => "lightTrellis",
+        _ => return None,
+    })
 }
 
 /// Excel's border names reduced to a CSS style, a width and a precedence rank.
@@ -2859,6 +2950,38 @@ mod tests {
         let Some(layout) = sample("Summary") else { return };
         // Six rows are written out, and the A1:B1 merge names two columns.
         assert_eq!((layout.rows, layout.cols), (6, 2));
+    }
+
+    #[test]
+    fn reads_a_hatch_fill() {
+        let xml = r#"<styleSheet>
+            <fills count="5">
+                <fill><patternFill patternType="none"/></fill>
+                <fill><patternFill patternType="gray125"/></fill>
+                <fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor rgb="FF000000"/></patternFill></fill>
+                <fill><patternFill patternType="lightUp"><fgColor rgb="FFFF0000"/><bgColor rgb="FFFFFF00"/></patternFill></fill>
+                <fill><patternFill patternType="lightDown"><fgColor rgb="FF0000FF"/><bgColor rgb="FFFFFFFF"/></patternFill></fill>
+            </fills>
+            <cellXfs count="5"><xf fillId="0"/><xf fillId="1"/><xf fillId="2"/><xf fillId="3"/><xf fillId="4"/></cellXfs>
+        </styleSheet>"#;
+        let styles = parse_styles(xml, &[]);
+        assert!(styles.cell_style(0, 14.67).is_none());
+
+        // A pattern with no colours is Excel's automatic pair: black on white.
+        let gray = styles.cell_style(1, 14.67).unwrap().pattern.unwrap();
+        assert_eq!(gray.kind, "gray125");
+        assert_eq!(gray.fg, "#000000");
+        assert_eq!(gray.bg, "#FFFFFF");
+
+        // A solid fill is still a colour and never a pattern.
+        let solid = styles.cell_style(2, 14.67).unwrap();
+        assert_eq!(solid.fill.as_deref(), Some("#FFFF00"));
+        assert!(solid.pattern.is_none());
+
+        let up = styles.cell_style(3, 14.67).unwrap().pattern.unwrap();
+        assert_eq!((up.kind, up.fg.as_str(), up.bg.as_str()), ("lightUp", "#FF0000", "#FFFF00"));
+        let down = styles.cell_style(4, 14.67).unwrap().pattern.unwrap();
+        assert_eq!(down.kind, "lightDown");
     }
 
     #[test]
