@@ -8,6 +8,7 @@ import {
   subscribeShapeDebug,
 } from "@/lib/debugPanels";
 import { readMedia, type Shape, type ShapeArrow, type ShapeStroke } from "@/lib/excel";
+import { SHAPE_PATTERN_TILES } from "@/lib/shapePatterns";
 import {
   loadPresets,
   presetsReady,
@@ -359,6 +360,12 @@ export interface ShapeLayerProps {
    */
   frozenRows?: number;
   frozenCols?: number;
+  /**
+   * The grid's zoom as a factor. A shape's hatch is 8 screen pixels however far
+   * the sheet is zoomed — Excel's own behaviour — so the pattern is scaled back
+   * by it inside the layer, which the layer's CSS zoom would otherwise carry.
+   */
+  zoom?: number;
   /** Read out when Ctrl+Shift+D has switched the hidden panel on. */
   debug?: ShapeDebugFacts | null;
 }
@@ -379,6 +386,7 @@ export const ShapeLayer = memo(function ShapeLayer({
   path,
   frozenRows = 0,
   frozenCols = 0,
+  zoom = 1,
   debug,
 }: ShapeLayerProps) {
   const parts = useMemo(
@@ -421,6 +429,34 @@ export const ShapeLayer = memo(function ShapeLayer({
     }
     return found;
   }, [shapes, ids]);
+
+  /**
+   * One `<pattern>` per distinct hatch. `patternUnits="userSpaceOnUse"` anchors
+   * it in the user space of whoever references it — the shape's own translated
+   * group — so every shape starts its hatch at its own top-left, which is where
+   * Excel puts it. The pattern is scaled back by the layer's zoom: Excel keeps a
+   * shape's hatch at 8 screen pixels however far the sheet is zoomed.
+   */
+  const patterns = useMemo(() => {
+    const found = new Map<string, { id: string; kind: string; fg: string; bg: string }>();
+    for (const shape of shapes) {
+      const pattern = shape.fill?.pattern;
+      if (!pattern || !SHAPE_PATTERN_TILES[pattern.kind]) continue;
+      const fg = pattern.fg ?? "#000000";
+      const bg = pattern.bg ?? "#FFFFFF";
+      const key = `${pattern.kind}|${fg}|${bg}`;
+      if (!found.has(key)) {
+        found.set(key, { id: `${ids}-p${found.size}`, kind: pattern.kind, fg, bg });
+      }
+    }
+    return found;
+  }, [shapes, ids]);
+
+  const patternId = (shape: Shape): string | null => {
+    const pattern = shape.fill?.pattern;
+    if (!pattern) return null;
+    return patterns.get(`${pattern.kind}|${pattern.fg ?? "#000000"}|${pattern.bg ?? "#FFFFFF"}`)?.id ?? null;
+  };
 
   /** Whether the hidden text readout is on; Ctrl+Shift+D flips it. */
   const shapeDebug = useSyncExternalStore(subscribeShapeDebug, shapeDebugEnabled);
@@ -493,6 +529,32 @@ export const ShapeLayer = memo(function ShapeLayer({
             </linearGradient>
           ) : null,
         )}
+        {[...patterns.values()].map((pattern) => (
+          <pattern
+            key={pattern.id}
+            id={pattern.id}
+            width={8}
+            height={8}
+            patternUnits="userSpaceOnUse"
+            patternTransform={`scale(${1 / zoom})`}
+          >
+            <rect width={8} height={8} fill={pattern.bg} />
+            {SHAPE_PATTERN_TILES[pattern.kind].map((row, y) =>
+              [...row].map((cell, x) =>
+                cell === "#" ? (
+                  <rect
+                    key={`${x}-${y}`}
+                    x={x}
+                    y={y}
+                    width={1}
+                    height={1}
+                    fill={pattern.fg}
+                  />
+                ) : null,
+              ),
+            )}
+          </pattern>
+        ))}
         {[...arrows].map(([id, { arrow, line }]) => {
           const { length, half } = arrowSize(arrow, line.width);
           return (
@@ -596,10 +658,13 @@ export const ShapeLayer = memo(function ShapeLayer({
           .filter(Boolean)
           .join(" ");
 
+        const hatch = patternId(shape);
         const fillValue = shape.fill
           ? shape.fill.stops.length > 0
             ? `url(#${gradientId(ids, index)})`
-            : shape.fill.color
+            : hatch
+              ? `url(#${hatch})`
+              : shape.fill.color
           : "none";
         /** The preset's own paths for this box, or its outline until we have them. */
         /** The shape's own paths, else the preset's, else its outline. */

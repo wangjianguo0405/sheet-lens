@@ -124,6 +124,27 @@ pub struct Fill {
     pub stops: Vec<Stop>,
     /// A linear gradient's direction in degrees, clockwise from pointing right.
     pub angle: f64,
+    /// A hatch pattern, when `<a:pattFill>` was what filled the shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<PatternFill>,
+}
+
+/// `<a:pattFill prst>` — one of DrawingML's 54 preset patterns.
+///
+/// The renderer carries an 8×8 mask per `prst`, measured off Excel's own
+/// picture. Unlike a cell's fill, a shape's pattern is anchored at the shape's
+/// top-left and does not grow with the zoom.
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatternFill {
+    /// The `prst` value, e.g. `ltUpDiag`.
+    pub kind: String,
+    /// The hatch colour (`<a:fgClr>`); black when the file says nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    /// The ground under it (`<a:bgClr>`); white when the file says nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
@@ -468,6 +489,9 @@ enum Target {
     /// `<a:effectRef>` carries a colour too, but it tints a shadow we do not
     /// draw. It needs a target of its own so it cannot be mistaken for a fill.
     EffectRef,
+    /// The hatch and ground colours inside a `<a:pattFill>`.
+    PatternFg,
+    PatternBg,
 }
 
 struct Parser<'a> {
@@ -495,6 +519,8 @@ struct Parser<'a> {
     ref_index: u32,
     /// The gradient being collected, as its stops and its direction.
     gradient: Option<(Vec<Stop>, f64)>,
+    /// The `<a:pattFill>` being collected, from its start to its end.
+    pattern: Option<PatternFill>,
     paras: Vec<Vec<Run>>,
     /// One base-direction flag per paragraph, parallel to `paras`.
     para_rtl: Vec<bool>,
@@ -573,6 +599,7 @@ impl<'a> Parser<'a> {
             ref_slot: None,
             ref_index: 0,
             gradient: None,
+            pattern: None,
             paras: Vec::new(),
             para_rtl: Vec::new(),
             list_style_rtl: None,
@@ -937,10 +964,14 @@ impl<'a> Parser<'a> {
             }
             // `<a:grpFill/>` is the child taking its group's own fill.
             b"grpFill" => self.shape_group_fill = true,
-            // A pattern fill is reported as no fill rather than as a wrong flat
-            // one. Gradients are collected properly just below.
+            // A pattern fill: `prst` names one of DrawingML's 54 hatches, and
+            // the two colour containers that follow say which ink and ground.
             b"pattFill" if self.parent_is_sp_pr(&parent) && self.fill.is_none() => {
-                self.fill = Some(None);
+                self.pattern = Some(PatternFill {
+                    kind: attr(element, b"prst").unwrap_or_default(),
+                    fg: None,
+                    bg: None,
+                });
             }
             b"gradFill" if self.parent_is_sp_pr(&parent) => {
                 self.gradient = Some((Vec::new(), 0.0));
@@ -1199,6 +1230,7 @@ impl<'a> Parser<'a> {
                 }
             }
             b"lnRef" | b"fillRef" | b"fontRef" | b"effectRef" => self.ref_slot = None,
+            b"pattFill" => self.finish_pattern(),
             b"gradFill" => {
                 // A gradient is a fill in its own right; one that ends with no
                 // stops is a fill that was never given any, so it stays absent.
@@ -1208,6 +1240,7 @@ impl<'a> Parser<'a> {
                         alpha: stops[0].alpha,
                         stops,
                         angle,
+                        pattern: None,
                     })),
                     Some(_) => Some(None),
                     None => self.fill.take(),
@@ -1254,9 +1287,29 @@ impl<'a> Parser<'a> {
                 }
             }
             b"lnRef" | b"fillRef" | b"fontRef" | b"effectRef" => self.ref_slot = None,
+            b"pattFill" => self.finish_pattern(),
             b"grpSpPr" => self.push_group(),
             _ => {}
         }
+    }
+
+    /// Turns the `<a:pattFill>` just read into the shape's fill. A pattern with
+    /// no `prst` says nothing, and one that arrives after a fill has already
+    /// been chosen loses to it, as Excel's own precedence does.
+    fn finish_pattern(&mut self) {
+        let Some(pattern) = self.pattern.take() else {
+            return;
+        };
+        if pattern.kind.is_empty() || self.fill.is_some() {
+            return;
+        }
+        self.fill = Some(Some(Fill {
+            color: pattern.bg.clone().unwrap_or_else(|| "#FFFFFF".to_owned()),
+            alpha: 1.0,
+            stops: Vec::new(),
+            angle: 0.0,
+            pattern: Some(pattern),
+        }));
     }
 
     /// Opens the transform and fill a group puts its children in, once its
@@ -1486,6 +1539,10 @@ impl<'a> Parser<'a> {
             Target::Line
         } else if self.stack.iter().any(|name| name == b"rPr" || name == b"defRPr") {
             Target::Run
+        } else if self.stack.iter().any(|name| name == b"fgClr") {
+            Target::PatternFg
+        } else if self.stack.iter().any(|name| name == b"bgClr") {
+            Target::PatternBg
         } else {
             Target::Fill
         }
@@ -1530,6 +1587,16 @@ impl<'a> Parser<'a> {
             }
             // A shadow's tint is not drawn, so it goes nowhere.
             Target::EffectRef => {}
+            Target::PatternFg => {
+                if let Some(pattern) = self.pattern.as_mut() {
+                    pattern.fg = Some(fill.color);
+                }
+            }
+            Target::PatternBg => {
+                if let Some(pattern) = self.pattern.as_mut() {
+                    pattern.bg = Some(fill.color);
+                }
+            }
         }
     }
 
@@ -2028,6 +2095,32 @@ mod tests {
         assert_eq!(fill.color, fill.stops[0].color);
         // 16200000 in 60000ths of a degree is 270, which points straight up.
         assert_eq!(fill.angle, 270.0);
+    }
+
+    #[test]
+    fn reads_a_pattern_fill_from_its_prst_and_colours() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:pattFill prst="ltUpDiag"><a:fgClr><a:srgbClr val="FF0000"/></a:fgClr><a:bgClr><a:srgbClr val="FFFF00"/></a:bgClr></a:pattFill></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let fill = shapes[0].fill.as_ref().expect("a pattern fill");
+        let pattern = fill.pattern.as_ref().expect("the pattern itself");
+        assert_eq!(pattern.kind, "ltUpDiag");
+        assert_eq!(pattern.fg.as_deref(), Some("#FF0000"));
+        assert_eq!(pattern.bg.as_deref(), Some("#FFFF00"));
+        assert!(fill.stops.is_empty(), "a pattern is not a gradient");
+        // The flat colour is the ground, which is what an unknown preset falls
+        // back to drawing.
+        assert_eq!(fill.color, "#FFFF00");
+
+        // A pattern that names no colours is Excel's automatic black on white.
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:pattFill prst="pct50"/></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let pattern = shapes[0]
+            .fill
+            .as_ref()
+            .and_then(|fill| fill.pattern.as_ref())
+            .expect("a pattern fill with no colours");
+        assert_eq!(pattern.kind, "pct50");
+        assert!(pattern.fg.is_none() && pattern.bg.is_none());
     }
 
     /// Prints what every sheet's drawing part parsed into.
