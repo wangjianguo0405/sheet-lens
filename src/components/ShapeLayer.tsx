@@ -458,6 +458,24 @@ export const ShapeLayer = memo(function ShapeLayer({
     return patterns.get(`${pattern.kind}|${pattern.fg ?? "#000000"}|${pattern.bg ?? "#FFFFFF"}`)?.id ?? null;
   };
 
+  /**
+   * Each shape's box, in the layer's own pixels. A radial gradient is declared
+   * in the `<defs>` above the shapes, so the box has to be known there too —
+   * computed once here rather than twice.
+   */
+  const boxes = shapes.map((shape) => {
+    const group = shape.group;
+    const gLeft = group ? colX(group.fromCol) + group.fromX : 0;
+    const gTop = group ? rowY(group.fromRow) + group.fromY : 0;
+    const gWidth = group ? Math.max(0, colX(group.toCol) + group.toX - gLeft) : 0;
+    const gHeight = group ? Math.max(0, rowY(group.toRow) + group.toY - gTop) : 0;
+    const x = group ? gLeft + group.fx * gWidth : colX(shape.fromCol) + shape.fromX;
+    const y = group ? gTop + group.fy * gHeight : rowY(shape.fromRow) + shape.fromY;
+    const w = group ? group.fw * gWidth : Math.max(0, colX(shape.toCol) + shape.toX - x);
+    const h = group ? group.fh * gHeight : Math.max(0, rowY(shape.toRow) + shape.toY - y);
+    return { x, y, w, h, gWidth, gHeight };
+  });
+
   /** Whether the hidden text readout is on; Ctrl+Shift+D flips it. */
   const shapeDebug = useSyncExternalStore(subscribeShapeDebug, shapeDebugEnabled);
   /**
@@ -511,24 +529,59 @@ export const ShapeLayer = memo(function ShapeLayer({
     // place that knows where the data area starts.
     <svg width={width} height={height}>
       <defs>
-        {shapes.map((shape, index) =>
-          shape.fill && shape.fill.stops.length > 0 ? (
-            <linearGradient
-              key={index}
-              id={gradientId(ids, index)}
-              {...linearAttrs(shape.fill.angle)}
-            >
-              {shape.fill.stops.map((stop, stopIndex) => (
-                <stop
-                  key={stopIndex}
-                  offset={stop.pos}
-                  stopColor={stop.color}
-                  stopOpacity={stop.alpha}
-                />
-              ))}
-            </linearGradient>
-          ) : null,
-        )}
+        {shapes.map((shape, index) => {
+          const fill = shape.fill;
+          if (!fill || fill.stops.length === 0) return null;
+          const stops = fill.stops.map((stop, stopIndex) => (
+            <stop
+              key={stopIndex}
+              offset={stop.pos}
+              stopColor={stop.color}
+              stopOpacity={stop.alpha}
+            />
+          ));
+          const radial = fill.radial;
+          if (!radial) {
+            return (
+              <linearGradient
+                key={index}
+                id={gradientId(ids, index)}
+                {...linearAttrs(fill.angle)}
+              >
+                {stops}
+              </linearGradient>
+            );
+          }
+          const [left, top, right, bottom] = radial.focus;
+          const cx = left + (1 - left - right) / 2;
+          const cy = top + (1 - top - bottom) / 2;
+          if (radial.kind === "circle") {
+            // A circle through the box's four corners: measured off Excel's own
+            // render, `circle` puts the last stop on the corners, not the edges.
+            const { w, h } = boxes[index];
+            return (
+              <radialGradient
+                key={index}
+                id={gradientId(ids, index)}
+                gradientUnits="userSpaceOnUse"
+                cx={w * cx}
+                cy={h * cy}
+                r={Math.max(1, Math.hypot(w / 2, h / 2))}
+              >
+                {stops}
+              </radialGradient>
+            );
+          }
+          // `rect` and `shape` reach the last stop at the box's edges, which is
+          // the ellipse an objectBoundingBox gradient inscribes. `shape` follows
+          // a non-rectangular outline in Excel; the inscribed ellipse is the
+          // closest form SVG offers without a per-shape mask.
+          return (
+            <radialGradient key={index} id={gradientId(ids, index)} cx={cx} cy={cy} r={0.5}>
+              {stops}
+            </radialGradient>
+          );
+        })}
         {[...patterns.values()].map((pattern) => (
           <pattern
             key={pattern.id}
@@ -582,14 +635,7 @@ export const ShapeLayer = memo(function ShapeLayer({
       </defs>
       {shapes.map((shape, index) => {
         const group = shape.group;
-        const gLeft = group ? colX(group.fromCol) + group.fromX : 0;
-        const gTop = group ? rowY(group.fromRow) + group.fromY : 0;
-        const gWidth = group ? Math.max(0, colX(group.toCol) + group.toX - gLeft) : 0;
-        const gHeight = group ? Math.max(0, rowY(group.toRow) + group.toY - gTop) : 0;
-        const x = group ? gLeft + group.fx * gWidth : colX(shape.fromCol) + shape.fromX;
-        const y = group ? gTop + group.fy * gHeight : rowY(shape.fromRow) + shape.fromY;
-        const w = group ? group.fw * gWidth : Math.max(0, colX(shape.toCol) + shape.toX - x);
-        const h = group ? group.fh * gHeight : Math.max(0, rowY(shape.toRow) + shape.toY - y);
+        const { x, y, w, h, gWidth, gHeight } = boxes[index];
         // A shape in a frozen band stays put while the layer under it scrolls.
         // Excel places a shape by its anchor, so that is what decides its pane.
         // The scroll is added back imperatively — see `CanvasGrid`'s transform

@@ -127,6 +127,25 @@ pub struct Fill {
     /// A hatch pattern, when `<a:pattFill>` was what filled the shape.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<PatternFill>,
+    /// A radial gradient (`<a:gradFill><a:path>`), when that is what filled it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radial: Option<RadialPath>,
+}
+
+/// `<a:path path="circle|rect|shape"><a:fillToRect …/>` — a gradient that runs
+/// outwards from a focus instead of along a line.
+///
+/// Measured against Excel's own render: `circle` is a circle through the four
+/// corners (radius = half the box's diagonal), while `rect` and `shape` reach
+/// the last stop at the box's edges — an ellipse inscribed in it.
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RadialPath {
+    /// `circle`, `rect` or `shape`.
+    pub kind: String,
+    /// `fillToRect` as fractions — left, top, right, bottom insets from the
+    /// box. The gradient's centre is the middle of what is left.
+    pub focus: [f64; 4],
 }
 
 /// `<a:pattFill prst>` — one of DrawingML's 54 preset patterns.
@@ -519,6 +538,8 @@ struct Parser<'a> {
     ref_index: u32,
     /// The gradient being collected, as its stops and its direction.
     gradient: Option<(Vec<Stop>, f64)>,
+    /// The `<a:path>` of the gradient being collected, when it has one.
+    gradient_path: Option<RadialPath>,
     /// The `<a:pattFill>` being collected, from its start to its end.
     pattern: Option<PatternFill>,
     paras: Vec<Vec<Run>>,
@@ -599,6 +620,7 @@ impl<'a> Parser<'a> {
             ref_slot: None,
             ref_index: 0,
             gradient: None,
+            gradient_path: None,
             pattern: None,
             paras: Vec::new(),
             para_rtl: Vec::new(),
@@ -898,6 +920,20 @@ impl<'a> Parser<'a> {
                     });
                 }
             }
+            // `<a:path>` inside a gradient names the contour its stops follow.
+            b"path" if self.gradient.is_some() => {
+                self.gradient_path = Some(RadialPath {
+                    kind: attr(element, b"path").unwrap_or_default(),
+                    focus: [0.0; 4],
+                });
+            }
+            b"fillToRect" if self.gradient_path.is_some() => {
+                if let Some(radial) = self.gradient_path.as_mut() {
+                    let inset =
+                        |name: &[u8]| num_attr(element, name).unwrap_or(0.0) / 100_000.0;
+                    radial.focus = [inset(b"l"), inset(b"t"), inset(b"r"), inset(b"b")];
+                }
+            }
             b"path" if parent == b"pathLst" => {
                 if let Some(custom) = self.custom.as_mut() {
                     custom.paths.push(CustomPath {
@@ -975,6 +1011,7 @@ impl<'a> Parser<'a> {
             }
             b"gradFill" if self.parent_is_sp_pr(&parent) => {
                 self.gradient = Some((Vec::new(), 0.0));
+                self.gradient_path = None;
             }
             b"gs" => {
                 if let Some((stops, _)) = self.gradient.as_mut() {
@@ -1234,6 +1271,7 @@ impl<'a> Parser<'a> {
             b"gradFill" => {
                 // A gradient is a fill in its own right; one that ends with no
                 // stops is a fill that was never given any, so it stays absent.
+                let radial = self.gradient_path.take();
                 self.fill = match self.gradient.take() {
                     Some((stops, angle)) if !stops.is_empty() => Some(Some(Fill {
                         color: stops[0].color.clone(),
@@ -1241,6 +1279,7 @@ impl<'a> Parser<'a> {
                         stops,
                         angle,
                         pattern: None,
+                        radial,
                     })),
                     Some(_) => Some(None),
                     None => self.fill.take(),
@@ -1309,6 +1348,7 @@ impl<'a> Parser<'a> {
             stops: Vec::new(),
             angle: 0.0,
             pattern: Some(pattern),
+            radial: None,
         }));
     }
 
@@ -2095,6 +2135,27 @@ mod tests {
         assert_eq!(fill.color, fill.stops[0].color);
         // 16200000 in 60000ths of a degree is 270, which points straight up.
         assert_eq!(fill.angle, 270.0);
+    }
+
+    #[test]
+    fn reads_a_radial_gradient_path() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs></a:gsLst><a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path></a:gradFill></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        let fill = shapes[0].fill.as_ref().expect("a radial gradient");
+        let radial = fill.radial.as_ref().expect("the path");
+        assert_eq!(radial.kind, "circle");
+        assert_eq!(radial.focus, [0.5, 0.5, 0.5, 0.5]);
+        assert_eq!(fill.stops.len(), 2);
+
+        // A linear gradient carries no path of its own.
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs></a:gsLst><a:lin ang="0"/></a:gradFill></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        assert!(shapes[0]
+            .fill
+            .as_ref()
+            .expect("a linear gradient")
+            .radial
+            .is_none());
     }
 
     #[test]

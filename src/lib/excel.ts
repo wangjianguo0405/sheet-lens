@@ -262,6 +262,20 @@ export interface ShapeFill {
   angle: number;
   /** A hatch pattern (`<a:pattFill>`), when that is what filled the shape. */
   pattern?: ShapePattern | null;
+  /** A radial gradient (`<a:gradFill><a:path>`), when it has a focus. */
+  radial?: ShapeRadial | null;
+}
+
+/**
+ * `<a:path path="circle|rect|shape">` with its `fillToRect`. Measured off
+ * Excel: `circle` is a circle through the box's corners, `rect`/`shape` reach
+ * the last stop at its edges.
+ */
+export interface ShapeRadial {
+  /** `circle`, `rect` or `shape`. */
+  kind: string;
+  /** `fillToRect` insets as fractions — left, top, right, bottom. */
+  focus: [number, number, number, number];
 }
 
 /** One of DrawingML's 54 preset patterns; the 8×8 masks live in the renderer. */
