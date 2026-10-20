@@ -135,6 +135,16 @@ pub struct CellBorder {
     pub right: Option<BorderEdge>,
     pub bottom: Option<BorderEdge>,
     pub left: Option<BorderEdge>,
+    /// Excel's one diagonal rule. `<diagonal>` carries its style; the two flags
+    /// on `<border>` say which corners it joins, and both may be set — that is
+    /// the crossing pair. Measured off `CopyPicture`: on a merged region the
+    /// line runs across the whole region, not just the anchor cell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagonal: Option<BorderEdge>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub diagonal_up: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub diagonal_down: bool,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
@@ -158,6 +168,11 @@ pub struct CellStyle {
     pub strike: bool,
     /// `single` or `double`; absent when the font has no underline.
     pub underline: Option<&'static str>,
+    /// `superscript` or `subscript` for a font that draws raised or lowered at
+    /// two thirds of its size. Excel keeps the stored size; the scale is a
+    /// drawing rule, measured off `CopyPicture`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vert_align: Option<&'static str>,
     /// Only set when the cell's font differs from the workbook default, which
     /// is the difference between a 22pt title and body text.
     pub size_px: Option<f64>,
@@ -200,6 +215,7 @@ impl PartialEq for CellStyle {
             && self.italic == other.italic
             && self.strike == other.strike
             && self.underline == other.underline
+            && self.vert_align == other.vert_align
             && self.size_px == other.size_px
             && self.family == other.family
             && self.color == other.color
@@ -223,6 +239,7 @@ impl std::hash::Hash for CellStyle {
         self.italic.hash(state);
         self.strike.hash(state);
         self.underline.hash(state);
+        self.vert_align.hash(state);
         self.size_px.map(f64::to_bits).hash(state);
         self.family.hash(state);
         self.color.hash(state);
@@ -244,6 +261,7 @@ impl CellStyle {
             && !self.italic
             && !self.strike
             && self.underline.is_none()
+            && self.vert_align.is_none()
             && self.size_px.is_none()
             && self.family.is_none()
             && self.color.is_none()
@@ -305,6 +323,11 @@ pub struct AutoFilter {
     /// Absolute column index -> values the file already filters on. `colId` in
     /// the XML is relative to the filter range, so it is rebased here.
     pub applied: HashMap<u32, Vec<String>>,
+    /// Columns filtered by a condition (`<customFilters>`, e.g. "> 20") rather
+    /// than by a value list. Only the button's funnel depends on this: the rows
+    /// such a filter hides are already the file's `hidden` rows.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub custom: Vec<u32>,
 }
 
 impl SheetLayout {
@@ -387,6 +410,7 @@ impl Styles {
             italic: font.is_some_and(|font| font.italic),
             strike: font.is_some_and(|font| font.strike),
             underline: font.and_then(|font| font.underline),
+            vert_align: font.and_then(|font| font.vert_align),
             size_px,
             family,
             color: font.and_then(|font| font.color.clone()),
@@ -624,6 +648,9 @@ pub struct RichFont {
     /// `None` means the rPr did not mention it at all.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub underline: Option<&'static str>,
+    /// `superscript` or `subscript` for this run alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vert_align: Option<&'static str>,
 }
 
 impl RichFont {
@@ -636,6 +663,7 @@ impl RichFont {
             && self.italic.is_none()
             && self.strike.is_none()
             && self.underline.is_none()
+            && self.vert_align.is_none()
     }
 }
 
@@ -683,6 +711,9 @@ struct FontInfo {
     /// `single` or `double`. The two accounting forms draw the same line, only
     /// spanning the cell rather than the text, and land on one of these.
     underline: Option<&'static str>,
+    /// `superscript` or `subscript`; the cell's whole text draws raised or
+    /// lowered at two thirds of its size.
+    vert_align: Option<&'static str>,
     color: Option<String>,
 }
 
@@ -1106,6 +1137,13 @@ fn read_run_font(element: &BytesStart, font: Option<&mut RichFont>) {
                 _ => "single",
             });
         }
+        b"vertAlign" => {
+            font.vert_align = match attr(element, b"val").as_deref() {
+                Some("superscript") => Some("superscript"),
+                Some("subscript") => Some("subscript"),
+                _ => None,
+            }
+        }
         _ => {}
     }
 }
@@ -1374,8 +1412,14 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(element)) => match element.local_name().as_ref() {
                 b"borders" => in_borders = true,
-                b"border" if in_borders => border = Some(CellBorder::default()),
-                b"left" | b"right" | b"top" | b"bottom" if in_borders => {
+                b"border" if in_borders => {
+                    border = Some(CellBorder {
+                        diagonal_up: flag_attr(&element, b"diagonalUp").unwrap_or(false),
+                        diagonal_down: flag_attr(&element, b"diagonalDown").unwrap_or(false),
+                        ..CellBorder::default()
+                    })
+                }
+                b"left" | b"right" | b"top" | b"bottom" | b"diagonal" if in_borders => {
                     edge = set_edge(&element, border.as_mut(), &element.local_name().as_ref());
                 }
                 b"color" if in_borders => color_edge(&element, border.as_mut(), edge, theme),
@@ -1400,6 +1444,15 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 b"font" if in_fonts => font = Some(FontInfo::default()),
                 b"b" | b"i" | b"u" | b"strike" if in_fonts => {
                     read_font_prop(&element, font.as_mut())
+                }
+                b"vertAlign" if in_fonts => {
+                    if let Some(slot) = font.as_mut() {
+                        slot.vert_align = match attr(&element, b"val").as_deref() {
+                            Some("superscript") => Some("superscript"),
+                            Some("subscript") => Some("subscript"),
+                            _ => None,
+                        };
+                    }
                 }
                 b"sz" if in_fonts => {
                     if let Some(slot) = font.as_mut() {
@@ -1437,8 +1490,14 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
             },
             Ok(Event::Empty(element)) => match element.local_name().as_ref() {
                 // A self-closing element has no colour child to wait for.
-                b"border" if in_borders => styles.borders.push(None),
-                b"left" | b"right" | b"top" | b"bottom" if in_borders => {
+                b"border" if in_borders => styles.borders.push(border.take().filter(|b| {
+                    b.top.is_some()
+                        || b.right.is_some()
+                        || b.bottom.is_some()
+                        || b.left.is_some()
+                        || b.diagonal.is_some()
+                })),
+                b"left" | b"right" | b"top" | b"bottom" | b"diagonal" if in_borders => {
                     set_edge(&element, border.as_mut(), &element.local_name().as_ref());
                 }
                 // Excel writes the colour self-closing, e.g. `<color rgb="FF000000"/>`.
@@ -1456,6 +1515,15 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
                 b"b" | b"i" | b"u" | b"strike" if in_fonts => {
                     read_font_prop(&element, font.as_mut())
+                }
+                b"vertAlign" if in_fonts => {
+                    if let Some(slot) = font.as_mut() {
+                        slot.vert_align = match attr(&element, b"val").as_deref() {
+                            Some("superscript") => Some("superscript"),
+                            Some("subscript") => Some("subscript"),
+                            _ => None,
+                        };
+                    }
                 }
                 b"sz" if in_fonts => {
                     if let Some(slot) = font.as_mut() {
@@ -1497,8 +1565,11 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                         || b.right.is_some()
                         || b.bottom.is_some()
                         || b.left.is_some()
+                        || b.diagonal.is_some()
                 })),
-                b"left" | b"right" | b"top" | b"bottom" if in_borders => edge = None,
+                b"left" | b"right" | b"top" | b"bottom" | b"diagonal" if in_borders => {
+                    edge = None
+                }
                 b"fonts" => in_fonts = false,
                 b"numFmts" => in_num_fmts = false,
                 b"fills" => in_fills = false,
@@ -1536,6 +1607,7 @@ pub(crate) enum Side {
     Right,
     Bottom,
     Left,
+    Diagonal,
 }
 
 /// `<numFmt numFmtId="164" formatCode="..."/>` — a format the workbook defines
@@ -1642,6 +1714,7 @@ pub(crate) fn set_edge(
         b"right" => Side::Right,
         b"bottom" => Side::Bottom,
         b"left" => Side::Left,
+        b"diagonal" => Side::Diagonal,
         _ => return None,
     };
     let border = border?;
@@ -1651,6 +1724,7 @@ pub(crate) fn set_edge(
         Side::Right => &mut border.right,
         Side::Bottom => &mut border.bottom,
         Side::Left => &mut border.left,
+        Side::Diagonal => &mut border.diagonal,
     };
     *slot = edge;
     Some(side)
@@ -1673,6 +1747,7 @@ pub(crate) fn color_edge(
         Side::Right => &mut border.right,
         Side::Bottom => &mut border.bottom,
         Side::Left => &mut border.left,
+        Side::Diagonal => &mut border.diagonal,
     };
     if let Some(edge) = slot.as_mut() {
         edge.color = Some(color);
@@ -2207,12 +2282,18 @@ fn parse_sheet<R: BufRead>(
                         }
                         // Rows can carry a style for the cells in them that have
                         // none of their own — how a filled row reads as solid.
-                        if let Some(index) = attr(&element, b"s")
-                            .and_then(|v| v.parse::<usize>().ok())
-                        {
-                            if let Some(style) = styles.cell_style(index, default_font_px) {
-                                let style = intern(&mut layout.styles, &mut style_ids, style);
-                                layout.row_styles.insert(row - 1, style);
+                        // The id only counts when `customFormat` says so; Excel
+                        // writes the flag on every row it styles (10,655 rows
+                        // across 40 workbooks, none without it), so this only
+                        // tells other writers' output apart.
+                        if flag_attr(&element, b"customFormat").unwrap_or(false) {
+                            if let Some(index) = attr(&element, b"s")
+                                .and_then(|v| v.parse::<usize>().ok())
+                            {
+                                if let Some(style) = styles.cell_style(index, default_font_px) {
+                                    let style = intern(&mut layout.styles, &mut style_ids, style);
+                                    layout.row_styles.insert(row - 1, style);
+                                }
                             }
                         }
                         if let Some(height) =
@@ -2286,6 +2367,7 @@ fn parse_sheet<R: BufRead>(
                                     rows: rect.rows,
                                     cols: rect.cols,
                                     applied: HashMap::new(),
+                                    custom: Vec::new(),
                                 });
                             }
                         }
@@ -2295,7 +2377,22 @@ fn parse_sheet<R: BufRead>(
                     b"drawing" => layout.drawing_rel = attr(&element, b"id"),
                     b"filterColumn" => {
                         filter_col = attr(&element, b"colId").and_then(|v| v.parse::<u32>().ok());
-                    }                    b"filter" => {
+                    }
+                    b"customFilter" => {
+                        // A condition — "greater than 20" — rather than a value
+                        // list. What it keeps is the file's own cached `hidden`
+                        // answer; the column is recorded only so the filter
+                        // button draws Excel's funnel instead of its caret.
+                        if let (Some(offset), Some(filter)) =
+                            (filter_col, layout.auto_filter.as_mut())
+                        {
+                            let column = filter.col + offset;
+                            if !filter.custom.contains(&column) {
+                                filter.custom.push(column);
+                            }
+                        }
+                    }
+                    b"filter" => {
                         // `<filter val="…"/>` only carries a value when the file
                         // was saved with that column filtered.
                         if let (Some(offset), Some(value)) = (filter_col, attr(&element, b"val")) {
@@ -2762,6 +2859,96 @@ mod tests {
         let Some(layout) = sample("Summary") else { return };
         // Six rows are written out, and the A1:B1 merge names two columns.
         assert_eq!((layout.rows, layout.cols), (6, 2));
+    }
+
+    #[test]
+    fn reads_a_diagonal_border() {
+        let xml = r#"<styleSheet><borders count="3">
+            <border><left/><right/><top/><bottom/><diagonal/></border>
+            <border diagonalDown="1"><left/><right/><top/><bottom/><diagonal style="thick"><color rgb="FF0000FF"/></diagonal></border>
+            <border diagonalUp="1" diagonalDown="1"><left/><right/><top/><bottom/><diagonal style="dashed"><color rgb="FFFF0000"/></diagonal></border>
+        </borders><cellXfs count="3"><xf borderId="0"/><xf borderId="1"/><xf borderId="2"/></cellXfs></styleSheet>"#;
+        let styles = parse_styles(xml, &[]);
+
+        // The stock placeholder every border carries is not a rule.
+        assert!(styles.cell_style(0, 14.67).is_none());
+
+        let down = styles.cell_style(1, 14.67).unwrap().border.unwrap();
+        assert!(down.diagonal_down);
+        assert!(!down.diagonal_up);
+        let edge = down.diagonal.expect("the diagonal style is kept");
+        assert_eq!(edge.line, "solid");
+        assert_eq!(edge.width, 3);
+        assert_eq!(edge.color.as_deref(), Some("#0000FF"));
+
+        let both = styles.cell_style(2, 14.67).unwrap().border.unwrap();
+        assert!(both.diagonal_up && both.diagonal_down);
+        assert_eq!(both.diagonal.unwrap().line, "dashed");
+    }
+
+    #[test]
+    fn reads_superscript_and_subscript_fonts() {
+        let xml = r#"<styleSheet>
+            <fonts count="3">
+                <font><sz val="11"/><name val="MS Gothic"/></font>
+                <font><vertAlign val="superscript"/><sz val="11"/><name val="MS Gothic"/></font>
+                <font><vertAlign val="subscript"/><sz val="11"/><name val="MS Gothic"/></font>
+            </fonts>
+            <cellXfs count="3"><xf fontId="0"/><xf fontId="1"/><xf fontId="2"/></cellXfs>
+        </styleSheet>"#;
+        let styles = parse_styles(xml, &[]);
+        assert!(styles.cell_style(0, 14.67).is_none());
+        assert_eq!(
+            styles.cell_style(1, 14.67).unwrap().vert_align,
+            Some("superscript")
+        );
+        assert_eq!(
+            styles.cell_style(2, 14.67).unwrap().vert_align,
+            Some("subscript")
+        );
+
+        // A run says the same thing in its own `<rPr>`.
+        let xml = r#"<sst><si><r><t>X</t></r><r><rPr><vertAlign val="superscript"/><sz val="11"/></rPr><t>2</t></r></si></sst>"#;
+        let runs = rich_strings(xml, &[]);
+        let run = &runs[0].as_ref().unwrap()[1];
+        assert_eq!(run.font.as_ref().unwrap().vert_align, Some("superscript"));
+    }
+
+    #[test]
+    fn a_rows_style_counts_only_with_custom_format() {
+        let xml = r#"<styleSheet>
+            <fonts count="1"><font><sz val="11"/></font></fonts>
+            <fills count="2">
+                <fill><patternFill patternType="none"/></fill>
+                <fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/></patternFill></fill>
+            </fills>
+            <cellXfs count="2"><xf fontId="0" fillId="0"/><xf fontId="0" fillId="1"/></cellXfs>
+        </styleSheet>"#;
+        let styles = parse_styles(xml, &[]);
+        let sheet = br#"<worksheet><sheetData>
+            <row r="1" s="1"/>
+            <row r="2" s="1" customFormat="1"/>
+        </sheetData></worksheet>"#;
+        let layout = parse_sheet(&sheet[..], &styles, &[]).expect("layout");
+        // Row 1 names a style but `customFormat` is off, so Excel applies none.
+        assert_eq!(layout.row_styles.get(&0), None);
+        let style = layout.row_styles.get(&1).expect("row 2 is styled");
+        assert_eq!(
+            layout.styles[*style as usize].fill.as_deref(),
+            Some("#FFFF00")
+        );
+    }
+
+    #[test]
+    fn reads_the_columns_a_custom_filter_hides() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet><autoFilter ref="A1:C5"><filterColumn colId="2"><customFilters and="1"><customFilter operator="greaterThan" val="20"/></customFilters></filterColumn></autoFilter><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        let filter = layout.auto_filter.expect("autofilter should be present");
+        // `colId` is relative to the range, so it is rebased like the values.
+        assert_eq!(filter.custom, vec![2]);
+        // A condition is not a value list: nothing goes in `applied`.
+        assert!(filter.applied.is_empty());
     }
 
     #[test]

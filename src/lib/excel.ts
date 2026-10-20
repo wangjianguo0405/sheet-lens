@@ -59,6 +59,13 @@ export interface CellBorder {
   right: BorderEdge | null;
   bottom: BorderEdge | null;
   left: BorderEdge | null;
+  /**
+   * Excel's one diagonal rule. The style lives in `<diagonal>`; the two flags
+   * say which corners it joins, and both may be set — that is the crossing pair.
+   */
+  diagonal?: BorderEdge | null;
+  diagonalUp?: boolean;
+  diagonalDown?: boolean;
 }
 
 export interface CellStyle {
@@ -85,6 +92,8 @@ export interface CellStyle {
   strike: boolean;
   /** `single` or `double`; null when the font carries no underline. */
   underline: "single" | "double" | null;
+  /** Set when the cell's font draws raised or lowered (sup/subscript). */
+  vertAlign?: "superscript" | "subscript" | null;
   /** Set only when the cell's font differs from the workbook default. */
   sizePx: number | null;
   /** Likewise, and it is what an `indent` is measured in. */
@@ -141,6 +150,8 @@ export interface RichFont {
   strike?: boolean;
   /** `single`, `double`, or `none` for an rPr that spells the absence out. */
   underline?: "single" | "double" | "none" | null;
+  /** The run draws raised or lowered at two thirds of its size. */
+  vertAlign?: "superscript" | "subscript" | null;
 }
 
 /**
@@ -186,6 +197,12 @@ export interface AutoFilter {
   cols: number;
   /** Absolute column index -> values the file already filters on. */
   applied: Record<string, string[]>;
+  /**
+   * Columns filtered by a condition (`<customFilters>`, e.g. "> 20") rather than
+   * by a value list. The rows they hide are the file's own; this only tells the
+   * filter button to draw Excel's funnel.
+   */
+  custom: number[];
 }
 
 export interface DataValidation {
