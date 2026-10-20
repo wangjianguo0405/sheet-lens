@@ -366,6 +366,14 @@ export interface ShapeLayerProps {
    * by it inside the layer, which the layer's CSS zoom would otherwise carry.
    */
   zoom?: number;
+  /**
+   * How far each shape has been dragged from where the file puts it, in sheet
+   * pixels. Session state only: a shape that covers the cells under it can be
+   * moved aside, and nothing is written back.
+   */
+  offsets?: ReadonlyMap<number, { x: number; y: number }>;
+  /** Called with a shape's new offset while it is being dragged. */
+  onMoveShape?: (index: number, x: number, y: number) => void;
   /** Read out when Ctrl+Shift+D has switched the hidden panel on. */
   debug?: ShapeDebugFacts | null;
 }
@@ -387,6 +395,8 @@ export const ShapeLayer = memo(function ShapeLayer({
   frozenRows = 0,
   frozenCols = 0,
   zoom = 1,
+  offsets,
+  onMoveShape,
   debug,
 }: ShapeLayerProps) {
   const parts = useMemo(
@@ -475,6 +485,71 @@ export const ShapeLayer = memo(function ShapeLayer({
     const h = group ? group.fh * gHeight : Math.max(0, rowY(shape.toRow) + shape.toY - y);
     return { x, y, w, h, gWidth, gHeight };
   });
+
+  /**
+   * The drag in progress. The pointer is captured on the shape's own `<g>` so
+   * it can leave the shape — or the layer's clipped area — without the move
+   * stopping, and the offset is reported in sheet pixels, not screen ones.
+   */
+  const drag = useRef<{
+    index: number;
+    startX: number;
+    startY: number;
+    from: { x: number; y: number };
+  } | null>(null);
+  /**
+   * The offsets of a drag still in progress. Kept here rather than lifted on
+   * every move: the pointer fires many times a second and this layer is small,
+   * while the grid that owns the committed offsets is not. Only the release
+   * reports the final position up.
+   */
+  const [live, setLive] = useState<Map<number, { x: number; y: number }>>(() => new Map());
+
+  const beginDrag = (event: React.PointerEvent<SVGGElement>, index: number) => {
+    if (event.button !== 0 || !onMoveShape) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Capture keeps the drag alive when the pointer leaves the shape. A
+    // synthetic pointer has no active id to capture, which is not an error here.
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // no capture; the handlers on the shape still see the move
+    }
+    drag.current = {
+      index,
+      startX: event.clientX,
+      startY: event.clientY,
+      from: live.get(index) ?? offsets?.get(index) ?? { x: 0, y: 0 },
+    };
+  };
+
+  const dragTo = (event: React.PointerEvent<SVGGElement>) => {
+    const current = drag.current;
+    if (!current) return;
+    const scale = zoom || 1;
+    const next = {
+      x: current.from.x + (event.clientX - current.startX) / scale,
+      y: current.from.y + (event.clientY - current.startY) / scale,
+    };
+    setLive((all) => new Map(all).set(current.index, next));
+  };
+
+  const endDrag = (event: React.PointerEvent<SVGGElement>) => {
+    const current = drag.current;
+    if (!current) return;
+    drag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    const at = live.get(current.index);
+    if (at && onMoveShape) onMoveShape(current.index, at.x, at.y);
+    setLive((all) => {
+      const next = new Map(all);
+      next.delete(current.index);
+      return next;
+    });
+  };
 
   /** Whether the hidden text readout is on; Ctrl+Shift+D flips it. */
   const shapeDebug = useSyncExternalStore(subscribeShapeDebug, shapeDebugEnabled);
@@ -731,14 +806,25 @@ export const ShapeLayer = memo(function ShapeLayer({
         const imageW = keepX > 0.001 ? gw / keepX : gw;
         const imageH = keepY > 0.001 ? gh / keepY : gh;
 
+        const moved = live.get(index) ?? offsets?.get(index);
+        const mx = x + (moved?.x ?? 0);
+        const my = y + (moved?.y ?? 0);
+
         return (
           <g
             key={index}
-            data-shape-x={x}
-            data-shape-y={y}
+            data-shape-x={mx}
+            data-shape-y={my}
             data-pin-x={pinnedX ? "1" : undefined}
             data-pin-y={pinnedY ? "1" : undefined}
-            transform={`translate(${x} ${y})`}
+            transform={`translate(${mx} ${my})`}
+            // A shape takes the pointer so it can be dragged off whatever it
+            // covers; the layer stays click-through everywhere else.
+            style={onMoveShape ? { pointerEvents: "auto", cursor: "move" } : undefined}
+            onPointerDown={(event) => beginDrag(event, index)}
+            onPointerMove={dragTo}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
           >
             <g transform={placement || undefined}>
               {/* A chart or table frame is anchored like a shape but has contents

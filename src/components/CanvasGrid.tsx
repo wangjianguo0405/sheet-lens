@@ -800,6 +800,29 @@ export function CanvasGrid({
   }, [layout, sheetColsGuess]);
 
   /**
+   * Where shapes have been dragged to, by sheet — session state only. A shape
+   * that covers the cells under it can be moved aside, and nothing is written
+   * back, so reopening the file puts everything back where it was.
+   */
+  const [shapeMoves, setShapeMoves] = useState<
+    Map<string, Map<number, { x: number; y: number }>>
+  >(() => new Map());
+  const shapeMovesKey = `${path}|${sheet.name}`;
+  const shapeOffsets = shapeMoves.get(shapeMovesKey);
+  const moveShape = useCallback(
+    (index: number, x: number, y: number) => {
+      setShapeMoves((current) => {
+        const next = new Map(current);
+        const sheetOffsets = new Map(next.get(shapeMovesKey) ?? []);
+        sheetOffsets.set(index, { x, y });
+        next.set(shapeMovesKey, sheetOffsets);
+        return next;
+      });
+    },
+    [shapeMovesKey],
+  );
+
+  /**
    * A note's box in sheet pixels. The VML anchors it in cells, so it follows
    * the grid this viewer measured rather than Excel's own column widths.
    */
@@ -1628,6 +1651,46 @@ export function CanvasGrid({
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [onZoom]);
+
+  /**
+   * A shape takes the pointer so it can be dragged, which would otherwise
+   * swallow the wheel over it — the page layer sits beside the scroller, not
+   * inside it. The listener is native and non-passive for the same reason the
+   * zoom one is: a ctrl+wheel has to be cancelled here, or the webview zooms
+   * the whole page on top of the sheet, and a plain wheel must not scroll
+   * anything but the grid.
+   */
+  useEffect(() => {
+    const layer = pageLayerRef.current;
+    if (!layer) return;
+    const onWheel = (event: WheelEvent) => {
+      const el = viewportRef.current;
+      if (!el) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.ctrlKey || event.metaKey) {
+        el.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
+            deltaMode: event.deltaMode,
+            ctrlKey: true,
+            shiftKey: event.shiftKey,
+            altKey: event.altKey,
+            metaKey: event.metaKey,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        return;
+      }
+      el.scrollBy({ left: event.deltaX, top: event.deltaY });
+    };
+    layer.addEventListener("wheel", onWheel, { passive: false });
+    return () => layer.removeEventListener("wheel", onWheel);
+  }, [layoutReady]);
 
   // A zoom change resizes the spacer, so the scroller has to be put back on the
   // same sheet coordinates or the view jumps.
@@ -4049,6 +4112,8 @@ export function CanvasGrid({
                 frozenRows={layout.frozenRows ?? 0}
                 frozenCols={layout.frozenCols ?? 0}
                 zoom={zoom / 100}
+                offsets={shapeOffsets}
+                onMoveShape={moveShape}
                 // Null unless the readout is on, so the layer's `memo` still
                 // holds in normal use — the facts change with the selection.
                 debug={debugFacts}
