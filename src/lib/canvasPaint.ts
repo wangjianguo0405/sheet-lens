@@ -188,11 +188,16 @@ export interface GridView {
   dataBars: Map<number, DataBarCell>;
   /** Conditional icon marks by cell. Sparse. */
   icons: Map<number, IconCell>;
+  /** Cells carrying a note, keyed the same way. Sparse. */
+  notes: Set<number>;
   theme: CanvasTheme;
 }
 
 /** The room a filter header reserves for its button, so the text keeps clear. */
 const FILTER_HEADER_PAD_RIGHT = 18;
+
+/** Excel's note mark: a 6×6 pure-red triangle in the cell's top-right corner. */
+const NOTE_MARK = "#ff0000";
 
 const GUTTER_FONT_PX = 11;
 
@@ -602,6 +607,25 @@ function paintDiagonal(
     if (up) segment(x1, y2, x2, y1, off);
   }
   ctx.restore();
+}
+
+/**
+ * Excel's note mark: a 6×6 pure-red triangle whose right angle sits in the
+ * cell's top-right corner, one pixel down from its top. Measured off a 1:1
+ * `CopyPicture` — the mark is part of what Excel copies, and it scales with the
+ * zoom like the cell it belongs to.
+ */
+function paintNoteMark(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+): void {
+  // One run per row rather than a path: the 45° hypotenuse then lands on whole
+  // pixels, as Excel's does, instead of being spread over an antialiased edge.
+  for (let row = 0; row < 6; row += 1) {
+    fill(ctx, x + w - 6 + row, y + 1 + row, 6 - row, 1, NOTE_MARK);
+  }
 }
 
 /**
@@ -1770,6 +1794,11 @@ function paintCellSurface(
     h,
     view.theme.border,
   );
+
+  // A note's mark goes over the fill and the borders, in the corner Excel puts
+  // it in. A merged region's covered cells are not painted, so a note on one
+  // of them — Excel does not show a mark there either — draws nothing.
+  if (key !== null && view.notes.has(key)) paintNoteMark(ctx, x, y, w);
 }
 
 function paintCellText(
