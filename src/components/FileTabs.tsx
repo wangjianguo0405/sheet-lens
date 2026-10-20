@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Plus, RotateCw, X } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, Plus, RotateCw, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { copyText } from "@/lib/clipboard";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { cn } from "@/lib/utils";
 
 /** How far a press has to travel before it is a drag rather than a click. */
@@ -277,6 +278,17 @@ export function FileTabs({
                   {t("tabs.reload")}
                 </ContextMenuItem>
                 <ContextMenuSeparator />
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<FolderOpen />}
+                  onSelect={() => {
+                    // The harness has no file manager behind it; a view must not
+                    // fail because of where it was opened.
+                    void revealItemInDir(tab.path).catch(() => {});
+                  }}
+                >
+                  {t("tabs.reveal")}
+                </ContextMenuItem>
                 <ContextMenuItem
                   className="text-xs"
                   onSelect={() => void copyText(tab.fileName)}

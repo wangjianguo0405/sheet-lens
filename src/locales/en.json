@@ -68,6 +68,7 @@
     "openAnother": "Open another workbook",
     "copyName": "Copy file name",
     "copyPath": "Copy file path",
+    "reveal": "Open file location",
     "list": "Open files",
     "reload": "Reload"
   },
