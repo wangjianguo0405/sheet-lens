@@ -12,6 +12,20 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.2] - 2026-10-20
+
+### Added
+
+- Diagonal borders, drawn corner to corner — across the whole region when the cell is merged
+- Superscript and subscript text at Excel's own size and offset: two thirds of the font size, raised half an em or lowered a fifth
+- A column the file itself closes with a filter such as "greater than 20" shows Excel's funnel and blue row numbers
+- A file tab's right-click menu groups the copies under one submenu, opens the workbook with whichever app the system uses for it, and ends with the file's location
+- Copying, or failing to open a file or its folder, now says so in a notice at the corner of the window
+
+### Fixed
+
+- A row's stored style now applies only when the file marks the row custom, as Excel does
+
 ## [1.0.1] - 2026-10-20
 
 ### Added
