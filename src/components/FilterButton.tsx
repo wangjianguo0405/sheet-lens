@@ -21,6 +21,11 @@ interface FilterButtonProps {
   firstRow: number;
   lastRow: number;
   selected: string[];
+  /**
+   * The file filters this column with a condition ("&gt; 20"), which the value
+   * list cannot show — the funnel is the only sign Excel gives it.
+   */
+  filtered?: boolean;
   onApply: (values: string[] | null) => void;
   /** The grid's own zoom, so the button scales with the cells it sits in. */
   zoom: number;
@@ -33,6 +38,7 @@ export function FilterButton({
   firstRow,
   lastRow,
   selected,
+  filtered,
   onApply,
   zoom,
 }: FilterButtonProps) {
@@ -85,7 +91,7 @@ export function FilterButton({
       return next;
     });
 
-  const isFiltered = selected.length > 0;
+  const isFiltered = selected.length > 0 || filtered === true;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

@@ -308,6 +308,68 @@ function strokeEdge(
 }
 
 /**
+ * A cell's diagonal rule, corner to corner inside the cell. Excel keeps one
+ * style for the pair and two flags for the direction, so both set means two
+ * crossing lines. Off `CopyPicture` of a merged region: the line spans the
+ * whole region, which is why the caller passes the region's rectangle rather
+ * than one cell's.
+ */
+function paintDiagonal(
+  ctx: CanvasRenderingContext2D,
+  edge: BorderEdge | null | undefined,
+  up: boolean,
+  down: boolean,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fallback: string,
+): void {
+  if (!edge || (!up && !down) || w <= 0 || h <= 0) return;
+  const color = edge.color ?? fallback;
+  const width = Math.max(1, edge.width);
+  // The cell's own pixels: a line drawn on x+w would land on the neighbour's
+  // edge, where Excel's diagonal never reaches.
+  const x1 = x;
+  const y1 = y;
+  const x2 = x + w - 1;
+  const y2 = y + h - 1;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.strokeStyle = color;
+  // A double diagonal has no CSS twin; two thin strokes to either side of the
+  // line is the same construction `strokeEdge` uses.
+  const double = edge.line === "double";
+  ctx.lineWidth = double ? Math.max(1, width / 3) : width;
+  ctx.lineCap = "butt";
+  ctx.setLineDash(
+    edge.line === "dotted"
+      ? [width, width]
+      : edge.line === "dashed"
+        ? [3 * width, 2 * width]
+        : [],
+  );
+  const offsets = double ? [-width / 3, width / 3] : [0];
+  const segment = (ax: number, ay: number, bx: number, by: number, off: number) => {
+    const length = Math.hypot(bx - ax, by - ay) || 1;
+    const nx = (-(by - ay) / length) * off;
+    const ny = ((bx - ax) / length) * off;
+    ctx.beginPath();
+    ctx.moveTo(ax + nx, ay + ny);
+    ctx.lineTo(bx + nx, by + ny);
+    ctx.stroke();
+  };
+  for (const off of offsets) {
+    if (down) segment(x1, y1, x2, y2, off);
+    if (up) segment(x1, y2, x2, y1, off);
+  }
+  ctx.restore();
+}
+
+/**
  * A cell's four sides. Each is drawn on its boundary and extends away from the
  * cell, so the neighbour sharing it lands on the same pixels and the two agree
  * whichever of them paints second.
@@ -693,7 +755,33 @@ function paintText(
    * rest shrinks would overflow by exactly the difference.
    */
   let scale = 1;
-  const piecePx = (span: RunSpan | null): number => (span?.font?.sizePx ?? cellPx) * scale;
+  /**
+   * The size a run is laid out at. Excel stores the base size for a
+   * super/subscript run and scales it when drawing, so line heights stay the
+   * base font's — this is what wrapping and alignment measure with.
+   */
+  const layoutPx = (span: RunSpan | null): number => (span?.font?.sizePx ?? cellPx) * scale;
+  /**
+   * Superscript and subscript draw at two thirds of the size they are laid out
+   * at. Measured off `CopyPicture` at 11pt and 20pt: the digit's cap height is
+   * 7px where the base is 11px, and 13px where it is 20px.
+   */
+  const vertOf = (span: RunSpan | null): "superscript" | "subscript" | null =>
+    span?.font ? (span.font.vertAlign ?? null) : (style?.vertAlign ?? null);
+  const drawPx = (span: RunSpan | null): number =>
+    vertOf(span) ? (layoutPx(span) * 2) / 3 : layoutPx(span);
+  /**
+   * So far the baseline moves for such a run. Same measurement: a superscript's
+   * foot sits 7px above the base line at 11pt and 13px at 20 — half the size;
+   * a subscript's sits a fifth below.
+   */
+  const riseOf = (span: RunSpan | null): number => {
+    const vert = vertOf(span);
+    if (vert === "superscript") return -0.5 * layoutPx(span);
+    if (vert === "subscript") return 0.2 * layoutPx(span);
+    return 0;
+  };
+  const piecePx = (span: RunSpan | null): number => drawPx(span);
   /**
    * The font one run draws in: what its `<rPr>` states, and the cell's font for
    * everything it leaves out — including the run that has no `<rPr>` at all, and
@@ -744,9 +832,11 @@ function paintText(
       scale *= available / width;
     }
   }
-  const sizePx = piecePx(null);
+  const sizePx = layoutPx(null);
   const font = pieceFont(null);
-  const metrics = lineMetrics(font, sizePx);
+  // The line is the base font's even when the whole cell is superscript: the
+  // stored size is the layout size, and the two-thirds scale is a drawing rule.
+  const metrics = lineMetrics(fontString(cellStack, sizePx, cellBold, cellItalic), sizePx);
   const blockHeight = lines.length * metrics.lineHeight;
 
   const vertical = style?.vertical ?? "bottom";
@@ -829,9 +919,19 @@ function paintText(
     const left = align === "right" ? x - width : align === "center" ? x - width / 2 : x;
 
     if (!spans) {
+      const drawBaseline = baseline + riseOf(null);
       ctx.fillStyle = base;
-      ctx.fillText(source, x, baseline);
-      paintDecoration(ctx, cellDecoration, left, width, baseline, sizePx, base, style);
+      ctx.fillText(source, x, drawBaseline);
+      paintDecoration(
+        ctx,
+        cellDecoration,
+        left,
+        width,
+        drawBaseline,
+        piecePx(null),
+        base,
+        style,
+      );
       continue;
     }
 
@@ -850,15 +950,16 @@ function paintText(
       const piece = content.slice(from, to);
       const runFont = pieceFont(span);
       const pieceWidth = textWidth(runFont, piece);
+      const runBaseline = baseline + riseOf(span);
       ctx.font = runFont;
       ctx.fillStyle = span.color ?? base;
-      ctx.fillText(piece, at, baseline);
+      ctx.fillText(piece, at, runBaseline);
       paintDecoration(
         ctx,
         decorationFor(span.font?.family ?? style?.family ?? null),
         at,
         pieceWidth,
-        baseline,
+        runBaseline,
         piecePx(span),
         span.color ?? base,
         span.font ? span.font : style,
@@ -1262,6 +1363,22 @@ function paintSpanSurface(
       );
     }
   }
+
+  // Excel draws the diagonal across the whole region, not just the anchor
+  // cell — `misc-diag.xlsx`'s merged A3:C5 is one line corner to corner.
+  if (span.kind === "merge") {
+    paintDiagonal(
+      ctx,
+      style?.border?.diagonal ?? null,
+      style?.border?.diagonalUp === true,
+      style?.border?.diagonalDown === true,
+      x,
+      y,
+      w,
+      h,
+      view.theme.border,
+    );
+  }
 }
 
 function paintSpanText(
@@ -1387,6 +1504,18 @@ function paintCellSurface(
     y,
     w,
     h,
+  );
+
+  paintDiagonal(
+    ctx,
+    style?.border?.diagonal ?? null,
+    style?.border?.diagonalUp === true,
+    style?.border?.diagonalDown === true,
+    x,
+    y,
+    w,
+    h,
+    view.theme.border,
   );
 }
 

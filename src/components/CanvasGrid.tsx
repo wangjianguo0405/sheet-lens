@@ -761,6 +761,15 @@ export function CanvasGrid({
 
   const autoFilter = layout?.autoFilter ?? null;
   /**
+   * Columns the file filters with a condition rather than a value list. Their
+   * hidden rows are already the file's own, so only the button's funnel and the
+   * blue row numbers depend on this.
+   */
+  const customFilterCols = useMemo(
+    () => new Set(autoFilter?.custom ?? []),
+    [autoFilter],
+  );
+  /**
    * The page the shading and the box are drawn around — and nothing at all in
    * the ordinary view, which is the whole of the difference between Excel's two
    * views here. `outsidePrint` below already answers "no" whenever this is null,
@@ -2180,7 +2189,8 @@ export function CanvasGrid({
       mergeView: { shown: shownMerges, covered: coveredMerges, at: mergeIndex },
       centerRuns: { shown: shownRuns, covered: coveredRuns, at: runIndex },
       autoFilter,
-      filtering: visibleRows !== null && filters.size > 0,
+      filtering:
+        (visibleRows !== null && filters.size > 0) || customFilterCols.size > 0,
       printArea,
       outsidePrint,
       cellRich: richIndex,
@@ -2215,6 +2225,7 @@ export function CanvasGrid({
     autoFilter,
     visibleRows,
     filters,
+    customFilterCols,
     printArea,
     outsidePrint,
   ]);
@@ -3802,6 +3813,7 @@ export function CanvasGrid({
                   firstRow={autoFilter.row + 1}
                   lastRow={autoFilter.row + autoFilter.rows - 1}
                   selected={filters.get(col) ?? []}
+                  filtered={customFilterCols.has(col)}
                   zoom={zoom / 100}
                   onApply={(values) => {
                     const next = new Map(filters);
