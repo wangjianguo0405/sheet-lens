@@ -62,12 +62,20 @@
   "dialog": {
     "close": "閉じる"
   },
+  "toast": {
+    "copied": "コピーしました",
+    "copyFailed": "コピーできませんでした",
+    "openFailed": "開けませんでした"
+  },
   "tabs": {
     "close": "{{name}} を閉じる",
     "new": "新しいタブ",
     "openAnother": "別のブックを開く",
-    "copyName": "ファイル名をコピー",
-    "copyPath": "ファイルパスをコピー",
+    "copy": "コピー",
+    "copyName": "ファイル名",
+    "copyPath": "絶対パス",
+    "openWith": "次で開く",
+    "openDefault": "既定のアプリ",
     "reveal": "ファイルの場所を開く",
     "list": "開いているファイル",
     "reload": "再読み込み"

@@ -13,6 +13,7 @@ import { SheetList } from "@/components/SheetList";
 import { SheetScrollBar } from "@/components/SheetScrollBar";
 import { SheetTabs } from "@/components/SheetTabs";
 import { StatusBar } from "@/components/StatusBar";
+import { Toaster } from "@/components/ui/sonner";
 import { Toolbar } from "@/components/Toolbar";
 import { UpdateDialog } from "@/components/UpdateDialog";
 import { UnhideDialog, type UnhideAnchor } from "@/components/UnhideDialog";
@@ -1289,6 +1290,8 @@ export default function App() {
           status={update}
           onAvailableChange={setUpdateAvailable}
         />
+
+        <Toaster />
       </div>
     </TooltipProvider>
   );

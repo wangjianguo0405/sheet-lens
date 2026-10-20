@@ -62,12 +62,20 @@
   "dialog": {
     "close": "Close"
   },
+  "toast": {
+    "copied": "Copied",
+    "copyFailed": "Couldn't copy",
+    "openFailed": "Couldn't open"
+  },
   "tabs": {
     "close": "Close {{name}}",
     "new": "New tab",
     "openAnother": "Open another workbook",
-    "copyName": "Copy file name",
-    "copyPath": "Copy file path",
+    "copy": "Copy",
+    "copyName": "File name",
+    "copyPath": "Absolute path",
+    "openWith": "Open with",
+    "openDefault": "Default app",
     "reveal": "Open file location",
     "list": "Open files",
     "reload": "Reload"
