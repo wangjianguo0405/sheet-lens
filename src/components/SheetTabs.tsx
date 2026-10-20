@@ -19,6 +19,7 @@ import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Acce
 import { ColorPalette } from "@/components/ColorPalette";
 import { type UnhideAnchor } from "@/components/UnhideDialog";
 import { copyText } from "@/lib/clipboard";
+import { toast } from "sonner";
 import type { SheetInfo } from "@/lib/excel";
 import { cn } from "@/lib/utils";
 
@@ -803,7 +804,10 @@ export function SheetTabs({
             data-accelerator={acceleratorOf(t("sheets.copyName"))}
             icon={<Copy />}
             onSelect={() => {
-              if (menu !== null) void copyText(menu.sheet);
+              if (menu === null) return;
+              void copyText(menu.sheet).then((ok) =>
+                ok ? toast.success(t("toast.copied")) : toast.error(t("toast.copyFailed")),
+              );
             }}
             className="text-xs"
           >

@@ -1,4 +1,4 @@
-import { Check, ChevronDown, FolderOpen, Plus, RotateCw, X } from "lucide-react";
+import { AppWindow, Check, ChevronDown, Copy, FolderOpen, Plus, RotateCw, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -7,6 +7,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -17,7 +20,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { copyText } from "@/lib/clipboard";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { cn } from "@/lib/utils";
 
 /** How far a press has to travel before it is a drag rather than a click. */
@@ -268,7 +272,9 @@ export function FileTabs({
                   at otherwise, since the tab shows only the name and truncates
                   even that. Above them sits the one thing a tab can *do*: read its
                   file again, for the workbook that changed underneath us — which
-                  Excel being open on it is the usual cause of. */}
+                  Excel being open on it is the usual cause of. Below, the file
+                  handed to whatever the system opens it with, and where it sits
+                  on disk. */}
               <ContextMenuContent className="min-w-44">
                 <ContextMenuItem
                   className="text-xs"
@@ -278,28 +284,61 @@ export function FileTabs({
                   {t("tabs.reload")}
                 </ContextMenuItem>
                 <ContextMenuSeparator />
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger className="text-xs" icon={<Copy />}>
+                    {t("tabs.copy")}
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent>
+                    <ContextMenuItem
+                      className="text-xs"
+                      onSelect={() => {
+                        void copyText(tab.fileName).then((ok) =>
+                          ok ? toast.success(t("toast.copied")) : toast.error(t("toast.copyFailed")),
+                        );
+                      }}
+                    >
+                      {t("tabs.copyName")}
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      className="text-xs"
+                      onSelect={() => {
+                        void copyText(tab.path).then((ok) =>
+                          ok ? toast.success(t("toast.copied")) : toast.error(t("toast.copyFailed")),
+                        );
+                      }}
+                    >
+                      {t("tabs.copyPath")}
+                    </ContextMenuItem>
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+                <ContextMenuSeparator />
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger className="text-xs" icon={<AppWindow />}>
+                    {t("tabs.openWith")}
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent>
+                    <ContextMenuItem
+                      className="text-xs"
+                      onSelect={() => {
+                        // The harness has no desktop behind it; a view must not
+                        // fail because of where it was opened.
+                        void openPath(tab.path).catch(() => toast.error(t("toast.openFailed")));
+                      }}
+                    >
+                      {t("tabs.openDefault")}
+                    </ContextMenuItem>
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
                 <ContextMenuItem
                   className="text-xs"
                   icon={<FolderOpen />}
                   onSelect={() => {
                     // The harness has no file manager behind it; a view must not
                     // fail because of where it was opened.
-                    void revealItemInDir(tab.path).catch(() => {});
+                    void revealItemInDir(tab.path).catch(() => toast.error(t("toast.openFailed")));
                   }}
                 >
                   {t("tabs.reveal")}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  className="text-xs"
-                  onSelect={() => void copyText(tab.fileName)}
-                >
-                  {t("tabs.copyName")}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  className="text-xs"
-                  onSelect={() => void copyText(tab.path)}
-                >
-                  {t("tabs.copyPath")}
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>

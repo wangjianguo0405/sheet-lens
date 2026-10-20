@@ -62,12 +62,20 @@
   "dialog": {
     "close": "关闭"
   },
+  "toast": {
+    "copied": "已复制",
+    "copyFailed": "复制失败",
+    "openFailed": "无法打开"
+  },
   "tabs": {
     "close": "关闭 {{name}}",
     "new": "新标签页",
     "openAnother": "打开其他工作簿",
-    "copyName": "复制文件名",
-    "copyPath": "复制文件路径",
+    "copy": "复制",
+    "copyName": "文件名",
+    "copyPath": "绝对路径",
+    "openWith": "打开方式",
+    "openDefault": "默认应用",
     "reveal": "打开文件位置",
     "list": "已打开的文件",
     "reload": "重新加载"
