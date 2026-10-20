@@ -110,18 +110,19 @@ export function FilterButton({
           className="pointer-events-auto absolute flex items-center justify-center border border-[#a6acb3] bg-linear-to-b from-[#feffff] to-[#eff2f7] text-[#656769] hover:brightness-[0.97]"
         >
           <svg
-            width={9 * zoom}
-            height={9 * zoom}
-            viewBox="0 0 9 9"
+            width={15 * zoom}
+            height={15 * zoom}
+            viewBox="0 0 15 15"
             aria-hidden="true"
             fill="currentColor"
           >
             {isFiltered ? (
-              // Excel's applied-filter mark: a funnel with a small caret under it.
-              <path d="M0 0h9L5.7 4.2v2.1H3.3V4.2z M2.7 7.4h3.6L4.5 9z" />
+              // Measured off Excel's own button: a 9-px funnel that tapers to a
+              // 3-px stem high on the right, and a small caret under its left.
+              <path d="M4.5 3H15L11 6V11H8V6Z M1.5 9H7.5L4.5 12Z" />
             ) : (
-              // The plain caret, 7 x 4 and centred.
-              <path d="M1 2.5h7L4.5 6.5z" />
+              // The plain caret: 7 x 4, centred.
+              <path d="M4 6h7l-3.5 3.5z" />
             )}
           </svg>
         </button>
