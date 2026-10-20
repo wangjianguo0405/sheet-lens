@@ -12,6 +12,20 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.3] - 2026-10-20
+
+### Added
+
+- Pattern fills — Excel's hatches — on cells and on shapes: a cell's pattern is pinned to the sheet and scales with the zoom, a shape's to its own corner and at a fixed size
+- Radial gradient fills, drawn along the gradient's own path: through the corners of a circle, the edges of a rectangle, or an ellipse for any other shape
+- Notes: the red corner mark on a cell that has one, the note's text and Excel's leader on hover, and a Comments list in the sidebar that shows an entry's note in the sheet
+- A shape can be dragged aside to see the cells it covers; the move lasts until the file is closed and is never written back
+- A sheet opens at the view the file was left at — its zoom and its first visible cell, frozen panes included
+
+### Fixed
+
+- Zooming out paints the whole window: the right and bottom of the sheet no longer keep the previous zoom's scale, and the row and column labels and the cells behind them follow the zoom across the full view
+
 ## [1.0.2] - 2026-10-20
 
 ### Added
