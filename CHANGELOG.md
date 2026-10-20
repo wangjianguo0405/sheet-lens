@@ -12,6 +12,17 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.1] - 2026-10-20
+
+### Added
+
+- A sheet tab's right-click menu copies the sheet's name, ready for a message or a bug report
+- A file tab's right-click menu opens the workbook's folder with the file selected — the item Excel's own workbook tab carries
+
+### Fixed
+
+- A filtered column's button draws Excel's own mark again: the funnel high on the right with a small caret under its left, instead of a centred funnel with the caret directly beneath it
+
 ## [1.0.0] - 2026-10-19
 
 SheetLens opens a workbook and draws what Excel draws — the grid, the text in
