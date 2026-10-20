@@ -506,6 +506,8 @@ export interface SheetLayout {
   dataBars: DataBarCell[];
   /** Cells an icon-set rule marks, with the level each takes. */
   icons: IconCell[];
+  /** Cells carrying a note; Excel marks each with a red corner triangle. */
+  notes?: { row: number; col: number }[];
 }
 
 export interface ValueCount {

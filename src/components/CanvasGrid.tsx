@@ -2155,6 +2155,12 @@ export function CanvasGrid({
       iconIndex.set(cellKey(sheetCols, icon.row, icon.col), icon);
     }
 
+    /** Cells carrying a note, which Excel marks with a red corner triangle. */
+    const noteIndex = new Set<number>();
+    for (const note of layout.notes ?? []) {
+      noteIndex.add(cellKey(sheetCols, note.row, note.col));
+    }
+
     return {
       cols,
       rows,
@@ -2196,6 +2202,7 @@ export function CanvasGrid({
       cellRich: richIndex,
       dataBars: barIndex,
       icons: iconIndex,
+      notes: noteIndex,
       theme: canvasTheme(),
     };
   }, [

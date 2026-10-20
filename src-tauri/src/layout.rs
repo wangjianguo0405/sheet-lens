@@ -582,6 +582,14 @@ pub struct SheetLayout {
     /// used to read it in. Not part of what the grid sees.
     #[serde(skip)]
     pub drawing_rel: Option<String>,
+    /// The `r:id` of the sheet's legacy VML part, the same way — its notes are
+    /// folded into `notes` before this is cleared.
+    #[serde(skip)]
+    pub legacy_rel: Option<String>,
+    /// Cells carrying a note. Excel marks each with a small red triangle in the
+    /// cell's top-right corner, which is all a note draws until it is hovered.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<NoteCell>,
     /// Cells whose text is written as several runs, each with its own colour or
     /// font. Per cell, not per string: a file may spell the same text twice with
     /// different formatting — a breadcrumb whose current page is red — and the
@@ -592,6 +600,17 @@ pub struct SheetLayout {
     pub data_bars: Vec<DataBarCell>,
     /// Cells an icon-set rule marks, with the family and the level drawn.
     pub icons: Vec<IconCell>,
+}
+
+/// One cell's note: where Excel puts its red corner mark.
+///
+/// The note's wording is not here: an xlsx keeps it in a separate
+/// `comments1.xml`, and the mark is all the sheet draws until the note is
+/// opened.
+#[derive(Serialize, Clone)]
+pub struct NoteCell {
+    pub row: u32,
+    pub col: u32,
 }
 
 /// One cell's icon: the family's name and which of its marks the value takes.
@@ -729,6 +748,8 @@ impl SheetLayout {
             col_styles: Vec::new(),
             drawings: Vec::new(),
             drawing_rel: None,
+            legacy_rel: None,
+            notes: Vec::new(),
             rich_cells: Vec::new(),
             data_bars: Vec::new(),
             icons: Vec::new(),
@@ -966,9 +987,91 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     // past its last cell.
     layout.print_area = print_area(&workbook, sheet).or_else(|| layout.print_region());
     read_drawings(&mut zip, cache, &part, &mut layout);
+    read_notes(&mut zip, &part, &mut layout);
     // Last, so that the extent a rule is clamped to is the finished one.
     crate::cond::apply(&sheet_xml, cache, &mut layout);
     Ok(layout)
+}
+
+/// Reads the sheet's legacy VML part: the notes on it, and the cells Excel
+/// marks for them.
+///
+/// Notes are the only VML these documents use — the shape types a legacy form
+/// control writes are not read. A note draws nothing much: a small red
+/// triangle in its cell's top-right corner, which is also all that goes into
+/// Excel's own picture of the range.
+fn read_notes<R: Read + Seek>(zip: &mut ZipArchive<R>, part: &str, layout: &mut SheetLayout) {
+    let Some(rel) = layout.legacy_rel.take() else {
+        return;
+    };
+    let Some(vml_part) = part_rels(zip, part).remove(&rel) else {
+        return;
+    };
+    let Ok(xml) = read_entry(zip, &vml_part) else {
+        return;
+    };
+    layout.notes = parse_notes(&xml);
+}
+
+/// Walks a VML drawing for its `<x:ClientData ObjectType="Note">` shapes. The
+/// row and column are 0-based.
+fn parse_notes(xml: &str) -> Vec<NoteCell> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut notes = Vec::new();
+    let mut in_shape = false;
+    let mut is_note = false;
+    let mut row: Option<u32> = None;
+    let mut col: Option<u32> = None;
+    let mut number_slot: Option<bool> = None;
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) => match element.local_name().as_ref() {
+                b"shape" => {
+                    in_shape = true;
+                    is_note = false;
+                    row = None;
+                    col = None;
+                }
+                b"ClientData" if in_shape => {
+                    is_note = attr(&element, b"ObjectType").as_deref() == Some("Note");
+                }
+                b"Row" if in_shape => number_slot = Some(true),
+                b"Column" if in_shape => number_slot = Some(false),
+                _ => {}
+            },
+            Ok(Event::End(element)) => match element.local_name().as_ref() {
+                b"Row" | b"Column" => number_slot = None,
+                b"shape" => {
+                    if is_note {
+                        if let (Some(row), Some(col)) = (row, col) {
+                            notes.push(NoteCell { row, col });
+                        }
+                    }
+                    in_shape = false;
+                }
+                _ => {}
+            },
+            Ok(Event::Text(content)) => {
+                if let Some(is_row) = number_slot {
+                    if let Ok(value) = content.xml_content(XmlVersion::default()) {
+                        let parsed = value.trim().parse::<u32>().ok();
+                        if is_row {
+                            row = parsed;
+                        } else {
+                            col = parsed;
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    notes
 }
 
 /// Reads the sheet's drawing part, if it has one, and hangs its shapes on the
@@ -2466,6 +2569,8 @@ fn parse_sheet<R: BufRead>(
                     // The sheet only points at its shapes; the part itself is read
                     // once the sheet's own extent is known.
                     b"drawing" => layout.drawing_rel = attr(&element, b"id"),
+                    // Notes live in a legacy VML part, not in the drawing.
+                    b"legacyDrawing" => layout.legacy_rel = attr(&element, b"id"),
                     b"filterColumn" => {
                         filter_col = attr(&element, b"colId").and_then(|v| v.parse::<u32>().ok());
                     }
@@ -2950,6 +3055,20 @@ mod tests {
         let Some(layout) = sample("Summary") else { return };
         // Six rows are written out, and the A1:B1 merge names two columns.
         assert_eq!((layout.rows, layout.cols), (6, 2));
+    }
+
+    #[test]
+    fn reads_a_note_and_where_it_sits() {
+        let xml = r#"<xml xmlns:v="v" xmlns:x="x">
+            <v:shape id="_x0000_s1025"><v:textbox><div>hello</div></v:textbox>
+              <x:ClientData ObjectType="Note"><x:Anchor>1, 2, 3, 4, 5, 6, 7, 8</x:Anchor>
+                <x:Row>4</x:Row><x:Column>7</x:Column></x:ClientData></v:shape>
+            <v:shape id="_x0000_s1026"><x:ClientData ObjectType="Button">
+                <x:Row>1</x:Row><x:Column>1</x:Column></x:ClientData></v:shape>
+        </xml>"#;
+        let notes = parse_notes(xml);
+        assert_eq!(notes.len(), 1, "a form control is not a note");
+        assert_eq!((notes[0].row, notes[0].col), (4, 7));
     }
 
     #[test]
