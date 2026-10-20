@@ -1652,6 +1652,11 @@ function paintSpanSurface(
       h,
       view.theme.border,
     );
+    // The region is one cell, so a note on its anchor carries its mark in the
+    // region's top-right corner — not the anchor cell's, which would sit in
+    // the middle of the merged label.
+    const key = keyInSheet(view, rect.row, rect.col);
+    if (key !== null && view.notes.has(key)) paintNoteMark(ctx, x, y, w);
   }
 }
 
@@ -1797,7 +1802,8 @@ function paintCellSurface(
 
   // A note's mark goes over the fill and the borders, in the corner Excel puts
   // it in. A merged region's covered cells are not painted, so a note on one
-  // of them — Excel does not show a mark there either — draws nothing.
+  // of them — Excel does not show a mark there either — draws nothing; a note
+  // on the region's anchor is marked by `paintSpanSurface`, across the region.
   if (key !== null && view.notes.has(key)) paintNoteMark(ctx, x, y, w);
 }
 
