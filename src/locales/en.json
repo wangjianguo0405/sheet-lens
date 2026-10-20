@@ -94,6 +94,7 @@
     "moreRight": "Show the hidden sheet tabs to the right",
     "hide": "Hide (&H)",
     "unhide": "Unhide (&U)",
+    "copyName": "Copy sheet name (&C)",
     "unhideTitle": "Unhide sheet",
     "unhideGo": "Unhide",
     "hidden": "Hidden"
