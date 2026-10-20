@@ -3940,6 +3940,7 @@ export function CanvasGrid({
                 path={path}
                 frozenRows={layout.frozenRows ?? 0}
                 frozenCols={layout.frozenCols ?? 0}
+                zoom={zoom / 100}
                 // Null unless the readout is on, so the layer's `memo` still
                 // holds in normal use — the facts change with the selection.
                 debug={debugFacts}

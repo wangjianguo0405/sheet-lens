@@ -260,6 +260,18 @@ export interface ShapeFill {
   stops: ShapeStop[];
   /** A linear gradient's direction in degrees, clockwise from pointing right. */
   angle: number;
+  /** A hatch pattern (`<a:pattFill>`), when that is what filled the shape. */
+  pattern?: ShapePattern | null;
+}
+
+/** One of DrawingML's 54 preset patterns; the 8×8 masks live in the renderer. */
+export interface ShapePattern {
+  /** The `prst` value, e.g. `ltUpDiag`. */
+  kind: string;
+  /** The hatch colour, or null for Excel's automatic black. */
+  fg?: string | null;
+  /** The ground under it, or null for Excel's automatic white. */
+  bg?: string | null;
 }
 
 /** An arrowhead at one end of a line. */
