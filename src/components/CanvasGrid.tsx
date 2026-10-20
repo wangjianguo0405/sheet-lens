@@ -2311,8 +2311,8 @@ export function CanvasGrid({
       hiddenRows,
       hiddenCols,
       ...range,
-      width: size.width,
-      height: size.height,
+      width,
+      height,
       zoom: z,
       scrollTop: scroll.top,
       scrollLeft: scroll.left,
@@ -2559,8 +2559,10 @@ export function CanvasGrid({
         const gutterY = COL_HEADER_H * view.zoom;
         area.style.left = `${gutterX}px`;
         area.style.top = `${gutterY}px`;
-        area.style.width = `${Math.max(0, view.width - gutterX)}px`;
-        area.style.height = `${Math.max(0, view.height - gutterY)}px`;
+        // The view is measured in sheet pixels; the layer that carries the
+        // buttons is laid out in screen ones.
+        area.style.width = `${Math.max(0, view.width * view.zoom - gutterX)}px`;
+        area.style.height = `${Math.max(0, view.height * view.zoom - gutterY)}px`;
 
         const headerDisplay = view.autoFilter ? view.displayOfRow(view.autoFilter.row) : -1;
         const headerH = headerDisplay >= 0 ? spanAt(view.rows.offsets, headerDisplay) : 0;
@@ -2712,8 +2714,8 @@ export function CanvasGrid({
         const gutterY = COL_HEADER_H * view.zoom;
         page.style.left = `${gutterX}px`;
         page.style.top = `${gutterY}px`;
-        page.style.width = `${Math.max(0, view.width - gutterX)}px`;
-        page.style.height = `${Math.max(0, view.height - gutterY)}px`;
+        page.style.width = `${Math.max(0, view.width * view.zoom - gutterX)}px`;
+        page.style.height = `${Math.max(0, view.height * view.zoom - gutterY)}px`;
 
         const inner = shapesInnerRef.current;
         if (inner) {
