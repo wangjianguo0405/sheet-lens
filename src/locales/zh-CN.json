@@ -68,6 +68,7 @@
     "openAnother": "打开其他工作簿",
     "copyName": "复制文件名",
     "copyPath": "复制文件路径",
+    "reveal": "打开文件位置",
     "list": "已打开的文件",
     "reload": "重新加载"
   },
