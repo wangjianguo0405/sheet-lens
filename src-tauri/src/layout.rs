@@ -534,6 +534,13 @@ pub struct SheetLayout {
     /// Excel's View > Gridlines setting. Most design documents turn it off, and
     /// then only the borders the author drew are visible.
     pub show_grid_lines: bool,
+    /// The zoom the sheet is left at, in percent (`<sheetView zoomScale>`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_scale: Option<u16>,
+    /// The first cell of the scrolling view, as `[row, col]` — Excel opens the
+    /// sheet scrolled here rather than at A1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view_top_left: Option<[u32; 2]>,
     /// How many rows and columns the sheet view freezes at the top and left.
     /// Excel's `state="frozen"` pane; a *split* pane leaves nothing pinned in
     /// this viewer, since it repeats one region rather than holding rows still.
@@ -752,6 +759,8 @@ impl SheetLayout {
             font_family: None,
             font_size_px: points_to_font_px(STOCK_FONT_PT),
             show_grid_lines: true,
+            zoom_scale: None,
+            view_top_left: None,
             frozen_rows: 0,
             frozen_cols: 0,
             col_widths_chars: HashMap::new(),
@@ -2538,6 +2547,18 @@ fn parse_sheet<R: BufRead>(
                         if let Some(value) = attr(&element, b"showGridLines") {
                             layout.show_grid_lines = value != "0" && value != "false";
                         }
+                        // Where the sheet is left: Excel opens it at this zoom
+                        // and scrolled to this cell, not at 100% and A1.
+                        if let Some(value) = attr(&element, b"zoomScale")
+                            .and_then(|v| v.parse::<u16>().ok())
+                        {
+                            layout.zoom_scale = Some(value);
+                        }
+                        if let Some((row, col)) =
+                            attr(&element, b"topLeftCell").and_then(|cell| parse_cell(&cell))
+                        {
+                            layout.view_top_left = Some([row, col]);
+                        }
                     }
                     // A frozen view holds the rows above the split and the
                     // columns to its left still while the rest scrolls. The
@@ -2560,6 +2581,13 @@ fn parse_sheet<R: BufRead>(
                                     layout.frozen_rows = row;
                                     layout.frozen_cols = col;
                                 }
+                            }
+                            // A frozen pane's `topLeftCell` is the scrolling
+                            // region's first cell — where the sheet is left.
+                            if let Some((row, col)) =
+                                attr(&element, b"topLeftCell").and_then(|cell| parse_cell(&cell))
+                            {
+                                layout.view_top_left = Some([row, col]);
                             }
                         }
                     }
