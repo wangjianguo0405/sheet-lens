@@ -173,5 +173,11 @@
     "restarting": "正在重启以完成更新…",
     "install": "更新并重启",
     "checkAgain": "重新检查"
+  },
+  "notes": {
+    "title": "批注",
+    "empty": "此工作表没有批注。",
+    "blank": "（空）",
+    "count_other": "{{count}} 条"
   }
 }
