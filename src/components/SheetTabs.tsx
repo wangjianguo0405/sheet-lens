@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Ellipsis, Eye, EyeOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Ellipsis, Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -18,6 +18,7 @@ import {
 import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Accelerated";
 import { ColorPalette } from "@/components/ColorPalette";
 import { type UnhideAnchor } from "@/components/UnhideDialog";
+import { copyText } from "@/lib/clipboard";
 import type { SheetInfo } from "@/lib/excel";
 import { cn } from "@/lib/utils";
 
@@ -792,6 +793,22 @@ export function SheetTabs({
             <Accelerated label={t("sheets.hide")} />
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          {/*
+            The name belongs to the file and is the one thing on a tab worth
+            having somewhere else — a bug report, a chat message — so it goes
+            to the clipboard as it stands, the right-clicked tab's wherever
+            that tab is in the strip.
+          */}
+          <DropdownMenuItem
+            data-accelerator={acceleratorOf(t("sheets.copyName"))}
+            icon={<Copy />}
+            onSelect={() => {
+              if (menu !== null) void copyText(menu.sheet);
+            }}
+            className="text-xs"
+          >
+            <Accelerated label={t("sheets.copyName")} />
+          </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="text-xs">
               {t("sheets.tabColor")}
