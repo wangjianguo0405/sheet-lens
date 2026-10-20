@@ -357,6 +357,23 @@ interface PaintTimings {
 const PERF_SAMPLES = 60;
 
 /**
+ * Where Excel shows a note's box on hover, in screen pixels at 100%: just
+ * outside the cell's top-right corner, 11.25pt across and 9pt up (read off
+ * COM while the note was displayed). The VML shape supplies the size and, for
+ * other viewers, the stored position; this is where Excel puts it.
+ */
+const NOTE_BOX_GAP_PX = 15;
+const NOTE_BOX_TOP_GAP_PX = 12;
+
+/**
+ * How long the pointer rests on a note's cell before the box opens, and how
+ * long it may leave before the box closes. The same beat either way: short
+ * enough to feel immediate, long enough to move between a cell and its box
+ * without the box blinking shut.
+ */
+const NOTE_HOVER_MS = 300;
+
+/**
  * The copy marquee's crawl: one dash-width every so often, which is about the
  * speed Excel's own ants move at. Slow enough that the overlay pass is not
  * repainted for nothing, quick enough to read as movement rather than a dash.
@@ -659,9 +676,9 @@ export function CanvasGrid({
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const hoverKey = useRef<string | null>(null);
   /**
-   * The note under the pointer, in screen coordinates — Excel shows a note on
-   * hover, at the box its author left it in. `noteTipRef` mirrors it so the
-   * pointer can be tested against the open box without a re-render.
+   * The note under the pointer, in screen coordinates, placed beside its cell
+   * as Excel shows it. `noteTipRef` mirrors it so the pointer can be tested
+   * against the open box without a re-render.
    */
   const [noteTip, setNoteTip] = useState<{
     note: NoteCell;
@@ -672,12 +689,58 @@ export function CanvasGrid({
     /** The leader line: the box's corner it starts at, and the cell's it points to. */
     from: { x: number; y: number };
     to: { x: number; y: number };
+    /**
+     * Where the pointer keeps this note open: the box and the strip between it
+     * and the cell. Without the strip, moving from the cell onto the box
+     * crosses the neighbour's cells — which, if one of them has a note of its
+     * own, would open that one instead.
+     */
+    guard: { x0: number; y0: number; x1: number; y1: number };
   } | null>(null);
   const noteTipRef = useRef<typeof noteTip>(null);
   const showNote = (value: typeof noteTip) => {
     noteTipRef.current = value;
     setNoteTip(value);
   };
+  /**
+   * A note opens after a short beat rather than the instant the pointer
+   * crosses a cell, and closes on the same beat after the pointer leaves —
+   * long enough to move from the cell onto its box, which floats just outside
+   * the cell. Being over the box cancels the close; leaving it starts the
+   * grace again.
+   */
+  const noteShowTimer = useRef(0);
+  const noteHideTimer = useRef(0);
+  const cancelNoteHide = () => {
+    window.clearTimeout(noteHideTimer.current);
+    noteHideTimer.current = 0;
+  };
+  const scheduleNoteShow = (note: NoteCell) => {
+    cancelNoteHide();
+    if (noteTipRef.current?.note === note) return;
+    window.clearTimeout(noteShowTimer.current);
+    noteShowTimer.current = window.setTimeout(() => {
+      noteShowTimer.current = 0;
+      showNoteFor(note);
+    }, NOTE_HOVER_MS);
+  };
+  const scheduleNoteHide = () => {
+    window.clearTimeout(noteShowTimer.current);
+    noteShowTimer.current = 0;
+    if (!noteTipRef.current) return;
+    cancelNoteHide();
+    noteHideTimer.current = window.setTimeout(() => {
+      noteHideTimer.current = 0;
+      showNote(null);
+    }, NOTE_HOVER_MS);
+  };
+  useEffect(
+    () => () => {
+      window.clearTimeout(noteShowTimer.current);
+      window.clearTimeout(noteHideTimer.current);
+    },
+    [],
+  );
   /**
    * What Ctrl+C took, and which sheet it came from.
    *
@@ -3763,27 +3826,37 @@ export function CanvasGrid({
     if (!box || display < 0) return false;
     const rect = el.getBoundingClientRect();
     const z = zoomRef.current;
-    const x = rect.left + (ROW_HEADER_W + box.x - scrollRef.current.left) * z;
-    const y = rect.top + (COL_HEADER_H + box.y - scrollRef.current.top) * z;
     const w = box.w * z;
     const h = box.h * z;
-    // Excel draws a leader from the box's top corner to the cell's — the
-    // top-left one to the top-right, as measured off its own render.
+    // Excel shows a note beside the cell, not at the shape's stored position:
+    // the box sits just outside the merged region's top-right corner — 11.25pt
+    // across and 9pt up, read off COM while the note was displayed. The shape
+    // supplies the size; this supplies the place. With no room on the right it
+    // mirrors to the left.
+    const merge = mergeAt(note.row, note.col);
     const cellLeft =
       rect.left + (ROW_HEADER_W + cols.offsets[note.col] - scrollRef.current.left) * z;
-    const cellRight = cellLeft + spanAt(cols.offsets, note.col) * z;
+    const mergeEnd = merge === null ? undefined : cols.offsets[merge.col + merge.cols];
+    const cellWidth =
+      merge === null || mergeEnd === undefined
+        ? spanAt(cols.offsets, note.col)
+        : mergeEnd - cols.offsets[merge.col];
+    const cellRight = cellLeft + cellWidth * z;
     const cellTop =
       rect.top + (COL_HEADER_H + rows.offsets[display] - scrollRef.current.top) * z;
-    const boxIsRight = x >= cellLeft;
-    showNote({
-      note,
-      x,
-      y,
-      w,
-      h,
-      from: boxIsRight ? { x, y } : { x: x + w, y },
-      to: boxIsRight ? { x: cellRight, y: cellTop } : { x: cellLeft, y: cellTop },
-    });
+    const gapX = NOTE_BOX_GAP_PX * z;
+    const right = cellRight + gapX;
+    const flip = right + w > rect.left + el.clientWidth;
+    const x = flip ? cellLeft - gapX - w : right;
+    const y = cellTop - NOTE_BOX_TOP_GAP_PX * z;
+    // The leader always points at the cell's own mark — its top-right corner —
+    // whichever side the box had to take.
+    const from = { x: flip ? x + w : x, y };
+    const to = { x: cellRight, y: cellTop };
+    const guard = flip
+      ? { x0: x, y0: y, x1: cellLeft, y1: y + h }
+      : { x0: cellRight, y0: y, x1: x + w, y1: y + h };
+    showNote({ note, x, y, w, h, from, to, guard });
     return true;
   };
 
@@ -3809,15 +3882,18 @@ export function CanvasGrid({
   ) => {
     // A note's box is click-through, so a pointer over it is still "over" the
     // cell beneath — which would close the box the moment it was reached. Keep
-    // it while the pointer is inside it.
+    // it while the pointer is inside it, or in the strip between it and its
+    // cell: crossing that strip is how the pointer gets from one to the other,
+    // and the cells it crosses may carry notes of their own.
     const open = noteTipRef.current;
     if (
       open &&
-      clientX >= open.x &&
-      clientX <= open.x + open.w &&
-      clientY >= open.y &&
-      clientY <= open.y + open.h
+      clientX >= open.guard.x0 &&
+      clientX <= open.guard.x1 &&
+      clientY >= open.guard.y0 &&
+      clientY <= open.guard.y1
     ) {
+      cancelNoteHide();
       return;
     }
     const key = hit?.kind === "cell" ? `${hit.row}:${hit.col}` : null;
@@ -3827,17 +3903,27 @@ export function CanvasGrid({
     const el = viewportRef.current;
     if (!el || !hit || hit.kind !== "cell") {
       setTip(null);
-      showNote(null);
+      scheduleNoteHide();
       return;
     }
     // A note comes first: Excel opens it on hover, and the truncated-text
     // readout is this reader's own aid, so it waits.
-    const note = notesByCell.get(cellKey(sheetColsGuess, hit.row, hit.col));
-    if (note && showNoteFor(note)) {
+    // A merged region is one cell to Excel, so hovering any part of it is
+    // hovering the anchor that carries the note.
+    const merge = mergeAt(hit.row, hit.col);
+    const note = notesByCell.get(
+      cellKey(
+        sheetColsGuess,
+        merge ? merge.row : hit.row,
+        merge ? merge.col : hit.col,
+      ),
+    );
+    if (note) {
+      scheduleNoteShow(note);
       setTip(null);
       return;
     }
-    showNote(null);
+    scheduleNoteHide();
     const text = truncatedTextAt(hit.row, hit.col);
     const display = displayOfRow(hit.row);
     if (!text || display < 0) {
@@ -3868,7 +3954,7 @@ export function CanvasGrid({
   const handlePointerLeave = () => {
     hoverKey.current = null;
     setTip(null);
-    showNote(null);
+    scheduleNoteHide();
   };
 
   /** Whether the hidden readout is on; Ctrl+Shift+D flips it. */
@@ -4252,7 +4338,10 @@ export function CanvasGrid({
             );
           })()}
 
-        {/* The note under the pointer, at the box its author left it in. */}
+        {/* The note under the pointer, beside its cell. The box keeps the
+            file's width but grows downward when the text needs more room than
+            the file's box gives it (Excel's own line spacing is 1.25, tighter
+            than a browser's default, and its text runs to the very edge). */}
         {noteTip && (
           <div
             className="pointer-events-none fixed z-40 overflow-hidden border border-black bg-[#ffffe1] text-black"
@@ -4260,7 +4349,8 @@ export function CanvasGrid({
               left: noteTip.x,
               top: noteTip.y,
               width: noteTip.w,
-              height: noteTip.h,
+              minHeight: noteTip.h,
+              lineHeight: 1.25,
               padding: 4 * (zoom / 100),
               fontFamily: noteTip.note.font?.family
                 ? `"${noteTip.note.font.family}", ${CJK_FALLBACK}, system-ui, sans-serif`
