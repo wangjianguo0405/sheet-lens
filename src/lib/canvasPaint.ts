@@ -35,6 +35,7 @@ import type {
   AutoFilter,
   BorderEdge,
   Cell,
+  CellPattern,
   CellStyle,
   DataBarCell,
   DataValidation,
@@ -253,12 +254,246 @@ function line(
 }
 
 /**
+ * Excel's 18 hatch patterns as 8×8 masks, measured off a 1:1 `CopyPicture` of
+ * every pattern in `fills.xlsx`: `#` is the hatch colour, `.` the ground.
+ *
+ * The tile belongs to the sheet's coordinate space, not the cell's: two cells
+ * carrying the same pattern 19 rows apart line up exactly when their distance
+ * is taken modulo 8, so a hatched band runs unbroken across cell edges — as it
+ * does in Excel, whose brush origin is the sheet.
+ */
+const PATTERN_TILES: Record<string, string[]> = {
+  lightGray: [
+    "#...#...",
+    "..#...#.",
+    "#...#...",
+    "..#...#.",
+    "#...#...",
+    "..#...#.",
+    "#...#...",
+    "..#...#.",
+  ],
+  mediumGray: [
+    "#.#.#.#.",
+    ".#.#.#.#",
+    "#.#.#.#.",
+    ".#.#.#.#",
+    "#.#.#.#.",
+    ".#.#.#.#",
+    "#.#.#.#.",
+    ".#.#.#.#",
+  ],
+  darkGray: [
+    "###.###.",
+    "#.###.##",
+    "###.###.",
+    "#.###.##",
+    "###.###.",
+    "#.###.##",
+    "###.###.",
+    "#.###.##",
+  ],
+  gray125: [
+    "#...#...",
+    "........",
+    "..#...#.",
+    "........",
+    "#...#...",
+    "........",
+    "..#...#.",
+    "........",
+  ],
+  gray0625: [
+    "#.......",
+    "........",
+    "....#...",
+    "........",
+    "#.......",
+    "........",
+    "....#...",
+    "........",
+  ],
+  darkHorizontal: [
+    "########",
+    "########",
+    "........",
+    "........",
+    "########",
+    "########",
+    "........",
+    "........",
+  ],
+  darkVertical: [
+    "##..##..",
+    "##..##..",
+    "##..##..",
+    "##..##..",
+    "##..##..",
+    "##..##..",
+    "##..##..",
+    "##..##..",
+  ],
+  darkDown: [
+    "##..##..",
+    ".##..##.",
+    "..##..##",
+    "#..##..#",
+    "##..##..",
+    ".##..##.",
+    "..##..##",
+    "#..##..#",
+  ],
+  darkUp: [
+    "..##..##",
+    ".##..##.",
+    "##..##..",
+    "#..##..#",
+    "..##..##",
+    ".##..##.",
+    "##..##..",
+    "#..##..#",
+  ],
+  lightGrid: [
+    "########",
+    "#...#...",
+    "#...#...",
+    "#...#...",
+    "########",
+    "#...#...",
+    "#...#...",
+    "#...#...",
+  ],
+  lightTrellis: [
+    "#...#...",
+    ".#.#.#.#",
+    "..#...#.",
+    ".#.#.#.#",
+    "#...#...",
+    ".#.#.#.#",
+    "..#...#.",
+    ".#.#.#.#",
+  ],
+  darkTrellis: [
+    "########",
+    ".##..##.",
+    "########",
+    "#..##..#",
+    "########",
+    ".##..##.",
+    "########",
+    "#..##..#",
+  ],
+  darkGrid: [
+    "#..##..#",
+    ".##..##.",
+    ".##..##.",
+    "#..##..#",
+    "#..##..#",
+    ".##..##.",
+    ".##..##.",
+    "#..##..#",
+  ],
+  lightHorizontal: [
+    "########",
+    "........",
+    "........",
+    "........",
+    "########",
+    "........",
+    "........",
+    "........",
+  ],
+  lightVertical: [
+    "#...#...",
+    "#...#...",
+    "#...#...",
+    "#...#...",
+    "#...#...",
+    "#...#...",
+    "#...#...",
+    "#...#...",
+  ],
+  lightDown: [
+    "#...#...",
+    ".#...#..",
+    "..#...#.",
+    "...#...#",
+    "#...#...",
+    ".#...#..",
+    "..#...#.",
+    "...#...#",
+  ],
+  lightUp: [
+    "...#...#",
+    "..#...#.",
+    ".#...#..",
+    "#...#...",
+    "...#...#",
+    "..#...#.",
+    ".#...#..",
+    "#...#...",
+  ],
+};
+
+/** One tile per colour pair; the palette in a workbook is small. */
+const patternTiles = new Map<string, CanvasPattern | null>();
+
+function patternFor(pattern: CellPattern): CanvasPattern | null {
+  const key = `${pattern.kind}|${pattern.fg}|${pattern.bg}`;
+  const known = patternTiles.get(key);
+  if (known !== undefined) return known;
+  const rows = PATTERN_TILES[pattern.kind];
+  if (!rows) return null;
+  const tile = document.createElement("canvas");
+  tile.width = 8;
+  tile.height = 8;
+  const ctx = tile.getContext("2d");
+  if (!ctx) return null;
+  ctx.fillStyle = pattern.bg;
+  ctx.fillRect(0, 0, 8, 8);
+  ctx.fillStyle = pattern.fg;
+  rows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x += 1) {
+      if (row[x] === "#") ctx.fillRect(x, y, 1, 1);
+    }
+  });
+  const made = ctx.createPattern(tile, "repeat");
+  if (patternTiles.size > 64) patternTiles.clear();
+  patternTiles.set(key, made);
+  return made;
+}
+
+/**
+ * A patterned cell's background. The tile is anchored at the sheet's origin, so
+ * the hatch continues across cell edges exactly as Excel's does.
+ */
+function paintPattern(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  pattern: CellPattern,
+): void {
+  const tile = patternFor(pattern);
+  if (!tile || w <= 0 || h <= 0) return;
+  const ox = originX(view);
+  const oy = originY(view);
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.fillStyle = tile;
+  ctx.fillRect(x - ox, y - oy, w, h);
+  ctx.restore();
+  fillRects += 1;
+}
+
+/**
  * A border edge in whatever style the file asked for. Dashes and dots have to
  * be stroked — a dash pattern cannot be faked with rectangles — and `double`,
  * which canvas has no primitive for, is drawn as the two parallel strokes CSS
  * would.
- */
-function strokeEdge(
+ */function strokeEdge(
   ctx: CanvasRenderingContext2D,
   edge: BorderEdge,
   orientation: "h" | "v",
@@ -1049,9 +1284,11 @@ function fillBlock(
   w: number,
   h: number,
   fillColor: string | null,
+  pattern: CellPattern | null,
 ): void {
   if (!page) {
-    if (fillColor) fill(ctx, x, y, w, h, fillColor);
+    if (pattern) paintPattern(ctx, view, x, y, w, h, pattern);
+    else if (fillColor) fill(ctx, x, y, w, h, fillColor);
     return;
   }
   fill(ctx, x, y, w, h, OUTSIDE_PRINT);
@@ -1060,7 +1297,8 @@ function fillBlock(
   const ix1 = Math.min(x + w, page.x1);
   const iy1 = Math.min(y + h, page.y1);
   if (ix1 > ix && iy1 > iy) {
-    fill(ctx, ix, iy, ix1 - ix, iy1 - iy, fillColor ?? view.theme.background);
+    if (pattern) paintPattern(ctx, view, ix, iy, ix1 - ix, iy1 - iy, pattern);
+    else fill(ctx, ix, iy, ix1 - ix, iy1 - iy, fillColor ?? view.theme.background);
   }
 }
 
@@ -1141,7 +1379,8 @@ function hasFill(view: GridView, row: number, col: number): boolean {
   }
   const merge = view.mergeView.at.get(cellKey(view.sheetCols, row, col));
   const at = merge ?? { row, col };
-  return (view.styleAt(at.row, at.col)?.fill ?? null) !== null;
+  const style = view.styleAt(at.row, at.col);
+  return (style?.fill ?? null) !== null || (style?.pattern ?? null) !== null;
 }
 
 /** Whether any cell of a column/row stretch is filled, for a span's own edges. */
@@ -1320,7 +1559,17 @@ function paintSpanSurface(
   // A merged region is one cell to Excel, and a selection always lands on its
   // anchor — so its mark is read from the anchor too.
   const mark = view.markAt(rect.row, rect.col);
-  fillBlock(ctx, view, page, x, y, w, h, mark ?? style?.fill ?? null);
+  fillBlock(
+    ctx,
+    view,
+    page,
+    x,
+    y,
+    w,
+    h,
+    mark ?? style?.fill ?? null,
+    mark ? null : (style?.pattern ?? null),
+  );
 
   const lastRow = rect.row + rect.rows - 1;
   const lastCol = rect.col + rect.cols - 1;
@@ -1328,7 +1577,8 @@ function paintSpanSurface(
   // Gridlines sit under fills: a region carrying one loses its own rules, and
   // so does an edge whose neighbour is filled.
   if (view.showGrid) {
-    const filled = (style?.fill ?? null) !== null;
+    const filled =
+      (style?.fill ?? null) !== null || (style?.pattern ?? null) !== null;
     if (!filled && !columnFilled(view, lastCol + 1, rect.row, lastRow)) {
       line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
     }
@@ -1416,6 +1666,7 @@ function paintCellSurface(
   const w = spanAt(view.cols.offsets, col);
   const style = view.styleAt(sheetRow, col);
   const own = style?.fill ?? null;
+  const pattern = style?.pattern ?? null;
   const mark = view.markAt(sheetRow, col);
   const key = keyInSheet(view, sheetRow, col);
 
@@ -1432,6 +1683,8 @@ function paintCellSurface(
     if (!page) fill(ctx, x, y, w, h, OUTSIDE_PRINT);
   } else if (own) {
     fill(ctx, x, y, w, h, own);
+  } else if (pattern) {
+    paintPattern(ctx, view, x, y, w, h, pattern);
   }
 
   // Excel draws a data bar over the cell's fill and under its gridline, as a
@@ -1476,10 +1729,10 @@ function paintCellSurface(
   // lies under fills as well: an edge with a filled cell on either side is not
   // drawn, which is what turns a filled block into a solid rectangle.
   if (view.showGrid) {
-    if (!own && !hasFill(view, sheetRow, col + 1)) {
+    if (!own && !pattern && !hasFill(view, sheetRow, col + 1)) {
       line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
     }
-    if (!own && !hasFill(view, sheetRow + 1, col)) {
+    if (!own && !pattern && !hasFill(view, sheetRow + 1, col)) {
       line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
     }
   }

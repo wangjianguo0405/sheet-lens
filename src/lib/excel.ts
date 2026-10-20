@@ -101,7 +101,21 @@ export interface CellStyle {
   color: string | null;
   /** The cell's background, from a solid fill. */
   fill: string | null;
+  /** A hatch pattern in place of a flat background; a cell has one or the other. */
+  pattern?: CellPattern | null;
   border: CellBorder | null;
+}
+
+/**
+ * One of Excel's 18 hatch patterns. `kind` is the file's own `patternType`
+ * name; the 8×8 masks live in the renderer.
+ */
+export interface CellPattern {
+  kind: string;
+  /** The hatch colour (`<fgColor>`). */
+  fg: string;
+  /** The ground under it (`<bgColor>`). */
+  bg: string;
 }
 
 export interface MergeRect {
