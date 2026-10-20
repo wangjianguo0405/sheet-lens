@@ -602,15 +602,35 @@ pub struct SheetLayout {
     pub icons: Vec<IconCell>,
 }
 
-/// One cell's note: where Excel puts its red corner mark.
+/// One cell's note: where Excel marks it, and where hovering shows it.
 ///
-/// The note's wording is not here: an xlsx keeps it in a separate
-/// `comments1.xml`, and the mark is all the sheet draws until the note is
-/// opened.
+/// The wording comes from the sheet's `comments1.xml`; the VML only has the
+/// shape. The box is anchored in cells, as `[col, dx, row, dy, col, dx, row, dy]`
+/// — the offsets are pixels, which is what reproduces Excel's own `Left/Top/
+/// Width/Height` from its anchor (15 px in, 96 pt wide for a 14-character
+/// column, and so on).
 #[derive(Serialize, Clone)]
 pub struct NoteCell {
     pub row: u32,
     pub col: u32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    /// The first run's font, which is what the note is written in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<NoteFont>,
+    pub anchor: [f64; 8],
+}
+
+/// A note's font, from the `<rPr>` on the first run of its text.
+#[derive(Serialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteFont {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_px: Option<f64>,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 /// One cell's icon: the family's name and which of its marks the value takes.
@@ -1010,7 +1030,38 @@ fn read_notes<R: Read + Seek>(zip: &mut ZipArchive<R>, part: &str, layout: &mut 
     let Ok(xml) = read_entry(zip, &vml_part) else {
         return;
     };
-    layout.notes = parse_notes(&xml);
+    let mut notes = parse_notes(&xml);
+    // The wording is a part of its own; a note without one still gets its mark.
+    if let Some(comments_part) = part_by_type(zip, part, "/comments") {
+        if let Ok(comments) = read_entry(zip, &comments_part) {
+            let by_cell = parse_comments(&comments);
+            for note in notes.iter_mut() {
+                if let Some((text, font)) = by_cell.get(&(note.row, note.col)) {
+                    note.text = text.clone();
+                    note.font = font.clone();
+                }
+            }
+        }
+    }
+    layout.notes = notes;
+}
+
+/// The part a worksheet relates to by relationship type — its comments, which
+/// no element in the sheet names directly.
+fn part_by_type<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    part: &str,
+    suffix: &str,
+) -> Option<String> {
+    let (dir, base) = part.rsplit_once('/')?;
+    let rels = read_entry(zip, &format!("{dir}/_rels/{base}.rels")).ok()?;
+    scan(&rels, b"Relationship").into_iter().find_map(|element| {
+        let kind = element.get("type")?;
+        if !kind.ends_with(suffix) {
+            return None;
+        }
+        Some(resolve_target(dir, element.get("target")?))
+    })
 }
 
 /// Walks a VML drawing for its `<x:ClientData ObjectType="Note">` shapes. The
@@ -1024,6 +1075,8 @@ fn parse_notes(xml: &str) -> Vec<NoteCell> {
     let mut row: Option<u32> = None;
     let mut col: Option<u32> = None;
     let mut number_slot: Option<bool> = None;
+    let mut in_anchor = false;
+    let mut anchor_text = String::new();
 
     loop {
         buf.clear();
@@ -1040,14 +1093,25 @@ fn parse_notes(xml: &str) -> Vec<NoteCell> {
                 }
                 b"Row" if in_shape => number_slot = Some(true),
                 b"Column" if in_shape => number_slot = Some(false),
+                b"Anchor" if in_shape => {
+                    in_anchor = true;
+                    anchor_text.clear();
+                }
                 _ => {}
             },
             Ok(Event::End(element)) => match element.local_name().as_ref() {
                 b"Row" | b"Column" => number_slot = None,
+                b"Anchor" => in_anchor = false,
                 b"shape" => {
                     if is_note {
                         if let (Some(row), Some(col)) = (row, col) {
-                            notes.push(NoteCell { row, col });
+                            notes.push(NoteCell {
+                                row,
+                                col,
+                                text: String::new(),
+                                font: None,
+                                anchor: parse_anchor(&anchor_text, row, col),
+                            });
                         }
                     }
                     in_shape = false;
@@ -1064,6 +1128,10 @@ fn parse_notes(xml: &str) -> Vec<NoteCell> {
                             col = parsed;
                         }
                     }
+                } else if in_anchor {
+                    if let Ok(value) = content.xml_content(XmlVersion::default()) {
+                        anchor_text.push_str(&value);
+                    }
                 }
             }
             Ok(Event::Eof) => break,
@@ -1072,6 +1140,96 @@ fn parse_notes(xml: &str) -> Vec<NoteCell> {
         }
     }
     notes
+}
+
+/// The eight anchor numbers, or a one-cell box on the note's own cell when the
+/// file has none (or writes something unreadable).
+fn parse_anchor(text: &str, row: u32, col: u32) -> [f64; 8] {
+    let values: Vec<f64> = text
+        .split(',')
+        .filter_map(|value| value.trim().parse::<f64>().ok())
+        .collect();
+    if values.len() == 8 {
+        let mut anchor = [0.0; 8];
+        anchor.copy_from_slice(&values);
+        return anchor;
+    }
+    [col as f64, 0.0, row as f64, 0.0, (col + 1) as f64, 0.0, (row + 1) as f64, 0.0]
+}
+
+/// `comments1.xml`: the wording of each note, by the cell it hangs on, with the
+/// font its first run names.
+fn parse_comments(xml: &str) -> HashMap<(u32, u32), (String, Option<NoteFont>)> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut out = HashMap::new();
+    let mut current: Option<(u32, u32)> = None;
+    let mut in_text = false;
+    let mut text = String::new();
+    let mut font: Option<RichFont> = None;
+    let mut first_font: Option<RichFont> = None;
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) => match element.local_name().as_ref() {
+                b"comment" => {
+                    current = attr(&element, b"ref").and_then(|reference| parse_cell(&reference));
+                    text.clear();
+                    first_font = None;
+                }
+                b"text" if current.is_some() => in_text = true,
+                b"rPr" if in_text => font = Some(RichFont::default()),
+                b"rFont" | b"sz" | b"b" | b"i" | b"u" | b"strike" | b"vertAlign" if in_text => {
+                    read_run_font(&element, font.as_mut());
+                }
+                _ => {}
+            },
+            Ok(Event::Empty(element)) => match element.local_name().as_ref() {
+                b"rFont" | b"sz" | b"b" | b"i" | b"u" | b"strike" | b"vertAlign" if in_text => {
+                    read_run_font(&element, font.as_mut());
+                }
+                _ => {}
+            },
+            Ok(Event::End(element)) => match element.local_name().as_ref() {
+                b"rPr" => {
+                    if first_font.is_none() {
+                        first_font = font.take();
+                    } else {
+                        font = None;
+                    }
+                }
+                b"text" => in_text = false,
+                b"comment" => {
+                    if let Some(cell) = current.take() {
+                        out.insert(
+                            cell,
+                            (
+                                text.trim().to_owned(),
+                                first_font.take().map(|font| NoteFont {
+                                    family: font.family,
+                                    size_px: font.size_px,
+                                    bold: font.bold.unwrap_or(false),
+                                    italic: font.italic.unwrap_or(false),
+                                }),
+                            ),
+                        );
+                    }
+                    text.clear();
+                }
+                _ => {}
+            },
+            Ok(Event::Text(content)) if in_text => {
+                if let Ok(value) = content.xml_content(XmlVersion::default()) {
+                    text.push_str(&value);
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Reads the sheet's drawing part, if it has one, and hangs its shapes on the
@@ -3069,6 +3227,24 @@ mod tests {
         let notes = parse_notes(xml);
         assert_eq!(notes.len(), 1, "a form control is not a note");
         assert_eq!((notes[0].row, notes[0].col), (4, 7));
+        // The anchor's numbers pass through as the file wrote them.
+        assert_eq!(notes[0].anchor, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+    }
+
+    #[test]
+    fn reads_note_text_by_cell() {
+        let xml = r#"<comments><authors><author>me</author></authors><commentList>
+            <comment ref="B3" authorId="0"><text>
+              <r><rPr><b/><sz val="9"/></rPr><t>hello</t></r><r><t xml:space="preserve"> world</t></r>
+            </text></comment>
+        </commentList></comments>"#;
+        let map = parse_comments(xml);
+        assert_eq!(map.len(), 1);
+        let (text, font) = map.get(&(2, 1)).expect("B3 has a note");
+        assert_eq!(text, "hello world");
+        let font = font.as_ref().expect("the first run names a font");
+        assert_eq!(font.size_px, Some(12.0), "9pt is 12px");
+        assert!(font.bold);
     }
 
     #[test]

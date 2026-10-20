@@ -507,7 +507,31 @@ export interface SheetLayout {
   /** Cells an icon-set rule marks, with the level each takes. */
   icons: IconCell[];
   /** Cells carrying a note; Excel marks each with a red corner triangle. */
-  notes?: { row: number; col: number }[];
+  notes?: NoteCell[];
+}
+
+/**
+ * One cell's note: where the mark goes, where hovering shows the box, and what
+ * it says.
+ */
+export interface NoteCell {
+  row: number;
+  col: number;
+  text?: string;
+  font?: NoteFont | null;
+  /**
+   * The box, anchored in cells as `[col, dx, row, dy, col, dx, row, dy]` — the
+   * offsets are pixels, which is what reproduces Excel's own geometry.
+   */
+  anchor: [number, number, number, number, number, number, number, number];
+}
+
+/** A note's font, from the first run of its text. */
+export interface NoteFont {
+  family?: string | null;
+  sizePx?: number | null;
+  bold: boolean;
+  italic: boolean;
 }
 
 export interface ValueCount {

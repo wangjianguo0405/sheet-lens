@@ -59,6 +59,7 @@ import {
   type FilterCriterion,
   type IconCell,
   type MergeRect,
+  type NoteCell,
   type RichRun,
   type SheetInfo,
   type SheetLayout,
@@ -646,6 +647,26 @@ export function CanvasGrid({
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const hoverKey = useRef<string | null>(null);
   /**
+   * The note under the pointer, in screen coordinates — Excel shows a note on
+   * hover, at the box its author left it in. `noteTipRef` mirrors it so the
+   * pointer can be tested against the open box without a re-render.
+   */
+  const [noteTip, setNoteTip] = useState<{
+    note: NoteCell;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    /** The leader line: the box's corner it starts at, and the cell's it points to. */
+    from: { x: number; y: number };
+    to: { x: number; y: number };
+  } | null>(null);
+  const noteTipRef = useRef<typeof noteTip>(null);
+  const showNote = (value: typeof noteTip) => {
+    noteTipRef.current = value;
+    setNoteTip(value);
+  };
+  /**
    * What Ctrl+C took, and which sheet it came from.
    *
    * Excel's copy is otherwise silent — no dialog, no flash — so this marquee is
@@ -769,6 +790,32 @@ export function CanvasGrid({
     () => new Set(autoFilter?.custom ?? []),
     [autoFilter],
   );
+  /** The notes by cell, for the mark's paint and the hover box. */
+  const notesByCell = useMemo(() => {
+    const map = new Map<number, NoteCell>();
+    for (const note of layout?.notes ?? []) {
+      map.set(cellKey(sheetColsGuess, note.row, note.col), note);
+    }
+    return map;
+  }, [layout, sheetColsGuess]);
+
+  /**
+   * A note's box in sheet pixels. The VML anchors it in cells, so it follows
+   * the grid this viewer measured rather than Excel's own column widths.
+   */
+  const noteBox = (note: NoteCell) => {
+    const [c1, dx1, r1, dy1, c2, dx2, r2, dy2] = note.anchor;
+    const top = displayOfRow(r1);
+    const bottom = displayOfRow(r2);
+    if (top < 0 || bottom < 0) return null;
+    const x = (cols.offsets[c1] ?? 0) + dx1;
+    const y = rows.offsets[top] + dy1;
+    const right = (cols.offsets[c2] ?? x) + dx2;
+    const bottomY = rows.offsets[bottom] + dy2;
+    if (!Number.isFinite(right) || !Number.isFinite(bottomY)) return null;
+    if (right <= x || bottomY <= y) return null;
+    return { x, y, w: right - x, h: bottomY - y };
+  };
   /**
    * The page the shading and the box are drawn around — and nothing at all in
    * the ordinary view, which is the whole of the difference between Excel's two
@@ -3587,7 +3634,24 @@ export function CanvasGrid({
     return textWidth(font, text) > available ? text : null;
   };
 
-  const updateTooltip = (hit: ReturnType<typeof hitAt>) => {
+  const updateTooltip = (
+    hit: ReturnType<typeof hitAt>,
+    clientX: number,
+    clientY: number,
+  ) => {
+    // A note's box is click-through, so a pointer over it is still "over" the
+    // cell beneath — which would close the box the moment it was reached. Keep
+    // it while the pointer is inside it.
+    const open = noteTipRef.current;
+    if (
+      open &&
+      clientX >= open.x &&
+      clientX <= open.x + open.w &&
+      clientY >= open.y &&
+      clientY <= open.y + open.h
+    ) {
+      return;
+    }
     const key = hit?.kind === "cell" ? `${hit.row}:${hit.col}` : null;
     // Moving within one cell must not touch React at all.
     if (key === hoverKey.current) return;
@@ -3595,8 +3659,44 @@ export function CanvasGrid({
     const el = viewportRef.current;
     if (!el || !hit || hit.kind !== "cell") {
       setTip(null);
+      showNote(null);
       return;
     }
+    // A note comes first: Excel opens it on hover, and the truncated-text
+    // readout is this reader's own aid, so it waits.
+    const note = notesByCell.get(cellKey(sheetColsGuess, hit.row, hit.col));
+    if (note) {
+      const box = noteBox(note);
+      const display = displayOfRow(note.row);
+      if (box && display >= 0) {
+        const rect = el.getBoundingClientRect();
+        const z = zoomRef.current;
+        const x = rect.left + (ROW_HEADER_W + box.x - scrollRef.current.left) * z;
+        const y = rect.top + (COL_HEADER_H + box.y - scrollRef.current.top) * z;
+        const w = box.w * z;
+        const h = box.h * z;
+        // Excel draws a leader from the box's top corner to the cell's — the
+        // top-left one to the top-right, as measured off its own render.
+        const cellLeft =
+          rect.left + (ROW_HEADER_W + cols.offsets[note.col] - scrollRef.current.left) * z;
+        const cellRight = cellLeft + spanAt(cols.offsets, note.col) * z;
+        const cellTop =
+          rect.top + (COL_HEADER_H + rows.offsets[display] - scrollRef.current.top) * z;
+        const boxIsRight = x >= cellLeft;
+        showNote({
+          note,
+          x,
+          y,
+          w,
+          h,
+          from: boxIsRight ? { x, y } : { x: x + w, y },
+          to: boxIsRight ? { x: cellRight, y: cellTop } : { x: cellLeft, y: cellTop },
+        });
+        setTip(null);
+        return;
+      }
+    }
+    showNote(null);
     const text = truncatedTextAt(hit.row, hit.col);
     const display = displayOfRow(hit.row);
     if (!text || display < 0) {
@@ -3621,12 +3721,13 @@ export function CanvasGrid({
     if (!el) return;
     const target = resizeTargetAt(event.clientX, event.clientY);
     el.style.cursor = target ? (target.kind === "col" ? "col-resize" : "row-resize") : "";
-    updateTooltip(target ? null : hitAt(event.clientX, event.clientY));
+    updateTooltip(target ? null : hitAt(event.clientX, event.clientY), event.clientX, event.clientY);
   };
 
   const handlePointerLeave = () => {
     hoverKey.current = null;
     setTip(null);
+    showNote(null);
   };
 
   /** Whether the hidden readout is on; Ctrl+Shift+D flips it. */
@@ -3971,6 +4072,66 @@ export function CanvasGrid({
             style={{ left: tip.x, top: tip.y }}
           >
             {tip.text}
+          </div>
+        )}
+
+        {/* Excel's leader from the note box to its cell, arrowhead on the cell. */}
+        {noteTip &&
+          (() => {
+            const { from, to } = noteTip;
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const length = Math.hypot(dx, dy) || 1;
+            const ux = dx / length;
+            const uy = dy / length;
+            // The head is six pixels long and three wide either side, in screen
+            // pixels: Excel keeps the leader at 1px however far the sheet zooms.
+            const baseX = to.x - ux * 6;
+            const baseY = to.y - uy * 6;
+            return (
+              <svg
+                className="pointer-events-none fixed inset-0 z-40 h-full w-full"
+                aria-hidden
+              >
+                <line
+                  x1={from.x}
+                  y1={from.y}
+                  x2={baseX}
+                  y2={baseY}
+                  stroke="#000"
+                  strokeWidth={1}
+                />
+                <polygon
+                  points={`${to.x},${to.y} ${baseX - uy * 3},${baseY + ux * 3} ${baseX + uy * 3},${baseY - ux * 3}`}
+                  fill="#000"
+                />
+              </svg>
+            );
+          })()}
+
+        {/* The note under the pointer, at the box its author left it in. */}
+        {noteTip && (
+          <div
+            className="pointer-events-none fixed z-40 overflow-hidden border border-black bg-[#ffffe1] text-black"
+            style={{
+              left: noteTip.x,
+              top: noteTip.y,
+              width: noteTip.w,
+              height: noteTip.h,
+              padding: 4 * (zoom / 100),
+              fontFamily: noteTip.note.font?.family
+                ? `"${noteTip.note.font.family}", ${CJK_FALLBACK}, system-ui, sans-serif`
+                : fontFamily
+                  ? `"${fontFamily}", ${CJK_FALLBACK}, system-ui, sans-serif`
+                  : undefined,
+              fontSize: (noteTip.note.font?.sizePx ?? 12) * (zoom / 100),
+              fontWeight: noteTip.note.font?.bold ? 600 : 400,
+              fontStyle: noteTip.note.font?.italic ? "italic" : undefined,
+            }}
+          >
+            <div className="whitespace-pre-wrap break-words">
+              {noteTip.note.text ?? ""}
+            </div>
           </div>
         )}
 
