@@ -97,7 +97,7 @@ import {
   toFilters,
   toOverrides,
 } from "@/lib/gridGeometry";
-import { stepZoom } from "@/lib/zoom";
+import { MAX_ZOOM, MIN_ZOOM, stepZoom } from "@/lib/zoom";
 import {
   activeArea,
   areasOf,
@@ -554,6 +554,12 @@ export function CanvasGrid({
   const drag = useRef<ResizeDrag | null>(null);
   /** Which workbook and sheet the sizes in state belong to; see the effect on them. */
   const seeded = useRef<string | null>(null);
+  /**
+   * The cell the file's own view starts at, waiting for the metrics that turn
+   * it into a scroll offset. A sheet with no view of its own in this session
+   * opens where Excel left it, not at A1.
+   */
+  const pendingView = useRef<[number, number] | null>(null);
   /**
    * A drag-select in progress, and whether it has moved.
    *
@@ -1524,6 +1530,13 @@ export function CanvasGrid({
         // from the cursor instead dragged a sheet whose cursor sat far out to
         // the right until that cell was the first visible column.
         setScrollTo(saved?.top ?? 0, saved?.left ?? 0);
+        // The file's own view of this sheet: Excel opens it at the zoom and
+        // scroll position it was left at, so a reader with no session view of
+        // the sheet lands where Excel would.
+        if (parsed.zoomScale) {
+          onZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, parsed.zoomScale)));
+        }
+        pendingView.current = saved ? null : (parsed.viewTopLeft ?? null);
 
         // What this sheet was left holding beats what the workbook stores: a
         // filter applied here is in no file, and an empty Map is a filter the
@@ -1702,6 +1715,25 @@ export function CanvasGrid({
     paintRef.current("both");
     resizeVoidRef.current();
   }, [zoom]);
+
+  /**
+   * The file's own view, applied once the row and column sizes it is measured
+   * against exist. It runs after the zoom effect above, which would otherwise
+   * put the scroll back where the old zoom left it.
+   */
+  useEffect(() => {
+    const target = pendingView.current;
+    if (!target) return;
+    pendingView.current = null;
+    const display = displayOfRow(target[0]);
+    // A frozen band is drawn on top of the scrolling area, so the row the file
+    // names is already visible at scroll zero once it sits just below the band.
+    // Excel's `ScrollRow` is that cell, not an absolute offset — subtracting the
+    // band is what puts the pane's first cell where the file left it.
+    const top = Math.max(0, (display >= 0 ? rows.offsets[display] : 0) - freeze.height);
+    const left = Math.max(0, (cols.offsets[target[1]] ?? 0) - freeze.width);
+    setScrollTo(top, left);
+  }, [cols, rows, displayOfRow, freeze, setScrollTo]);
 
   // --- paint scheduling ---
   const rafRef = useRef(0);
@@ -2439,10 +2471,22 @@ export function CanvasGrid({
       for (const pane of panes) ensureBlocks(pane.view);
       const startedAt = performance.now();
       const scale = view.zoom * dprRef.current;
+      /**
+       * Clear the whole backing store first, in device pixels. The panes clear
+       * their own rectangles under the zoom transform, which at anything below
+       * 100% leaves the right and bottom of the canvas outside that transform —
+       * stale pixels from the previous zoom, reading as "the corner zoomed, the
+       * rest didn't".
+       */
+      const clearAll = (ctx: CanvasRenderingContext2D) => {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      };
       if (layers === "both") {
         const ctx = baseRef.current?.getContext("2d");
         if (ctx) {
-          ctx.setTransform(scale, 0, 0, scale, 0, 0);
+          clearAll(ctx);
           const stats: PaintStats = {
             rows: 0,
             cols: 0,
@@ -2496,7 +2540,7 @@ export function CanvasGrid({
       const overlayStarted = performance.now();
       const ctx = overlayRef.current?.getContext("2d");
       if (ctx) {
-        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        clearAll(ctx);
         for (const pane of panes) {
           ctx.save();
           clipTo(ctx, pane.clips);

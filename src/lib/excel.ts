@@ -457,6 +457,10 @@ export interface SheetLayout {
   fontSizePx: number;
   /** Excel's View > Gridlines setting. */
   showGridLines: boolean;
+  /** The zoom the sheet is left at, in percent (`<sheetView zoomScale>`). */
+  zoomScale?: number;
+  /** The first cell of the scrolling view, as `[row, col]`. */
+  viewTopLeft?: [number, number];
   /** Rows and columns the sheet view freezes at the top and left. */
   frozenRows: number;
   frozenCols: number;
