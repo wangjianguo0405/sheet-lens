@@ -10,6 +10,7 @@ import { FormulaBar } from "@/components/FormulaBar";
 import { GoToDialog } from "@/components/GoToDialog";
 import { SearchPanel } from "@/components/SearchPanel";
 import { SheetList } from "@/components/SheetList";
+import { NoteList } from "@/components/NoteList";
 import { SheetScrollBar } from "@/components/SheetScrollBar";
 import { SheetTabs } from "@/components/SheetTabs";
 import { StatusBar } from "@/components/StatusBar";
@@ -198,6 +199,16 @@ export default function App() {
   /** View scale as a percentage, the way Excel names it. */
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [sheetListWidth, setSheetListWidth] = useState(DEFAULT_SHEET_LIST_W);
+  /** Which panel the left sidebar shows: the sheet list, or the sheet's notes. */
+  const [sidebarTab, setSidebarTab] = useState<"sheets" | "notes">("sheets");
+  /** The note the sidebar is pointing at, to be shown in the sheet. */
+  const [notePreview, setNotePreview] = useState<{ row: number; col: number } | null>(
+    null,
+  );
+  const handleNotePreview = useCallback(
+    (note: { row: number; col: number } | null) => setNotePreview(note),
+    [],
+  );
   const [searchWidth, setSearchWidth] = useState(DEFAULT_SEARCH_W);
   const [sheetBarWidth, setSheetBarWidth] = useState<number | null>(null);
   /** The row's own box, so a drag can start from the length it has now. */
@@ -1112,13 +1123,45 @@ export default function App() {
             <>
               {panels.list && (
                 <>
-                  <div className="shrink-0" style={{ width: sheetListWidth }}>
-                    <SheetList
-                      sheets={active.info.sheets}
-                      hidden={new Set(hiddenNames)}
-                      active={active.sheet}
-                      onSelect={handleSheetSelect}
-                    />
+                  <div
+                    className="flex min-h-0 shrink-0 flex-col"
+                    style={{ width: sheetListWidth }}
+                  >
+                    {/* Two panels share the sidebar; the grid is the same
+                        either way, so the switch costs nothing. */}
+                    <div className="flex shrink-0 border-b border-border bg-sidebar">
+                      {(["sheets", "notes"] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          onClick={() => setSidebarTab(tab)}
+                          className={
+                            sidebarTab === tab
+                              ? "flex-1 border-b-2 border-[#107C41] px-2 py-1 text-[11px] font-medium text-foreground"
+                              : "flex-1 border-b-2 border-transparent px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                          }
+                        >
+                          {tab === "sheets" ? t("sheets.list") : t("notes.title")}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="min-h-0 flex-1">
+                      {sidebarTab === "sheets" ? (
+                        <SheetList
+                          sheets={active.info.sheets}
+                          hidden={new Set(hiddenNames)}
+                          active={active.sheet}
+                          onSelect={handleSheetSelect}
+                        />
+                      ) : (
+                        <NoteList
+                          path={active.info.path}
+                          sheet={active.sheet}
+                          onGo={(row, col) => handleGo(active.sheet, row, col)}
+                          onPreview={handleNotePreview}
+                        />
+                      )}
+                    </div>
                   </div>
                   <div
                     role="separator"
@@ -1151,6 +1194,7 @@ export default function App() {
                     onFiltered={handleFiltered}
                     onSheetStep={handleSheetStep}
                     reveal={reveal}
+                    previewNote={notePreview}
                     zoom={zoom}
                     onZoom={setZoom}
                     hideHScroll={panels.tabs}

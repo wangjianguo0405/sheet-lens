@@ -173,5 +173,11 @@
     "restarting": "更新を適用するため再起動しています…",
     "install": "更新して再起動",
     "checkAgain": "再確認"
+  },
+  "notes": {
+    "title": "コメント",
+    "empty": "このシートにコメントはありません。",
+    "blank": "（空）",
+    "count_other": "{{count}} 件"
   }
 }

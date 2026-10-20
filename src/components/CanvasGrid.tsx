@@ -253,6 +253,11 @@ interface GridProps {
    * is the only thing allowed to drag it.
    */
   reveal?: number;
+  /**
+   * A note the reader is pointing at somewhere else — the notes sidebar — to be
+   * shown in the sheet as if the cell under it were hovered. Null hides it.
+   */
+  previewNote?: { row: number; col: number } | null;
   /** View scale as a percentage, the way Excel names it. */
   zoom: number;
   onZoom: (percent: number) => void;
@@ -455,6 +460,7 @@ export function CanvasGrid({
   onFiltered,
   onSheetStep,
   reveal,
+  previewNote,
   zoom,
   onZoom,
   bar,
@@ -3743,6 +3749,59 @@ export function CanvasGrid({
     return textWidth(font, text) > available ? text : null;
   };
 
+  /**
+   * Shows a note where its author left it, with Excel's leader to the cell.
+   * Shared by the pointer moving over a cell and the notes sidebar pointing at
+   * one, so both look the same. False when the note's box or cell cannot be
+   * placed right now (a hidden row, say).
+   */
+  const showNoteFor = (note: NoteCell): boolean => {
+    const el = viewportRef.current;
+    if (!el) return false;
+    const box = noteBox(note);
+    const display = displayOfRow(note.row);
+    if (!box || display < 0) return false;
+    const rect = el.getBoundingClientRect();
+    const z = zoomRef.current;
+    const x = rect.left + (ROW_HEADER_W + box.x - scrollRef.current.left) * z;
+    const y = rect.top + (COL_HEADER_H + box.y - scrollRef.current.top) * z;
+    const w = box.w * z;
+    const h = box.h * z;
+    // Excel draws a leader from the box's top corner to the cell's — the
+    // top-left one to the top-right, as measured off its own render.
+    const cellLeft =
+      rect.left + (ROW_HEADER_W + cols.offsets[note.col] - scrollRef.current.left) * z;
+    const cellRight = cellLeft + spanAt(cols.offsets, note.col) * z;
+    const cellTop =
+      rect.top + (COL_HEADER_H + rows.offsets[display] - scrollRef.current.top) * z;
+    const boxIsRight = x >= cellLeft;
+    showNote({
+      note,
+      x,
+      y,
+      w,
+      h,
+      from: boxIsRight ? { x, y } : { x: x + w, y },
+      to: boxIsRight ? { x: cellRight, y: cellTop } : { x: cellLeft, y: cellTop },
+    });
+    return true;
+  };
+
+  /**
+   * A note the reader is pointing at in the notes sidebar, shown in the sheet
+   * as hovering its cell would. Leaving the entry takes it away again.
+   */
+  useEffect(() => {
+    if (!previewNote) {
+      showNote(null);
+      return;
+    }
+    const note = notesByCell.get(
+      cellKey(sheetColsGuess, previewNote.row, previewNote.col),
+    );
+    if (note) showNoteFor(note);
+  }, [previewNote, notesByCell, sheetColsGuess]);
+
   const updateTooltip = (
     hit: ReturnType<typeof hitAt>,
     clientX: number,
@@ -3774,36 +3833,9 @@ export function CanvasGrid({
     // A note comes first: Excel opens it on hover, and the truncated-text
     // readout is this reader's own aid, so it waits.
     const note = notesByCell.get(cellKey(sheetColsGuess, hit.row, hit.col));
-    if (note) {
-      const box = noteBox(note);
-      const display = displayOfRow(note.row);
-      if (box && display >= 0) {
-        const rect = el.getBoundingClientRect();
-        const z = zoomRef.current;
-        const x = rect.left + (ROW_HEADER_W + box.x - scrollRef.current.left) * z;
-        const y = rect.top + (COL_HEADER_H + box.y - scrollRef.current.top) * z;
-        const w = box.w * z;
-        const h = box.h * z;
-        // Excel draws a leader from the box's top corner to the cell's — the
-        // top-left one to the top-right, as measured off its own render.
-        const cellLeft =
-          rect.left + (ROW_HEADER_W + cols.offsets[note.col] - scrollRef.current.left) * z;
-        const cellRight = cellLeft + spanAt(cols.offsets, note.col) * z;
-        const cellTop =
-          rect.top + (COL_HEADER_H + rows.offsets[display] - scrollRef.current.top) * z;
-        const boxIsRight = x >= cellLeft;
-        showNote({
-          note,
-          x,
-          y,
-          w,
-          h,
-          from: boxIsRight ? { x, y } : { x: x + w, y },
-          to: boxIsRight ? { x: cellRight, y: cellTop } : { x: cellLeft, y: cellTop },
-        });
-        setTip(null);
-        return;
-      }
+    if (note && showNoteFor(note)) {
+      setTip(null);
+      return;
     }
     showNote(null);
     const text = truncatedTextAt(hit.row, hit.col);

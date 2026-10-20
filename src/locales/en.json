@@ -175,5 +175,12 @@
     "restarting": "Restarting to finish the update…",
     "install": "Update and restart",
     "checkAgain": "Check again"
+  },
+  "notes": {
+    "title": "Notes",
+    "empty": "No notes on this sheet.",
+    "blank": "(blank)",
+    "count_one": "{{count}} note",
+    "count_other": "{{count}} notes"
   }
 }
