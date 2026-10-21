@@ -219,6 +219,31 @@ export interface AutoFilter {
   custom: number[];
 }
 
+/** One row's place in Excel's outline. */
+export interface OutlineRow {
+  row: number;
+  /** 1-based; 0 is outside any group. */
+  level: number;
+  /** Set on the summary row of a closed group. */
+  collapsed: boolean;
+}
+
+/** One `<col>` run's place in Excel's outline, in the file's own terms. */
+export interface OutlineCol {
+  from: number;
+  to: number;
+  level: number;
+  collapsed: boolean;
+}
+
+export interface OutlineData {
+  rows: OutlineRow[];
+  cols: OutlineCol[];
+  /** Where a group's summary line sits; Excel's default is below and right. */
+  summaryBelow: boolean;
+  summaryRight: boolean;
+}
+
 export interface DataValidation {
   /** The cells the rule governs; `sqref` may name several blocks. */
   ranges: MergeRect[];
@@ -477,6 +502,12 @@ export interface SheetLayout {
    */
   hiddenRows: number[];
   hiddenCols: number[];
+  /**
+   * Excel's outline groups. The file records a level per detail line and a
+   * `collapsed` flag on the summary line rather than a group as a range; see
+   * `outline.ts` for how the bands are rebuilt.
+   */
+  outline?: OutlineData | null;
   autoFilter: AutoFilter | null;
   /** `_xlnm.Print_Area`; Excel shades everything outside it. */
   printArea: MergeRect | null;

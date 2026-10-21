@@ -47,6 +47,21 @@ import { ICON_INSET, ICON_SIZE, paintConditionalIcon } from "@/lib/condIcons";
 import type { CanvasTheme } from "@/lib/canvasTheme";
 import { columnLabel } from "@/lib/column";
 import {
+  groupButtonBox,
+  groupOpen,
+  OUTLINE_BUTTON_BORDER,
+  OUTLINE_BUTTON_FACE,
+  OUTLINE_BUTTON_INK,
+  OUTLINE_CAP,
+  OUTLINE_LINE_COLOR,
+  OUTLINE_LINE_W,
+  colLevelButtonRect,
+  rowLevelButtonRect,
+  stripLine,
+  type LineOutline,
+  type OutlineGroup,
+} from "@/lib/outline";
+import {
   ACCENT_INK,
   CELL_PAD_LEFT,
   CELL_PAD_RIGHT,
@@ -104,6 +119,16 @@ export interface GridView {
    */
   hiddenRows: Set<number>;
   hiddenCols: Set<number>;
+  /**
+   * The header bands: the row numbers and column letters plus any outline
+   * gutter on their far side. Excel widens the header when a sheet groups, so
+   * these are not the fixed constants.
+   */
+  headerW: number;
+  headerH: number;
+  /** The sheet's outline groups, or null where it groups nothing. */
+  outlineRows: LineOutline | null;
+  outlineCols: LineOutline | null;
   /** The overscanned window: display rows, and sheet columns. */
   rowStart: number;
   rowEnd: number;
@@ -203,10 +228,10 @@ const GUTTER_FONT_PX = 11;
 
 /** Draw-space origin: sheet coordinates shifted by the scroll and the gutters. */
 function originX(view: GridView): number {
-  return ROW_HEADER_W - view.scrollLeft;
+  return view.headerW - view.scrollLeft;
 }
 function originY(view: GridView): number {
-  return COL_HEADER_H - view.scrollTop;
+  return view.headerH - view.scrollTop;
 }
 
 /**
@@ -674,6 +699,24 @@ function ring(
   fill(ctx, x, y + h - t + 1, w + 1, t, color);
   fill(ctx, x, y, t, h + 1, color);
   fill(ctx, x + w - t + 1, y, t, h + 1, color);
+}
+
+/** A 1px frame, four filled edges — the outline buttons' border, which is a
+ *  hairline in Excel. `ring` is the selection's 2px rule and reads as too
+ *  heavy here. */
+function frame(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: string,
+): void {
+  if (w <= 0 || h <= 0) return;
+  line(ctx, x, y, w, 1, color);
+  line(ctx, x, y + h - 1, w, 1, color);
+  line(ctx, x, y, 1, h, color);
+  line(ctx, x + w - 1, y, 1, h, color);
 }
 
 /** Whether two rectangles share a cell. */
@@ -1447,10 +1490,10 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
   ctx.clearRect(0, 0, view.width, view.height);
 
   // The page, and the grey Excel shades everything outside the print area with.
-  const cellX = ROW_HEADER_W;
-  const cellY = COL_HEADER_H;
-  const cellW = view.width - ROW_HEADER_W;
-  const cellH = view.height - COL_HEADER_H;
+  const cellX = view.headerW;
+  const cellY = view.headerH;
+  const cellW = view.width - view.headerW;
+  const cellH = view.height - view.headerH;
 
   const page = printRect(view, ox, oy);
   fill(ctx, cellX, cellY, cellW, cellH, page ? OUTSIDE_PRINT : view.theme.background);
@@ -1935,24 +1978,254 @@ function paintGutterBands(
 ): void {
   const muted = view.theme.muted;
   const grid = view.theme.gridline;
+  const rowGutter = view.headerW - ROW_HEADER_W;
+  const colGutter = view.headerH - COL_HEADER_H;
+  const numW = ROW_HEADER_W;
+  const numH = COL_HEADER_H;
 
-  fill(ctx, 0, COL_HEADER_H, ROW_HEADER_W, view.height - COL_HEADER_H, muted);
-  fill(ctx, ROW_HEADER_W, 0, view.width - ROW_HEADER_W, COL_HEADER_H, muted);
-  fill(ctx, 0, 0, ROW_HEADER_W, COL_HEADER_H, muted);
+  // The outline gutter sits between the sheet's edge and the numbers, and
+  // Excel leaves it the sheet's own white rather than the header's grey.
+  if (rowGutter > 0) {
+    fill(ctx, 0, 0, rowGutter, view.height, view.theme.background);
+  }
+  if (colGutter > 0) {
+    fill(ctx, 0, 0, view.width, colGutter, view.theme.background);
+  }
+  fill(ctx, rowGutter, view.headerH, numW, view.height - view.headerH, muted);
+  fill(ctx, view.headerW, colGutter, view.width - view.headerW, numH, muted);
+  fill(ctx, rowGutter, colGutter, numW, numH, muted);
 
   for (const { display } of rows) {
     const y = oy + view.rows.offsets[display];
     const h = spanAt(view.rows.offsets, display);
-    line(ctx, 0, y + h - 1, ROW_HEADER_W, 1, grid);
+    // A row scrolled up behind the header band would otherwise lay its rule
+    // across the corner and the grouping gutter — a line of the sheet showing
+    // through chrome that is meant to cover it.
+    if (y + h - 1 < view.headerH) continue;
+    line(ctx, rowGutter, y + h - 1, numW, 1, grid);
   }
   for (let c = view.colStart; c < view.colEnd; c += 1) {
     const x = ox + view.cols.offsets[c];
     const w = spanAt(view.cols.offsets, c);
-    line(ctx, x + w - 1, 0, 1, COL_HEADER_H, grid);
+    // Same for a column scrolled under the row header.
+    if (x + w - 1 < view.headerW) continue;
+    line(ctx, x + w - 1, colGutter, 1, numH, grid);
   }
   // The two sides separating the gutters from the cells, and the corner's own.
-  line(ctx, ROW_HEADER_W - 1, 0, 1, view.height, grid);
-  line(ctx, 0, COL_HEADER_H - 1, view.width, 1, grid);
+  line(ctx, view.headerW - 1, 0, 1, view.height, grid);
+  line(ctx, 0, view.headerH - 1, view.width, 1, grid);
+
+  paintOutlineGutter(ctx, view, ox, oy);
+}
+
+/**
+ * Excel's grouping brackets, their end caps, the dotted continuation of a
+ * deeper level, and the +/- buttons on each group's summary line.
+ *
+ * The gutter is one 24px strip per level; a group's bracket runs down its
+ * level's strip over the detail lines, ending in a button on the summary line.
+ * A line that belongs to a group also gets a dot in the strip one level deeper,
+ * which is Excel's mark that the group reaches that far without anything nested
+ * there.
+ */
+function paintOutlineGutter(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  ox: number,
+  oy: number,
+): void {
+  const rows = view.outlineRows;
+  if (rows && rows.strips > 0) {
+    // Row chrome belongs to the row header, below the column band: without
+    // this a row scrolled just above the viewport still has its +/- drawn at a
+    // y above the cells, which lands in the corner.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, view.headerH, view.headerW, view.height - view.headerH);
+    ctx.clip();
+    // A summary line carries its group's button; it does not also get a dot
+    // in the strip above, which is where its own level would put one.
+    const buttons = new Set<number>();
+    for (const group of rows.groups) {
+      if (!view.hiddenRows.has(group.summary) && view.displayOfRow(group.summary) >= 0) {
+        buttons.add(group.summary);
+      }
+    }
+    for (const group of rows.groups) paintRowGroup(ctx, view, oy, group, rows.summaryAfter);
+    for (const { sheetRow, display } of shownRows(view)) {
+      const level = rows.levels.get(sheetRow);
+      if (!level || level >= rows.strips) continue;
+      // A hidden row takes no room, so its "centre" is a boundary another row
+      // already owns; Excel marks only the rows it shows.
+      if (view.hiddenRows.has(sheetRow) || buttons.has(sheetRow)) continue;
+      const y = oy + view.rows.offsets[display] + spanAt(view.rows.offsets, display) / 2;
+      fill(ctx, stripLine(level), Math.round(y) - 1, 2, 2, OUTLINE_LINE_COLOR);
+    }
+    ctx.restore();
+  }
+  const cols = view.outlineCols;
+  if (cols && cols.strips > 0) {
+    // The same for columns, whose chrome lives right of the row header.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(view.headerW, 0, view.width - view.headerW, view.headerH);
+    ctx.clip();
+    const buttons = new Set<number>();
+    for (const group of cols.groups) {
+      if (!view.hiddenCols.has(group.summary)) buttons.add(group.summary);
+    }
+    for (const group of cols.groups) paintColGroup(ctx, view, ox, group, cols.summaryAfter);
+    for (let col = view.colStart; col < view.colEnd; col += 1) {
+      if (view.hiddenCols.has(col)) continue;
+      const level = cols.levels.get(col);
+      if (!level || level >= cols.strips || buttons.has(col)) continue;
+      const x = ox + view.cols.offsets[col] + spanAt(view.cols.offsets, col) / 2;
+      fill(ctx, Math.round(x) - 1, stripLine(level), 2, 2, OUTLINE_LINE_COLOR);
+    }
+    ctx.restore();
+  }
+  if (rows && rows.strips > 0) {
+    for (let index = 0; index < rows.strips; index += 1) {
+      paintLevelButton(ctx, view, index, false);
+    }
+  }
+  if (cols && cols.strips > 0) {
+    for (let index = 0; index < cols.strips; index += 1) {
+      paintLevelButton(ctx, view, index, true);
+    }
+  }
+}
+
+/** One row group's bracket and its +/- button. */
+function paintRowGroup(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  oy: number,
+  group: OutlineGroup,
+  summaryAfter: boolean,
+): void {
+  const summary = view.displayOfRow(group.summary);
+  if (summary < 0 || view.hiddenRows.has(group.summary)) return;
+  // A pane draws the rows its own window holds; without this a frozen pane
+  // would place the button of a scrolling row inside its own clip.
+  if (summary < view.rowStart || summary >= view.rowEnd) return;
+  const open = groupOpen(group, view.hiddenRows, view.displayOfRow);
+  const x = stripLine(group.level - 1);
+  if (open) {
+    let first = -1;
+    let last = -1;
+    for (let row = group.from; row <= group.to; row += 1) {
+      if (view.hiddenRows.has(row)) continue;
+      const display = view.displayOfRow(row);
+      if (display < 0) continue;
+      if (first < 0) first = display;
+      last = display;
+    }
+    if (first >= 0) {
+      const top = oy + view.rows.offsets[first];
+      const bottom = oy + view.rows.offsets[last] + spanAt(view.rows.offsets, last);
+      fill(ctx, x, top, OUTLINE_LINE_W, bottom - top, OUTLINE_LINE_COLOR);
+      // The cap sits at the end away from the summary, toward the numbers.
+      const capY = summaryAfter ? top : bottom - OUTLINE_LINE_W;
+      fill(ctx, x, capY, OUTLINE_CAP, OUTLINE_LINE_W, OUTLINE_LINE_COLOR);
+    }
+  }
+  const y = oy + view.rows.offsets[summary];
+  const box = groupButtonBox(
+    group.level - 1,
+    y,
+    spanAt(view.rows.offsets, summary),
+    false,
+  );
+  paintOutlineButton(ctx, box.x, box.y, box.w, open);
+}
+
+/** One column group's bracket and its +/- button. */
+function paintColGroup(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  ox: number,
+  group: OutlineGroup,
+  summaryAfter: boolean,
+): void {
+  const summary = group.summary;
+  if (summary < 0 || view.hiddenCols.has(summary)) return;
+  if (summary < view.colStart || summary >= view.colEnd) return;
+  let first = -1;
+  let last = -1;
+  for (let col = group.from; col <= group.to; col += 1) {
+    if (view.hiddenCols.has(col)) continue;
+    if (first < 0) first = col;
+    last = col;
+  }
+  const open = first >= 0;
+  const y = stripLine(group.level - 1);
+  if (open) {
+    const left = ox + view.cols.offsets[first];
+    const right = ox + view.cols.offsets[last] + spanAt(view.cols.offsets, last);
+    fill(ctx, left, y, right - left, OUTLINE_LINE_W, OUTLINE_LINE_COLOR);
+    // Same rule as rows, rotated: the cap is away from the summary, toward
+    // the letters, so a summary on the right puts it at the left end.
+    const capX = summaryAfter ? left : right - OUTLINE_LINE_W;
+    fill(ctx, capX, y, OUTLINE_LINE_W, OUTLINE_CAP, OUTLINE_LINE_COLOR);
+  }
+  const x = ox + view.cols.offsets[summary];
+  const box = groupButtonBox(
+    group.level - 1,
+    x,
+    spanAt(view.cols.offsets, summary),
+    true,
+  );
+  paintOutlineButton(ctx, box.x, box.y, box.w, open);
+}
+
+/** The 24px +/- square on a summary line. */
+function paintOutlineButton(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  open: boolean,
+): void {
+  if (size < 6) return;
+  const s = Math.round(size);
+  const bx = Math.round(x);
+  const by = Math.round(y);
+  fill(ctx, bx, by, s, s, OUTLINE_BUTTON_FACE);
+  frame(ctx, bx, by, s, s, OUTLINE_BUTTON_BORDER);
+  const cx = bx + s / 2;
+  const cy = by + s / 2;
+  // Two 2px bars rather than a font glyph. Excel's mark is 8px long in its
+  // 24px box — a third of it — so the bar keeps that share at any button size.
+  const arm = Math.max(2, Math.round(s / 6));
+  fill(ctx, Math.round(cx - arm), Math.round(cy) - 1, arm * 2, 2, OUTLINE_BUTTON_INK);
+  if (!open) fill(ctx, Math.round(cx) - 1, Math.round(cy - arm), 2, arm * 2, OUTLINE_BUTTON_INK);
+}
+
+/** The corner's level buttons: rows horizontal, columns vertical. */
+function paintLevelButton(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  index: number,
+  vertical: boolean,
+): void {
+  const rect = vertical
+    ? colLevelButtonRect(index, view.headerW - ROW_HEADER_W)
+    : rowLevelButtonRect(index, view.headerH - COL_HEADER_H);
+  // Excel numbers them from 1: the level to show, so a sheet with one group
+  // has a 1 (all closed) and a 2 (all open).
+  if (rect.w < 6 || rect.h < 6) return;
+  fill(ctx, rect.x, rect.y, rect.w, rect.h, OUTLINE_BUTTON_FACE);
+  frame(ctx, rect.x, rect.y, rect.w, rect.h, OUTLINE_BUTTON_BORDER);
+  const stack = cellFontStack(null, view.workbookFontFamily);
+  const digits = Math.min(GUTTER_FONT_PX, Math.max(8, Math.round(rect.h * 0.55)));
+  ctx.font = fontString(stack, digits, false);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = OUTLINE_BUTTON_INK;
+  ctx.fillText(String(index + 1), rect.x + rect.w / 2, rect.y + rect.h / 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 }
 
 // ---------------------------------------------------------------------------
@@ -1964,6 +2237,20 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
   const ox = originX(view);
   const oy = originY(view);
   const rows = shownRows(view);
+
+  // The overlay sits above the header bands, so a selected row or column that
+  // has been scrolled partly under them would wash straight over the corner and
+  // the grouping gutter. Excel keeps the chrome on top; so does this — the
+  // labels below get their own clips.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(
+    view.headerW,
+    view.headerH,
+    view.width - view.headerW,
+    view.height - view.headerH,
+  );
+  ctx.clip();
 
   // Excel marks one cell with an outline and anything larger with a fill — and
   // inside a fill it leaves the active cell clear and outlines that one, which
@@ -2114,6 +2401,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
     }
   }
 
+  ctx.restore();
   paintGutterLabels(ctx, view, ox, oy, rows);
 }
 
@@ -2134,6 +2422,8 @@ function paintGutterLabels(
   ctx.font = fontString(stack, GUTTER_FONT_PX, false);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  const rowGutter = view.headerW - ROW_HEADER_W;
+  const colGutter = view.headerH - COL_HEADER_H;
 
   // Each strip is clipped to itself, because both passes walk cells that begin
   // off screen: the first visible row is above the viewport once it is scrolled
@@ -2142,7 +2432,7 @@ function paintGutterLabels(
   // same to the same corner. The clip is what keeps each label on its own strip.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, COL_HEADER_H, ROW_HEADER_W, view.height - COL_HEADER_H);
+  ctx.rect(rowGutter, view.headerH, ROW_HEADER_W, view.height - view.headerH);
   ctx.clip();
 
   for (const { sheetRow, display } of rows) {
@@ -2152,7 +2442,7 @@ function paintGutterLabels(
     const h = spanAt(view.rows.offsets, display);
     const lit = litRow(view.selection, sheetRow);
     if (lit) {
-      fill(ctx, 0, y, ROW_HEADER_W - 1, h, GUTTER_TINT);
+      fill(ctx, rowGutter, y, ROW_HEADER_W - 1, h, GUTTER_TINT);
       ctx.font = fontString(stack, GUTTER_FONT_PX, true);
     } else {
       ctx.font = fontString(stack, GUTTER_FONT_PX, false);
@@ -2170,13 +2460,13 @@ function paintGutterLabels(
       : filtering
         ? FILTERED_INK
         : view.theme.mutedForeground;
-    ctx.fillText(String(sheetRow + 1), ROW_HEADER_W / 2, y + h / 2);
+    ctx.fillText(String(sheetRow + 1), rowGutter + ROW_HEADER_W / 2, y + h / 2);
   }
   ctx.restore();
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(ROW_HEADER_W, 0, view.width - ROW_HEADER_W, COL_HEADER_H);
+  ctx.rect(view.headerW, colGutter, view.width - view.headerW, COL_HEADER_H);
   ctx.clip();
 
   for (let c = view.colStart; c < view.colEnd; c += 1) {
@@ -2186,13 +2476,13 @@ function paintGutterLabels(
     const w = spanAt(view.cols.offsets, c);
     const lit = litColumn(view.selection, c);
     if (lit) {
-      fill(ctx, x, 0, w, COL_HEADER_H - 1, GUTTER_TINT);
+      fill(ctx, x, colGutter, w, COL_HEADER_H - 1, GUTTER_TINT);
       ctx.font = fontString(stack, GUTTER_FONT_PX, true);
     } else {
       ctx.font = fontString(stack, GUTTER_FONT_PX, false);
     }
     ctx.fillStyle = lit ? ACCENT_INK : view.theme.mutedForeground;
-    ctx.fillText(columnLabel(c), x + w / 2, COL_HEADER_H / 2);
+    ctx.fillText(columnLabel(c), x + w / 2, colGutter + COL_HEADER_H / 2);
   }
   ctx.restore();
 }
