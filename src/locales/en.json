@@ -165,6 +165,9 @@
     "hide": "Hide (&H)",
     "unhide": "Unhide (&U)"
   },
+  "print": {
+    "page": "Page {{n}}"
+  },
   "update": {
     "title": "Software update",
     "checking": "Checking for updates…",

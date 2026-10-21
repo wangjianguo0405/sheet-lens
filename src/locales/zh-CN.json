@@ -163,6 +163,9 @@
     "hide": "隐藏(&H)",
     "unhide": "取消隐藏(&U)"
   },
+  "print": {
+    "page": "第 {{n}} 页"
+  },
   "update": {
     "title": "软件更新",
     "checking": "正在检查更新…",

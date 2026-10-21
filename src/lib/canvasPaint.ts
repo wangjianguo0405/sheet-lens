@@ -45,6 +45,7 @@ import type {
 } from "@/lib/excel";
 import { ICON_INSET, ICON_SIZE, paintConditionalIcon } from "@/lib/condIcons";
 import type { CanvasTheme } from "@/lib/canvasTheme";
+import type { Pagination } from "@/lib/pagination";
 import { columnLabel } from "@/lib/column";
 import {
   groupButtonBox,
@@ -201,6 +202,19 @@ export interface GridView {
    */
   filtering: boolean;
   printArea: MergeRect | null;
+  /**
+   * Where Page Break Preview's pages fall, and their numbers. Null in the
+   * ordinary view and on a sheet with no page to break.
+   */
+  pageBreaks: Pagination | null;
+  /** What a page number says in the reader's language — "第 2 页", "Page 2". */
+  pageLabel: (number: number) => string;
+  /**
+   * The app's own font stack. Page Break Preview's page number is chrome
+   * rather than part of the document — Excel draws it in its UI font, not the
+   * workbook's — so it must not be set in the sheet's font.
+   */
+  uiFont: string;
   /** Whether a cell lies outside the print area, and so takes the grey shade. */
   outsidePrint: (row: number, col: number) => boolean;
   /**
@@ -1332,11 +1346,130 @@ function printRect(
   };
 }
 
+/** The ink Excel draws every page edge in. */
+const PAGE_BREAK_INK = "#0000D0";
+/** Automatic breaks are 2px, 9 on and 3 off; a manual break is 3px solid. */
+const PAGE_BREAK_DASH = [9, 3];
+/**
+ * The page number watermark Page Break Preview puts in the middle of a page.
+ *
+ * Measured off Excel's own window: `#969696` glyphs 170px wide and 52px tall
+ * at 100%, the same on an 8pt sheet as on a 20pt one — it is chrome, not part
+ * of the document, so the sheet's font does not size it. A page too small to
+ * hold it at that size takes a proportionally smaller one.
+ */
+const PAGE_NUMBER_INK = "#969696";
+const PAGE_NUMBER_PX = 56;
+const PAGE_NUMBER_FIT = 0.21;
+
+/**
+ * The big faint page number in the middle of every page.
+ *
+ * It is a watermark, not a label: it sits behind the cells, so a filled cell
+ * hides it and an empty one shows it through — which is how Excel draws it.
+ */
+function paintPageNumbers(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  ox: number,
+  oy: number,
+): void {
+  const breaks = view.pageBreaks;
+  if (!breaks || breaks.pages.length === 0) return;
+  const left = view.headerW;
+  const top = view.headerH;
+  const width = view.width - view.headerW;
+  const height = view.height - view.headerH;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, width, height);
+  ctx.clip();
+  ctx.fillStyle = PAGE_NUMBER_INK;
+  const stack = view.uiFont;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  let sized = 0;
+  for (const page of breaks.pages) {
+    const x = ox + (page.x0 + page.x1) / 2;
+    const y = oy + (page.y0 + page.y1) / 2;
+    // A page entirely off screen has nothing to say; the margin is a page's
+    // own size at worst, so this only skips what could not be reached.
+    if (x < left - 400 || x > left + width + 400) continue;
+    if (y < top - 400 || y > top + height + 400) continue;
+    const size = Math.round(
+      Math.min(PAGE_NUMBER_PX, (page.y1 - page.y0) * PAGE_NUMBER_FIT),
+    );
+    if (size !== sized) {
+      sized = size;
+      ctx.font = fontString(stack, size, false);
+    }
+    ctx.fillText(view.pageLabel(page.number), x, y);
+  }
+  ctx.restore();
+}
+
+/**
+ * The page breaks themselves: a dashed rule for a break the paper makes, a
+ * solid one for a break somebody placed.
+ *
+ * Both run the full height or width of the print area — a break is a line
+ * across the page, not a mark on the cell it happens to land beside.
+ */
+function paintPageBreaks(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  ox: number,
+  oy: number,
+  page: { x0: number; y0: number; x1: number; y1: number },
+): void {
+  const breaks = view.pageBreaks;
+  if (!breaks) return;
+  const left = view.headerW;
+  const top = view.headerH;
+  const width = view.width - view.headerW;
+  const height = view.height - view.headerH;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, width, height);
+  ctx.clip();
+  ctx.strokeStyle = PAGE_BREAK_INK;
+
+  const line = (manual: boolean, draw: () => void) => {
+    ctx.lineWidth = manual ? 3 : 2;
+    ctx.setLineDash(manual ? [] : PAGE_BREAK_DASH);
+    ctx.beginPath();
+    draw();
+    ctx.stroke();
+  };
+
+  for (const breakLine of breaks.cols) {
+    const x = ox + breakLine.at;
+    if (x < left - 4 || x > left + width + 4) continue;
+    // Excel's rule covers the boundary pixel and one to its left: a 2px line
+    // measured at the I column's edge sits at 651–652 with the edge at 652.
+    const at = x + (breakLine.manual ? 0.5 : 0);
+    line(breakLine.manual, () => {
+      ctx.moveTo(at, page.y0);
+      ctx.lineTo(at, page.y1);
+    });
+  }
+  for (const breakLine of breaks.rows) {
+    const y = oy + breakLine.at;
+    if (y < top - 4 || y > top + height + 4) continue;
+    const at = y + (breakLine.manual ? 0.5 : 0);
+    line(breakLine.manual, () => {
+      ctx.moveTo(page.x0, at);
+      ctx.lineTo(page.x1, at);
+    });
+  }
+  ctx.restore();
+}
+
 /**
  * Paints a block's background, shading whatever part of it lies outside the
- * print area.
- *
- * The split matters for a block that straddles the boundary — a Center-Across
+ * print area. * The split matters for a block that straddles the boundary — a Center-Across
  * run of sixty cells starts inside the page and ends outside it. Asking "is
  * this block outside?" once, of its anchor, painted the whole run in the
  * anchor's own fill and left the tail looking like a normal filled cell where
@@ -1537,6 +1670,12 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
   stats.surfaceMs = performance.now() - surfaceStarted;
   stats.surfaceFills = fillRects - fillsBefore;
 
+  // Over the fills, under the text. Excel's page number shows through a cell
+  // that carries a background colour — measured on a filled block where the
+  // watermark is plainly on top of it — while the cell's own text still draws
+  // over the watermark.
+  if (page) paintPageNumbers(ctx, view, ox, oy);
+
   // Then every string, over all of it. Excel lets a left-aligned value run on
   // into the empty cells beside it and draws that spill across their fills and
   // gridlines. Painting the text together with the cell it belongs to put the
@@ -1556,6 +1695,10 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
     }
   }
   stats.textMs = performance.now() - textStarted;
+
+  // Over the cells: a break falls on a cell boundary, and Excel draws its line
+  // across whatever the page holds rather than only where it is empty.
+  if (page) paintPageBreaks(ctx, view, ox, oy, page);
 
   paintGutterBands(ctx, view, ox, oy, rows);
   stats.styleResolved = view.styleCalls.resolved;

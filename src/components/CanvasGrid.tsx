@@ -98,6 +98,7 @@ import {
   toOverrides,
 } from "@/lib/gridGeometry";
 import { MAX_ZOOM, MIN_ZOOM, stepZoom } from "@/lib/zoom";
+import { paginate } from "@/lib/pagination";
 import {
   activeArea,
   areasOf,
@@ -1151,6 +1152,39 @@ export function CanvasGrid({
   );
 
   const minRowH = Math.max(MIN_ROW_H, Math.ceil(fontSize * LINE_HEIGHT));
+
+  /**
+   * Where the pages fall, for Page Break Preview.
+   *
+   * The file stores only the breaks placed by hand; the rest follow from the
+   * paper, its margins and the print scale, and are worked out here from the
+   * same column widths and row heights the grid paints with — anything else
+   * would put a break somewhere the cells are not.
+   */
+  const pagination = useMemo(() => {
+    if (!printArea || !layout?.pageSetup) return null;
+    return paginate(layout.pageSetup, printArea, cols, rows, displayOfRow);
+  }, [printArea, layout, cols, rows, displayOfRow]);
+
+  /** What Page Break Preview writes in the middle of each page. */
+  const pageLabel = useCallback(
+    (number: number) => t("print.page", { n: number }),
+    [t],
+  );
+
+  /**
+   * The app's own font, for the page number. Excel draws it in the UI font
+   * rather than the workbook's — the watermark is part of the view, not of the
+   * document, and a sheet set in a Mincho would otherwise print its page
+   * number in one too.
+   */
+  const uiFont = useMemo(
+    () =>
+      (typeof window === "undefined"
+        ? ""
+        : window.getComputedStyle(document.body).fontFamily) || "sans-serif",
+    [],
+  );
 
   /**
    * The frozen bands, in display rows and sheet columns.
@@ -2456,6 +2490,9 @@ export function CanvasGrid({
       filtering:
         (visibleRows !== null && filters.size > 0) || customFilterCols.size > 0,
       printArea,
+      pageBreaks: pagination,
+      pageLabel,
+      uiFont,
       outsidePrint,
       cellRich: richIndex,
       dataBars: barIndex,
@@ -2496,6 +2533,9 @@ export function CanvasGrid({
     filters,
     customFilterCols,
     printArea,
+    pagination,
+    pageLabel,
+    uiFont,
     outsidePrint,
   ]);
 
