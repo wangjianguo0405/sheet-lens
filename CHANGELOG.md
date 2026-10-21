@@ -12,6 +12,20 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.4] - 2026-10-21
+
+### Added
+
+- Outline groups as Excel draws them: the bracket beside the rows or columns a group holds, the +/− button on its summary line, and the level buttons in the corner of the gutter that step through the levels a sheet has — a change that lasts for the session only
+- Page Break Preview now breaks pages where Excel breaks them: the paper, the margins, the print scale and the rows and columns repeated on every page are read from the file; a break the paper makes is drawn as Excel's dashed rule, one placed by hand as a solid rule, and every page carries its number across the middle
+- The square in the top-left corner now selects the whole sheet, as it does in Excel
+
+### Fixed
+
+- A row or column scrolled under the header no longer draws its rule across the top-left corner and the grouping gutter — the header covers them, and a separator stays inside its own band
+- A filter button no longer floats on top of a frozen row or column
+- A sheet that only asks to fit one page is no longer split into four: a fit with no page count named means one page, which is what the file leaves out when it means one
+
 ## [1.0.3] - 2026-10-20
 
 ### Added
