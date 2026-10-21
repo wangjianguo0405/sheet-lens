@@ -607,6 +607,49 @@ pub struct SheetLayout {
     pub data_bars: Vec<DataBarCell>,
     /// Cells an icon-set rule marks, with the family and the level drawn.
     pub icons: Vec<IconCell>,
+    /// Excel's outline (Data > Group). Absent when the sheet groups nothing —
+    /// which is every workbook in the corpus — so the payload of those files is
+    /// untouched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Outline>,
+}
+
+/// The sheet's outline groups, as the file records them.
+///
+/// A group is not written as a range: `<row outlineLevel="1">` marks each
+/// detail row, and the row beside the group carries `collapsed="1"` when the
+/// group is closed. Detail rows are `hidden="1"` while collapsed, but the
+/// levels are what say where a group begins and ends, so they are kept as they
+/// are and the renderer builds the bands.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Outline {
+    pub rows: Vec<OutlineRow>,
+    pub cols: Vec<OutlineCol>,
+    /// Excel's default is a summary below and to the right of the detail; the
+    /// other side is what `<outlinePr summaryBelow="0">` asks for.
+    pub summary_below: bool,
+    pub summary_right: bool,
+}
+
+/// One row's outline facts. Rows at level 0 with nothing else to say are not
+/// listed at all.
+#[derive(Serialize, Clone)]
+pub struct OutlineRow {
+    pub row: u32,
+    /// 1-based; 0 is outside any group.
+    pub level: u8,
+    /// Set on the summary row of a closed group.
+    pub collapsed: bool,
+}
+
+/// One `<col>` run's outline facts, in the file's own `min`/`max` terms.
+#[derive(Serialize, Clone)]
+pub struct OutlineCol {
+    pub from: u32,
+    pub to: u32,
+    pub level: u8,
+    pub collapsed: bool,
 }
 
 /// One cell's note: where Excel marks it, and where hovering shows it.
@@ -782,6 +825,7 @@ impl SheetLayout {
             rich_cells: Vec::new(),
             data_bars: Vec::new(),
             icons: Vec::new(),
+            outline: None,
         }
     }
 }
@@ -2498,6 +2542,13 @@ fn parse_sheet<R: BufRead>(
     let mut declared_default_col: Option<f64> = None;
     let mut base_col_width: Option<f64> = None;
     let mut declared_default_row: Option<f64> = None;
+    // Outline groups: the level each row sits at, and where a closed group's
+    // summary row is. Collected as the sheet streams; the renderer turns them
+    // into bands and buttons.
+    let mut outline_rows: Vec<OutlineRow> = Vec::new();
+    let mut outline_cols: Vec<OutlineCol> = Vec::new();
+    let mut outline_summary_below = true;
+    let mut outline_summary_right = true;
     let mut extent_rows: u32 = 0;
     let mut extent_cols: u32 = 0;
     // Distinct styles seen so far, so each is stored once.
@@ -2541,6 +2592,15 @@ fn parse_sheet<R: BufRead>(
                             .and_then(|v| v.parse::<f64>().ok());
                         declared_default_row = attr(&element, b"defaultRowHeight")
                             .and_then(|v| v.parse::<f64>().ok());
+                    }
+                    // Which side of a group its summary row sits on. The
+                    // defaults are below and right; Excel writes the attribute
+                    // only when the author asked for the other side.
+                    b"outlinePr" => {
+                        outline_summary_below =
+                            flag_attr(&element, b"summaryBelow").unwrap_or(true);
+                        outline_summary_right =
+                            flag_attr(&element, b"summaryRight").unwrap_or(true);
                     }
                     b"sheetView" => {
                         // Absent means the default, which is on.
@@ -2603,6 +2663,22 @@ fn parse_sheet<R: BufRead>(
                         }
                         let last = max.min(min.saturating_add(MAX_EXPANDED_COLUMNS - 1));
 
+                        // Outline level and the closed-group marker, which
+                        // may sit on a column that carries no width at all.
+                        let level = attr(&element, b"outlineLevel")
+                            .and_then(|v| v.parse::<u8>().ok())
+                            .unwrap_or(0)
+                            .min(7);
+                        let collapsed = flag_attr(&element, b"collapsed").unwrap_or(false);
+                        if level > 0 || collapsed {
+                            outline_cols.push(OutlineCol {
+                                from: min - 1,
+                                to: last - 1,
+                                level,
+                                collapsed,
+                            });
+                        }
+
                         // A column run carries its default style in `style`,
                         // which is not the `s` a cell uses.
                         if let Some(index) = attr(&element, b"style")
@@ -2659,6 +2735,21 @@ fn parse_sheet<R: BufRead>(
                         // this the reader sees a row Excel does not draw at all.
                         if attr(&element, b"hidden").is_some_and(|v| v == "1" || v == "true") {
                             layout.hidden_rows.push(row - 1);
+                        }
+                        // The row's place in the outline. A detail row carries
+                        // the level; the summary row beside a closed group
+                        // carries `collapsed` and no level at all.
+                        let level = attr(&element, b"outlineLevel")
+                            .and_then(|v| v.parse::<u8>().ok())
+                            .unwrap_or(0)
+                            .min(7);
+                        let collapsed = flag_attr(&element, b"collapsed").unwrap_or(false);
+                        if level > 0 || collapsed {
+                            outline_rows.push(OutlineRow {
+                                row: row - 1,
+                                level,
+                                collapsed,
+                            });
                         }
                         // Rows can carry a style for the cells in them that have
                         // none of their own — how a filled row reads as solid.
@@ -2890,6 +2981,17 @@ fn parse_sheet<R: BufRead>(
     // compared byte for byte when a change is checked.
     layout.hidden_rows.sort_unstable();
     layout.hidden_cols.sort_unstable();
+
+    if !outline_rows.is_empty() || !outline_cols.is_empty() {
+        outline_rows.sort_by_key(|entry| entry.row);
+        outline_cols.sort_by_key(|entry| entry.from);
+        layout.outline = Some(Outline {
+            rows: outline_rows,
+            cols: outline_cols,
+            summary_below: outline_summary_below,
+            summary_right: outline_summary_right,
+        });
+    }
 
     // The last row is ended by the end of the sheet rather than by a `<row>`.
     collect_runs(&mut layout, pending_row, &mut pending);
@@ -3435,6 +3537,36 @@ mod tests {
         let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="1" ySplit="2" state="split"/></sheetView></sheetViews><sheetData/></worksheet>"#;
         let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
         assert_eq!((layout.frozen_rows, layout.frozen_cols), (0, 0));
+    }
+
+    #[test]
+    fn reads_the_outline_levels_and_the_summary_side() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet><sheetPr><outlinePr summaryBelow="0" summaryRight="0"/></sheetPr><cols>
+            <col min="2" max="4" hidden="1" outlineLevel="1" width="0" customWidth="1"/>
+            <col min="5" max="5" collapsed="1" width="9"/>
+        </cols><sheetData>
+            <row r="3" hidden="1" outlineLevel="2"></row>
+            <row r="4" collapsed="1"></row>
+        </sheetData></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        let outline = layout.outline.expect("outline should be present");
+        assert!(!outline.summary_below);
+        assert!(!outline.summary_right);
+        assert_eq!(outline.rows.len(), 2);
+        assert_eq!((outline.rows[0].row, outline.rows[0].level), (2, 2));
+        assert!(!outline.rows[0].collapsed);
+        assert_eq!(outline.rows[1].row, 3);
+        assert!(outline.rows[1].collapsed);
+        assert_eq!(outline.cols.len(), 2);
+        assert_eq!((outline.cols[0].from, outline.cols[0].to), (1, 3));
+        assert_eq!(outline.cols[0].level, 1);
+        assert!(outline.cols[1].collapsed);
+
+        // A sheet that groups nothing writes no outline at all.
+        let plain = br#"<worksheet><sheetData><row r="1"></row></sheetData></worksheet>"#;
+        let layout = parse_sheet(&plain[..], &cache.styles, &[]).expect("layout");
+        assert!(layout.outline.is_none());
     }
 
     #[test]

@@ -113,6 +113,17 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { markKey, type Marks } from "@/lib/marks";
+import {
+  colLevelButtonRect,
+  groupButtonBox,
+  groupOpen,
+  groupToggleLines,
+  outlineGutter,
+  rowLevelButtonRect,
+  colOutline as buildColOutline,
+  rowOutline as buildRowOutline,
+  type OutlineGroup,
+} from "@/lib/outline";
 
 /** A separator no path and no sheet name can hold, so a key can be split on it. */
 const SEP = "\u0000";
@@ -129,11 +140,13 @@ const sheetIdentity = (path: string, sheet: string) => `${path}${SEP}${sheet}`;
 /** The key one block of cells is held under, and the prefix that claims a sheet's. */
 const blockPrefix = (path: string, sheet: string) => `${sheetIdentity(path, sheet)}${SEP}`;
 
-/** Where a pointer landed: a cell, or one of the two gutter strips. */
+/** Where a pointer landed: a cell, one of the two gutter strips, or the
+ *  select-all square where they meet. */
 type Hit =
   | { kind: "cell"; row: number; col: number }
   | { kind: "rowHeader"; row: number }
   | { kind: "colHeader"; col: number }
+  | { kind: "corner" }
   | null;
 
 /** What a drag-select is anchored on, and whether it has moved off it yet. */
@@ -141,6 +154,13 @@ type DragAnchor =
   | { kind: "cell"; row: number; col: number; dragged: boolean }
   | { kind: "row"; row: number; dragged: boolean }
   | { kind: "column"; col: number; dragged: boolean };
+
+/** A press on Excel's outline chrome: a group's button or a corner level. */
+type OutlineAction =
+  | { kind: "rowGroup"; group: OutlineGroup }
+  | { kind: "colGroup"; group: OutlineGroup }
+  | { kind: "rowLevel"; level: number }
+  | { kind: "colLevel"; level: number };
 
 /** Where a sheet's view sits, in sheet-space pixels at 100% zoom. */
 export interface SheetView {
@@ -605,6 +625,8 @@ export function CanvasGrid({
   const autoScroll = useRef(0);
   /** Set when such a drag ends, so its closing click cannot collapse the block. */
   const suppressClick = useRef(false);
+  /** Set by a press on an outline button, whose closing click is not a select. */
+  const outlinePress = useRef(false);
 
   /** Read inside the paint pass, which runs outside React's render. */
   const selectionRef = useRef(selection);
@@ -1042,6 +1064,25 @@ export function CanvasGrid({
   }, [layout, hiddenOverride.cols]);
 
   /**
+   * The sheet's outline groups, rebuilt from the levels the file records, and
+   * the header size they ask for: Excel widens the row header by one 24px
+   * strip per level (plus one for "outside any group"), and the column header
+   * the same way, so the grouping chrome has its own room beside the numbers.
+   */
+  const outlineRows = useMemo(
+    () => (layout?.outline ? buildRowOutline(layout.outline) : null),
+    [layout],
+  );
+  const outlineCols = useMemo(
+    () => (layout?.outline ? buildColOutline(layout.outline) : null),
+    [layout],
+  );
+  const rowGutter = outlineGutter(outlineRows?.strips ?? 0);
+  const colGutter = outlineGutter(outlineCols?.strips ?? 0);
+  const headerW = ROW_HEADER_W + rowGutter;
+  const headerH = COL_HEADER_H + colGutter;
+
+  /**
    * Columns the file hid that the reader has since asked to see. The file keeps
    * no width for them — Excel writes `width="0"` beside the flag — so these
    * come back at the sheet's own default, which is what Excel puts back.
@@ -1216,8 +1257,8 @@ export function CanvasGrid({
     const height = el.clientHeight / z;
     // The view's far edges in sheet space, the gutters coming off as they do in
     // `buildView`: both scroll with the content.
-    const bottom = Math.max(0, scroll.top - COL_HEADER_H) + height;
-    const right = Math.max(0, scroll.left - ROW_HEADER_W) + width;
+    const bottom = Math.max(0, scroll.top - headerH) + height;
+    const right = Math.max(0, scroll.left - headerW) + width;
 
     /**
      * `keep` is the blank held in front of the view once the giving-back has
@@ -1249,7 +1290,7 @@ export function CanvasGrid({
 
     setVoidRows((current) => topUp(current, bottom, usedRowsTotal, baseRowH, keepRows, stepRows));
     setVoidCols((current) => topUp(current, right, usedColsTotal, baseColW, keepCols, stepCols));
-  }, [usedRowsTotal, usedColsTotal, baseRowH, baseColW]);
+  }, [usedRowsTotal, usedColsTotal, baseRowH, baseColW, headerW, headerH]);
   const resizeVoidRef = useRef(resizeVoid);
   resizeVoidRef.current = resizeVoid;
 
@@ -2054,7 +2095,7 @@ export function CanvasGrid({
           const frozen = freeze.height * factor;
           const top = (rows.offsets[display] ?? 0) * factor;
           const bottom =
-            (COL_HEADER_H + (rows.offsets[Math.min(display + 1, displayRowCount)] ?? 0)) * factor;
+            (headerH + (rows.offsets[Math.min(display + 1, displayRowCount)] ?? 0)) * factor;
           if (top < el.scrollTop + frozen) el.scrollTop = top - frozen;
           else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
         }
@@ -2064,7 +2105,7 @@ export function CanvasGrid({
       const frozen = freeze.width * factor;
       const left = (cols.offsets[atCol] ?? 0) * factor;
       const right =
-        (ROW_HEADER_W + (cols.offsets[Math.min(atCol + 1, sheetColsGuess)] ?? 0)) * factor;
+        (headerW + (cols.offsets[Math.min(atCol + 1, sheetColsGuess)] ?? 0)) * factor;
       if (left < el.scrollLeft + frozen) el.scrollLeft = left - frozen;
       else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth;
     }
@@ -2079,6 +2120,8 @@ export function CanvasGrid({
     layoutReady,
     reveal,
     freeze,
+    headerW,
+    headerH,
   ]);
 
   // --- fetching the cells the viewport needs ---
@@ -2154,8 +2197,8 @@ export function CanvasGrid({
     const sheetRows = Math.max(sheet.rows, layout.rows);
     const sheetCols = Math.max(sheet.cols, layout.cols);
 
-    const top = Math.max(0, scroll.top - COL_HEADER_H);
-    const left = Math.max(0, scroll.left - ROW_HEADER_W);
+    const top = Math.max(0, scroll.top - headerH);
+    const left = Math.max(0, scroll.left - headerW);
     const width = size.width / z;
     const height = size.height / z;
 
@@ -2379,6 +2422,10 @@ export function CanvasGrid({
       sheetCols,
       hiddenRows,
       hiddenCols,
+      headerW,
+      headerH,
+      outlineRows,
+      outlineCols,
       ...range,
       width,
       height,
@@ -2428,6 +2475,10 @@ export function CanvasGrid({
     rows,
     hiddenRows,
     hiddenCols,
+    headerW,
+    headerH,
+    outlineRows,
+    outlineCols,
     rowCount,
     colCount,
     merges,
@@ -2461,8 +2512,8 @@ export function CanvasGrid({
        * put while the rest scrolls, and the clip is what stops the scrolling
        * content from painting over them.
        */
-      const gx = ROW_HEADER_W;
-      const gy = COL_HEADER_H;
+      const gx = headerW;
+      const gy = headerH;
       const fr = freeze.rows;
       const fc = freeze.cols;
       const fw = freeze.width;
@@ -2624,8 +2675,8 @@ export function CanvasGrid({
       // canvas scrolls under them and a scroll does not re-render React.
       const area = overlayAreaRef.current;
       if (area) {
-        const gutterX = ROW_HEADER_W * view.zoom;
-        const gutterY = COL_HEADER_H * view.zoom;
+        const gutterX = headerW * view.zoom;
+        const gutterY = headerH * view.zoom;
         area.style.left = `${gutterX}px`;
         area.style.top = `${gutterY}px`;
         // The view is measured in sheet pixels; the layer that carries the
@@ -2634,18 +2685,28 @@ export function CanvasGrid({
         area.style.height = `${Math.max(0, view.height * view.zoom - gutterY)}px`;
 
         const headerDisplay = view.autoFilter ? view.displayOfRow(view.autoFilter.row) : -1;
-        const headerH = headerDisplay >= 0 ? spanAt(view.rows.offsets, headerDisplay) : 0;
+        const filterHeaderH = headerDisplay >= 0 ? spanAt(view.rows.offsets, headerDisplay) : 0;
         for (const [col, slot] of filterSlots.current) {
           if (headerDisplay < 0) {
             slot.style.display = "none";
             continue;
           }
-          slot.style.display = "";
-          slot.style.transform =
-            `translate(${(view.cols.offsets[col] - (col < fc ? 0 : view.scrollLeft)) * view.zoom}px, ` +
-            `${(view.rows.offsets[headerDisplay] - (headerDisplay < fr ? 0 : view.scrollTop)) * view.zoom}px)`;
+          const x = (view.cols.offsets[col] - (col < fc ? 0 : view.scrollLeft)) * view.zoom;
+          const y =
+            (view.rows.offsets[headerDisplay] - (headerDisplay < fr ? 0 : view.scrollTop)) *
+            view.zoom;
+          // A column scrolled under the frozen band belongs to the scrolling
+          // pane, which is clipped there; this layer is above the canvas, so
+          // its button has to be hidden by hand or it shows over the fixed
+          // columns. Same for a header row scrolled under frozen rows.
+          const underFreeze =
+            (col >= fc && x < freeze.width * view.zoom) ||
+            (headerDisplay >= fr && y < freeze.height * view.zoom);
+          slot.style.display = underFreeze ? "none" : "";
+          if (underFreeze) continue;
+          slot.style.transform = `translate(${x}px, ${y}px)`;
           slot.style.width = `${spanAt(view.cols.offsets, col) * view.zoom}px`;
-          slot.style.height = `${headerH * view.zoom}px`;
+          slot.style.height = `${filterHeaderH * view.zoom}px`;
         }
 
         // The file's input prompt sits beside the active cell — to its right
@@ -2779,8 +2840,8 @@ export function CanvasGrid({
       // shape near row 0 cannot paint over the gutters.
       const page = pageLayerRef.current;
       if (page) {
-        const gutterX = ROW_HEADER_W * view.zoom;
-        const gutterY = COL_HEADER_H * view.zoom;
+        const gutterX = headerW * view.zoom;
+        const gutterY = headerH * view.zoom;
         page.style.left = `${gutterX}px`;
         page.style.top = `${gutterY}px`;
         page.style.width = `${Math.max(0, view.width * view.zoom - gutterX)}px`;
@@ -2861,15 +2922,15 @@ export function CanvasGrid({
       const z = zoomRef.current;
       const px = clientX - rect.left;
       const py = clientY - rect.top;
-      const gutterW = ROW_HEADER_W * z;
-      const gutterH = COL_HEADER_H * z;
+      const gutterW = headerW * z;
+      const gutterH = headerH * z;
       const frozenW = freeze.width * z;
       const frozenH = freeze.height * z;
       /** A point inside a frozen band is the viewport's own; the rest scrolls. */
       const sheetX = (viewportX: number) =>
-        (viewportX + (viewportX < gutterW + frozenW ? 0 : el.scrollLeft)) / z - ROW_HEADER_W;
+        (viewportX + (viewportX < gutterW + frozenW ? 0 : el.scrollLeft)) / z - headerW;
       const sheetY = (viewportY: number) =>
-        (viewportY + (viewportY < gutterH + frozenH ? 0 : el.scrollTop)) / z - COL_HEADER_H;
+        (viewportY + (viewportY < gutterH + frozenH ? 0 : el.scrollTop)) / z - headerH;
 
       // The scroller's scrollbars are inside its border box but are not the
       // sheet. Hit-testing one as a cell started a block selection on the
@@ -2878,7 +2939,7 @@ export function CanvasGrid({
       // climbed a row at a time even though the pointer never left the bar.
       if (px >= el.clientWidth || py >= el.clientHeight) return null;
 
-      if (px < gutterW && py < gutterH) return null; // the corner
+      if (px < gutterW && py < gutterH) return { kind: "corner" };
       // The gutters are pinned, so their coordinate is the viewport's own.
       if (py < gutterH) {
         const x = sheetX(clientX - rect.left);
@@ -2900,8 +2961,145 @@ export function CanvasGrid({
       if (row < 0) return null;
       return { kind: "cell", row, col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
     },
-    [cols, rows, colCount, rowCount, sheetRowOf, freeze],
+    [cols, rows, colCount, rowCount, sheetRowOf, freeze, headerW, headerH],
   );
+
+  /**
+   * What the outline chrome under a point does when pressed: a group's +/-,
+   * or one of the corner buttons that opens every group to a level. Null for
+   * everything else, so the press falls through to the usual selection.
+   */
+  const outlineActionAt = useCallback(
+    (clientX: number, clientY: number): OutlineAction | null => {
+      const el = viewportRef.current;
+      if (!el) return null;
+      const z = zoomRef.current;
+      const rect = el.getBoundingClientRect();
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      if (px < 0 || py < 0 || px >= el.clientWidth || py >= el.clientHeight) return null;
+      const top = headerH * z;
+      const left = headerW * z;
+
+      // The level buttons share the corner: rows along its bottom, columns up
+      // its right side, exactly as they were measured off Excel's window.
+      if (px < left && py < top) {
+        for (let index = 0; outlineRows && index < outlineRows.strips; index += 1) {
+          const box = rowLevelButtonRect(index, colGutter);
+          if (
+            px >= box.x * z &&
+            px < (box.x + box.w) * z &&
+            py >= box.y * z &&
+            py < (box.y + box.h) * z
+          ) {
+            return { kind: "rowLevel", level: index };
+          }
+        }
+        for (let index = 0; outlineCols && index < outlineCols.strips; index += 1) {
+          const box = colLevelButtonRect(index, rowGutter);
+          if (
+            px >= box.x * z &&
+            px < (box.x + box.w) * z &&
+            py >= box.y * z &&
+            py < (box.y + box.h) * z
+          ) {
+            return { kind: "colLevel", level: index };
+          }
+        }
+        return null;
+      }
+
+      if (outlineRows && px < (headerW - ROW_HEADER_W) * z && py >= top) {
+        for (const group of outlineRows.groups) {
+          if (hiddenRows.has(group.summary)) continue;
+          const display = displayOfRow(group.summary);
+          if (display < 0) continue;
+          const box = groupButtonBox(
+            group.level - 1,
+            rows.offsets[display],
+            spanAt(rows.offsets, display),
+            false,
+          );
+          const x = box.x * z;
+          const y =
+            (headerH + box.y) * z - (display < freeze.rows ? 0 : el.scrollTop);
+          if (px >= x && px < x + box.w * z && py >= y && py < y + box.h * z) {
+            return { kind: "rowGroup", group };
+          }
+        }
+      }
+
+      if (outlineCols && py < (headerH - COL_HEADER_H) * z && px >= left) {
+        for (const group of outlineCols.groups) {
+          if (hiddenCols.has(group.summary)) continue;
+          const box = groupButtonBox(
+            group.level - 1,
+            cols.offsets[group.summary],
+            spanAt(cols.offsets, group.summary),
+            true,
+          );
+          const x =
+            (headerW + box.x) * z - (group.summary < freeze.cols ? 0 : el.scrollLeft);
+          const y = box.y * z;
+          if (px >= x && px < x + box.w * z && py >= y && py < y + box.h * z) {
+            return { kind: "colGroup", group };
+          }
+        }
+      }
+      return null;
+    },
+    [
+      outlineRows,
+      outlineCols,
+      hiddenRows,
+      hiddenCols,
+      displayOfRow,
+      rows,
+      cols,
+      freeze,
+      headerW,
+      headerH,
+    ],
+  );
+
+  /** Applies an outline press, as a session-only change like hiding a row. */
+  const applyOutlineAction = (action: OutlineAction) => {
+    const isRows = action.kind === "rowGroup" || action.kind === "rowLevel";
+    const lineOutline = isRows ? outlineRows : outlineCols;
+    if (!lineOutline) return;
+    if (action.kind === "rowLevel" || action.kind === "colLevel") {
+      // Excel's corner buttons show up to their own level and close what is
+      // deeper, whatever each group had been left at.
+      setHiddenOverride((prev) => {
+        const map = new Map(isRows ? prev.rows : prev.cols);
+        for (const [line, level] of lineOutline.levels) map.set(line, level > action.level);
+        return isRows ? { ...prev, rows: map } : { ...prev, cols: map };
+      });
+      return;
+    }
+    const group = action.group;
+    const hidden = isRows ? hiddenRows : hiddenCols;
+    const open = isRows
+      ? groupOpen(group, hidden, displayOfRow)
+      : (() => {
+          for (let col = group.from; col <= group.to; col += 1) {
+            if (!hiddenCols.has(col)) return true;
+          }
+          return false;
+        })();
+    const lines = groupToggleLines(
+      group,
+      (line) => lineOutline.levels.get(line) ?? 0,
+      open,
+    );
+    setHiddenOverride((prev) => {
+      const map = new Map(isRows ? prev.rows : prev.cols);
+      // Open now means the click closes it, so the line's new hidden state is
+      // exactly whether the group was open.
+      for (const line of lines) map.set(line, open);
+      return isRows ? { ...prev, rows: map } : { ...prev, cols: map };
+    });
+  };
 
   /**
    * The selection a drag from `anchor` has reached, or null when it has not
@@ -2913,6 +3111,7 @@ export function CanvasGrid({
    * gutter, and only the end it started from stays put.
    */
   const dragTo = useCallback((anchor: DragAnchor, hit: Exclude<Hit, null>): Area | null => {
+    if (hit.kind === "corner") return null;
     if (anchor.kind === "cell") {
       if (hit.kind !== "cell") return null;
       if (hit.row === anchor.row && hit.col === anchor.col) return null;
@@ -2944,8 +3143,8 @@ export function CanvasGrid({
 
     const rect = el.getBoundingClientRect();
     const z = zoomRef.current;
-    const left = rect.left + ROW_HEADER_W * z;
-    const top = rect.top + COL_HEADER_H * z;
+    const left = rect.left + headerW * z;
+    const top = rect.top + headerH * z;
     const right = rect.left + el.clientWidth;
     const bottom = rect.top + el.clientHeight;
 
@@ -2982,9 +3181,13 @@ export function CanvasGrid({
     }
 
     autoScroll.current = requestAnimationFrame(runAutoScroll);
-  }, [dragTo, hitAt, onSelect, schedule]);
+  }, [dragTo, hitAt, onSelect, schedule, headerW, headerH]);
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (outlinePress.current) {
+      outlinePress.current = false;
+      return;
+    }
     if (suppressClick.current) {
       suppressClick.current = false;
       return;
@@ -2992,6 +3195,12 @@ export function CanvasGrid({
     const hit = hitAt(event.clientX, event.clientY);
     if (!hit) return;
     const add = event.ctrlKey || event.metaKey;
+    // Excel's select-all square: the whole sheet, as Ctrl+A ends up doing.
+    if (hit.kind === "corner") {
+      const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
+      onSelect(rowsBetween(0, sheetRows - 1));
+      return;
+    }
     if (hit.kind === "cell") {
       // A Ctrl+click adds what it landed on to the selection rather than moving
       // there — and takes off the area it landed inside of, the whole of that
@@ -3083,7 +3292,7 @@ export function CanvasGrid({
    */
   const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     const hit = hitAt(event.clientX, event.clientY);
-    if (!hit) {
+    if (!hit || hit.kind === "corner") {
       aimMenuAt(null);
       return;
     }
@@ -3213,8 +3422,8 @@ export function CanvasGrid({
       const w = spanAt(cols.offsets, at.col);
       const h = spanAt(rows.offsets, display);
       // The same geometry the overlay painted the button with.
-      const screenX = (ROW_HEADER_W + sheetX) * z - (at.col < freeze.cols ? 0 : el.scrollLeft);
-      const screenY = (COL_HEADER_H + sheetY) * z - (display < freeze.rows ? 0 : el.scrollTop);
+      const screenX = (headerW + sheetX) * z - (at.col < freeze.cols ? 0 : el.scrollLeft);
+      const screenY = (headerH + sheetY) * z - (display < freeze.rows ? 0 : el.scrollTop);
       const size = Math.min(16, Math.max(9, h - 2)) * z;
       const left = rect.left + screenX + (w - size / z - 1) * z;
       const top = rect.top + screenY + (h * z - size) / 2;
@@ -3230,7 +3439,7 @@ export function CanvasGrid({
       });
       return true;
     },
-    [selection, validationAtCell, displayOfRow, cols, rows, freeze, path, sheet.name],
+    [selection, validationAtCell, displayOfRow, cols, rows, freeze, path, sheet.name, headerW, headerH],
   );
 
   // A list belongs to a cell on screen; a scroll or a press anywhere else is
@@ -3254,6 +3463,7 @@ export function CanvasGrid({
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     suppressClick.current = false;
+    outlinePress.current = false;
     // Every shortcut in the key handler needs the viewport focused, and a press
     // on the sheet is the moment to take it back. Sheet switches give it focus
     // already, but a press that landed elsewhere — the search box, a toolbar
@@ -3269,8 +3479,19 @@ export function CanvasGrid({
       event.preventDefault();
       return;
     }
+    // A press on a grouping button toggles that group and moves nothing else.
+    const outline = outlineActionAt(event.clientX, event.clientY);
+    if (outline) {
+      event.preventDefault();
+      // The click that follows the release would otherwise select the row or
+      // column the button sits on; a button is chrome, not a header.
+      outlinePress.current = true;
+      suppressClick.current = true;
+      applyOutlineAction(outline);
+      return;
+    }
     const hit = hitAt(event.clientX, event.clientY);
-    if (!hit) return;
+    if (!hit || hit.kind === "corner") return;
     // An anchor on a gutter picks a run of rows or columns; one on a cell runs a
     // block selection. Both are armed here and resolved by the closing click if
     // the pointer never moves off the anchor.
@@ -3489,7 +3710,7 @@ export function CanvasGrid({
     const lastCol = Math.max(0, sheetCols - 1);
     const el = viewportRef.current;
     const z = zoomRef.current;
-    const visible = el ? Math.floor((el.clientHeight / z - COL_HEADER_H) / baseRowH) : 20;
+    const visible = el ? Math.floor((el.clientHeight / z - headerH) / baseRowH) : 20;
     const page = Math.max(1, visible - 2 * OVERSCAN_ROWS);
     // A Ctrl+clicked selection answers the arrows as its active cell alone: the
     // other areas come off with the first press, as they do in Excel. The two
@@ -3717,8 +3938,8 @@ export function CanvasGrid({
       // The grab distance is in screen pixels, the offsets are in the sheet's.
       const grab = RESIZE_HANDLE / 2 / z;
 
-      if (py < COL_HEADER_H * z && px >= ROW_HEADER_W * z) {
-        const x = (px + el.scrollLeft) / z - ROW_HEADER_W;
+      if (py < headerH * z && px >= headerW * z) {
+        const x = (px + el.scrollLeft) / z - headerW;
         // The boundary under the pointer is the trailing edge of the column it
         // is in, or the leading edge of that column — which is the previous
         // column's trailing one. Two comparisons, not a scan of every column.
@@ -3728,8 +3949,8 @@ export function CanvasGrid({
           return { kind: "col", index: col - 1 };
         return null;
       }
-      if (px < ROW_HEADER_W * z && py >= COL_HEADER_H * z) {
-        const y = (py + el.scrollTop) / z - COL_HEADER_H;
+      if (px < headerW * z && py >= headerH * z) {
+        const y = (py + el.scrollTop) / z - headerH;
         const display = Math.min(displayRowCount - 1, indexAt(rows.offsets, y));
         const rowAt = (index: number) => (index < 0 ? -1 : sheetRowOf(index));
         if (Math.abs(rows.offsets[display + 1] - y) <= grab) {
@@ -3744,7 +3965,7 @@ export function CanvasGrid({
       }
       return null;
     },
-    [cols, rows, sheetColsGuess, sheetRowOf, displayRowCount],
+    [cols, rows, sheetColsGuess, sheetRowOf, displayRowCount, headerW, headerH],
   );
 
   /**
@@ -3835,7 +4056,7 @@ export function CanvasGrid({
     // mirrors to the left.
     const merge = mergeAt(note.row, note.col);
     const cellLeft =
-      rect.left + (ROW_HEADER_W + cols.offsets[note.col] - scrollRef.current.left) * z;
+      rect.left + (headerW + cols.offsets[note.col] - scrollRef.current.left) * z;
     const mergeEnd = merge === null ? undefined : cols.offsets[merge.col + merge.cols];
     const cellWidth =
       merge === null || mergeEnd === undefined
@@ -3843,7 +4064,7 @@ export function CanvasGrid({
         : mergeEnd - cols.offsets[merge.col];
     const cellRight = cellLeft + cellWidth * z;
     const cellTop =
-      rect.top + (COL_HEADER_H + rows.offsets[display] - scrollRef.current.top) * z;
+      rect.top + (headerH + rows.offsets[display] - scrollRef.current.top) * z;
     const gapX = NOTE_BOX_GAP_PX * z;
     const right = cellRight + gapX;
     const flip = right + w > rect.left + el.clientWidth;
@@ -3934,10 +4155,10 @@ export function CanvasGrid({
     const z = zoomRef.current;
     setTip({
       text,
-      x: rect.left + (ROW_HEADER_W + cols.offsets[hit.col] - scrollRef.current.left) * z,
+      x: rect.left + (headerW + cols.offsets[hit.col] - scrollRef.current.left) * z,
       y:
         rect.top +
-        (COL_HEADER_H + rows.offsets[display] - scrollRef.current.top) * z +
+        (headerH + rows.offsets[display] - scrollRef.current.top) * z +
         spanAt(rows.offsets, display) * z,
     });
   };
@@ -3947,8 +4168,19 @@ export function CanvasGrid({
     const el = viewportRef.current;
     if (!el) return;
     const target = resizeTargetAt(event.clientX, event.clientY);
-    el.style.cursor = target ? (target.kind === "col" ? "col-resize" : "row-resize") : "";
-    updateTooltip(target ? null : hitAt(event.clientX, event.clientY), event.clientX, event.clientY);
+    const outline = target ? null : outlineActionAt(event.clientX, event.clientY);
+    el.style.cursor = target
+      ? target.kind === "col"
+        ? "col-resize"
+        : "row-resize"
+      : outline
+        ? "pointer"
+        : "";
+    updateTooltip(
+      target || outline ? null : hitAt(event.clientX, event.clientY),
+      event.clientX,
+      event.clientY,
+    );
   };
 
   const handlePointerLeave = () => {
@@ -4036,8 +4268,8 @@ export function CanvasGrid({
     readoutTick,
   ]);
 
-  const contentW = (ROW_HEADER_W + cols.total) * zoomRef.current;
-  const contentH = (COL_HEADER_H + rows.total) * zoomRef.current;
+  const contentW = (headerW + cols.total) * zoomRef.current;
+  const contentH = (headerH + rows.total) * zoomRef.current;
 
   /**
    * The open cell's text, and the workbook's runs for it when it has any — a
