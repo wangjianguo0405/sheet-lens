@@ -612,6 +612,112 @@ pub struct SheetLayout {
     /// untouched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outline: Option<Outline>,
+    /// How the sheet is laid out for printing. Page Break Preview draws its
+    /// breaks and page numbers from this, and the page layout view lays the
+    /// sheet out on these pages.
+    pub page_setup: PageSetup,
+}
+
+/// The paper a sheet prints on, and where Excel breaks it into pages.
+///
+/// Everything here is the file's own answer. Where the file says nothing the
+/// ECMA-376 defaults apply — Letter paper, portrait, 100%, the standard
+/// margins — because that is what a reader that never met this printer has to
+/// assume. Excel writes `pageMargins` into every sheet and `pageSetup` into
+/// almost all of them, so the defaults rarely decide anything.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PageSetup {
+    /// `ST_PaperSize`; 9 is A4, 1 is Letter.
+    pub paper_size: u16,
+    pub landscape: bool,
+    /// Percent, 10–400. Ignored when `fit_to_page` is set.
+    pub scale: u16,
+    /// `<pageSetUpPr fitToPage="1"/>`: the sheet is scaled to fit the given
+    /// number of pages rather than printed at a fixed percentage.
+    pub fit_to_page: bool,
+    /// How many pages wide and tall the fit may use. ECMA-376 defaults both to
+    /// one, and Excel leaves the attributes out when they are one — so a sheet
+    /// that only says `fitToPage="1"` means "one page", not "as many as it
+    /// takes". An explicit `0` is what asks for automatic.
+    pub fit_to_width: u16,
+    pub fit_to_height: u16,
+    /// `overThenDown`: pages number across before they number down.
+    pub page_order_over_then_down: bool,
+    pub margins: PageMargins,
+    pub print_options: PrintOptions,
+    /// Rows and columns a manual break falls after, zero-based. Excel stores
+    /// only the breaks somebody placed; automatic ones are worked out from the
+    /// paper and are not in the file at all.
+    pub row_breaks: Vec<u32>,
+    pub col_breaks: Vec<u32>,
+    /// `_xlnm.Print_Titles`: the rows and columns repeated on every page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub print_titles: Option<PrintTitles>,
+}
+
+impl Default for PageSetup {
+    fn default() -> Self {
+        Self {
+            paper_size: 1,
+            landscape: false,
+            scale: 100,
+            fit_to_page: false,
+            fit_to_width: 1,
+            fit_to_height: 1,
+            page_order_over_then_down: false,
+            margins: PageMargins::default(),
+            print_options: PrintOptions::default(),
+            row_breaks: Vec::new(),
+            col_breaks: Vec::new(),
+            print_titles: None,
+        }
+    }
+}
+
+/// Page margins in inches, as `<pageMargins>` writes them.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PageMargins {
+    pub left: f64,
+    pub right: f64,
+    pub top: f64,
+    pub bottom: f64,
+    pub header: f64,
+    pub footer: f64,
+}
+
+impl Default for PageMargins {
+    fn default() -> Self {
+        Self {
+            left: 0.75,
+            right: 0.75,
+            top: 1.0,
+            bottom: 1.0,
+            header: 0.5,
+            footer: 0.5,
+        }
+    }
+}
+
+/// What a page carries besides the cells themselves.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrintOptions {
+    pub horizontal_centered: bool,
+    pub vertical_centered: bool,
+    pub headings: bool,
+    pub grid_lines: bool,
+}
+
+/// Rows and columns repeated on every page, as zero-based inclusive bounds.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PrintTitles {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<[u32; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cols: Option<[u32; 2]>,
 }
 
 /// The sheet's outline groups, as the file records them.
@@ -826,6 +932,7 @@ impl SheetLayout {
             data_bars: Vec::new(),
             icons: Vec::new(),
             outline: None,
+            page_setup: PageSetup::default(),
         }
     }
 }
@@ -1059,6 +1166,7 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     // white to the edge while every other sheet in the same workbook greyed out
     // past its last cell.
     layout.print_area = print_area(&workbook, sheet).or_else(|| layout.print_region());
+    layout.page_setup.print_titles = print_titles(&workbook, sheet);
     read_drawings(&mut zip, cache, &part, &mut layout);
     read_notes(&mut zip, &part, &mut layout);
     // Last, so that the extent a rule is clamped to is the finished one.
@@ -1607,6 +1715,13 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> Vec<Option<Vec<RichRun>>
 /// named with a `!` in it — which the formula splits on and cannot escape —
 /// are the two ways they come apart.
 fn print_area_names(workbook: &str) -> HashMap<String, String> {
+    defined_names(workbook, "_xlnm.Print_Area")
+}
+
+/// Every defined name called `which` in `workbook.xml`, keyed by the sheet it
+/// belongs to. The scope is `localSheetId`, an index into the workbook's own
+/// sheet order; a formula that names the sheet as well usually agrees with it.
+fn defined_names(workbook: &str, which: &str) -> HashMap<String, String> {
     let sheets: Vec<String> = scan(workbook, b"sheet")
         .iter()
         .filter_map(|element| element.get("name").cloned())
@@ -1625,7 +1740,7 @@ fn print_area_names(workbook: &str) -> HashMap<String, String> {
         buf.clear();
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(element)) if element.local_name().as_ref() == b"definedName" => {
-                printing = attr(&element, b"name").as_deref() == Some("_xlnm.Print_Area");
+                printing = attr(&element, b"name").as_deref() == Some(which);
                 if printing {
                     scope = attr(&element, b"localSheetId").and_then(|v| v.parse::<usize>().ok());
                     formula.clear();
@@ -1674,6 +1789,64 @@ fn print_area(workbook: &str, sheet_name: &str) -> Option<MergeRect> {
     print_area_names(workbook)
         .get(sheet_name)
         .and_then(|range| parse_range(range))
+}
+
+/// The sheet's `_xlnm.Print_Titles`: the rows and columns repeated at the top
+/// and left of every printed page.
+///
+/// The formula lists the ranges separated by commas — `Sheet!$A:$C` for the
+/// repeating columns, `Sheet!$1:$2` for the repeating rows, in either order.
+fn print_titles(workbook: &str, sheet_name: &str) -> Option<PrintTitles> {
+    let formula = defined_names(workbook, "_xlnm.Print_Titles").remove(sheet_name)?;
+    let mut titles = PrintTitles {
+        rows: None,
+        cols: None,
+    };
+    for part in formula.split(',') {
+        // A local name may leave the sheet out; the scope already says which.
+        let range = part.rsplit_once('!').map_or(part, |(_, tail)| tail).trim();
+        match title_axis(range) {
+            Some((true, first, last)) => titles.rows = Some([first, last]),
+            Some((false, first, last)) => titles.cols = Some([first, last]),
+            None => {}
+        }
+    }
+    (titles.rows.is_some() || titles.cols.is_some()).then_some(titles)
+}
+
+/// A `$A:$C` or `$1:$2` range, as zero-based inclusive bounds and which axis
+/// it lies on — `true` for rows.
+fn title_axis(range: &str) -> Option<(bool, u32, u32)> {
+    let (start, end) = range.split_once(':')?;
+    if let (Some(first), Some(last)) = (column_index(start), column_index(end)) {
+        return Some((false, first, last));
+    }
+    if let (Some(first), Some(last)) = (row_index(start), row_index(end)) {
+        return Some((true, first, last));
+    }
+    None
+}
+
+fn column_index(text: &str) -> Option<u32> {
+    let mut value = 0u32;
+    for ch in text.chars() {
+        match ch {
+            '$' => {}
+            'A'..='Z' | 'a'..='z' => {
+                value = value * 26 + (ch.to_ascii_uppercase() as u32 - 'A' as u32 + 1)
+            }
+            _ => return None,
+        }
+    }
+    (value > 0).then(|| value - 1)
+}
+
+fn row_index(text: &str) -> Option<u32> {
+    let digits: String = text.chars().filter(|ch| *ch != '$').collect();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u32>().ok().filter(|row| *row > 0).map(|row| row - 1)
 }
 
 /// The sheets that define a `_xlnm.Print_Area` of their own.
@@ -2580,6 +2753,12 @@ fn parse_sheet<R: BufRead>(
     let mut validation: Option<DataValidation> = None;
     let mut formula_slot: Option<u8> = None;
 
+    // Which `<brk>` list is being read. Both carry bare `<brk>` children, so
+    // the container is the only thing that says whether an id names a row or a
+    // column.
+    let mut in_row_breaks = false;
+    let mut in_col_breaks = false;
+
     loop {
         buf.clear();
         match xml.read_event_into(&mut buf) {
@@ -2651,9 +2830,95 @@ fn parse_sheet<R: BufRead>(
                             }
                         }
                     }
+                    // How the sheet prints. Page Break Preview draws from
+                    // this: the paper decides how many columns fit across,
+                    // the margins how much of it may be used, and the manual
+                    // breaks where a page ends regardless.
+                    b"pageMargins" => {
+                        let m = &mut layout.page_setup.margins;
+                        if let Some(v) = num_attr(&element, b"left") {
+                            m.left = v;
+                        }
+                        if let Some(v) = num_attr(&element, b"right") {
+                            m.right = v;
+                        }
+                        if let Some(v) = num_attr(&element, b"top") {
+                            m.top = v;
+                        }
+                        if let Some(v) = num_attr(&element, b"bottom") {
+                            m.bottom = v;
+                        }
+                        if let Some(v) = num_attr(&element, b"header") {
+                            m.header = v;
+                        }
+                        if let Some(v) = num_attr(&element, b"footer") {
+                            m.footer = v;
+                        }
+                    }
+                    b"pageSetup" => {
+                        let setup = &mut layout.page_setup;
+                        if let Some(v) = attr(&element, b"paperSize")
+                            .and_then(|v| v.parse::<u16>().ok())
+                        {
+                            setup.paper_size = v;
+                        }
+                        if let Some(v) = attr(&element, b"orientation") {
+                            setup.landscape = v == "landscape";
+                        }
+                        if let Some(v) = attr(&element, b"scale").and_then(|v| v.parse::<u16>().ok())
+                        {
+                            setup.scale = v;
+                        }
+                        if let Some(v) = attr(&element, b"fitToWidth")
+                            .and_then(|v| v.parse::<u16>().ok())
+                        {
+                            setup.fit_to_width = v;
+                        }
+                        if let Some(v) = attr(&element, b"fitToHeight")
+                            .and_then(|v| v.parse::<u16>().ok())
+                        {
+                            setup.fit_to_height = v;
+                        }
+                        setup.page_order_over_then_down =
+                            attr(&element, b"pageOrder").as_deref() == Some("overThenDown");
+                    }
+                    // What turns `scale` off: fit-to-page lives on
+                    // `<pageSetUpPr>` under `<sheetPr>`, not on `<pageSetup>`.
+                    b"pageSetUpPr" => {
+                        layout.page_setup.fit_to_page =
+                            flag_attr(&element, b"fitToPage").unwrap_or(false);
+                    }
+                    b"printOptions" => {
+                        let options = &mut layout.page_setup.print_options;
+                        options.horizontal_centered =
+                            flag_attr(&element, b"horizontalCentered").unwrap_or(false);
+                        options.vertical_centered =
+                            flag_attr(&element, b"verticalCentered").unwrap_or(false);
+                        options.headings = flag_attr(&element, b"headings").unwrap_or(false);
+                        options.grid_lines = flag_attr(&element, b"gridLines").unwrap_or(false);
+                    }
+                    b"rowBreaks" => in_row_breaks = true,
+                    b"colBreaks" => in_col_breaks = true,
+                    // Manual breaks only. Automatic ones are not in the file —
+                    // Excel works them out from the paper — and a stale
+                    // `man="0"` entry would add a second line where the paper
+                    // already breaks.
+                    b"brk" if in_row_breaks || in_col_breaks => {
+                        if flag_attr(&element, b"man").unwrap_or(false) {
+                            if let Some(id) = attr(&element, b"id")
+                                .and_then(|v| v.parse::<u32>().ok())
+                            {
+                                let list = if in_row_breaks {
+                                    &mut layout.page_setup.row_breaks
+                                } else {
+                                    &mut layout.page_setup.col_breaks
+                                };
+                                list.push(id.saturating_sub(1));
+                            }
+                        }
+                    }
                     b"col" => {
-                        let min = attr(&element, b"min")
-                            .and_then(|v| v.parse::<u32>().ok())
+                        let min = attr(&element, b"min")                            .and_then(|v| v.parse::<u32>().ok())
                             .unwrap_or(1);
                         let max = attr(&element, b"max")
                             .and_then(|v| v.parse::<u32>().ok())
@@ -2914,6 +3179,8 @@ fn parse_sheet<R: BufRead>(
             Ok(Event::End(element)) => {
                 match element.local_name().as_ref() {
                     b"filterColumn" => filter_col = None,
+                    b"rowBreaks" => in_row_breaks = false,
+                    b"colBreaks" => in_col_breaks = false,
                     b"v" => in_cell_value = false,
                     b"c" => rich_cell = None,
                     b"formula1" | b"formula2" => formula_slot = None,
@@ -3896,6 +4163,82 @@ mod tests {
         assert!(area.rows >= layout.rows && area.cols >= layout.cols);
         // Guards against a vacuous pass on a degenerate sheet.
         assert!(area.rows > 1 && area.cols > 1);
+    }
+
+    /// The paper, the margins and the breaks a sheet prints on all come from
+    /// the file; Page Break Preview lays the pages out from them.
+    #[test]
+    fn reads_the_paper_and_the_breaks_a_sheet_prints_on() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet>
+            <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
+            <printOptions horizontalCentered="1" gridLines="1"/>
+            <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
+            <pageSetup paperSize="9" orientation="landscape" scale="80" fitToWidth="1" fitToHeight="2" pageOrder="overThenDown"/>
+            <rowBreaks count="1" manualBreakCount="1"><brk id="5" max="16383" man="1"/></rowBreaks>
+            <colBreaks count="1" manualBreakCount="1"><brk id="3" max="1048575" man="1"/></colBreaks>
+            <sheetData/>
+        </worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        let setup = &layout.page_setup;
+
+        assert_eq!(setup.paper_size, 9);
+        assert!(setup.landscape);
+        assert_eq!(setup.scale, 80);
+        assert!(setup.fit_to_page, "fitToPage lives on pageSetUpPr");
+        assert_eq!((setup.fit_to_width, setup.fit_to_height), (1, 2));
+        assert!(setup.page_order_over_then_down);
+        assert_eq!(setup.margins.left, 0.7);
+        assert_eq!(setup.margins.top, 0.75);
+        assert!(setup.print_options.horizontal_centered);
+        assert!(setup.print_options.grid_lines);
+        assert!(!setup.print_options.headings);
+        // `<brk id>` is the row or column the break falls after, counted from 1.
+        assert_eq!(setup.row_breaks, vec![4]);
+        assert_eq!(setup.col_breaks, vec![2]);
+    }
+
+    /// A stored break is only a page break if it was placed by hand; an
+    /// automatic one is worked out from the paper and must not be replayed
+    /// from a stale entry.
+    #[test]
+    fn a_break_nobody_placed_is_not_a_page_break() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet><rowBreaks><brk id="12"/></rowBreaks><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        assert!(layout.page_setup.row_breaks.is_empty());
+    }
+
+    /// A sheet that turns fit-to-page on and says nothing else fits one page:
+    /// ECMA-376 defaults `fitToWidth` and `fitToHeight` to one, and Excel
+    /// leaves both attributes out when they are one.
+    #[test]
+    fn fit_to_page_alone_means_one_page() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><pageSetup paperSize="9" orientation="landscape"/><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        assert!(layout.page_setup.fit_to_page);
+        assert_eq!(layout.page_setup.fit_to_width, 1);
+        assert_eq!(layout.page_setup.fit_to_height, 1);
+    }
+
+    /// `_xlnm.Print_Titles` lists the repeating columns and rows in one
+    /// formula — each range spelled either `$A:$C` or `$1:$2`, sheet-qualified.
+    #[test]
+    fn reads_the_rows_and_columns_every_page_repeats() {
+        let xml = r#"<workbook>
+            <sheets>
+                <sheet name="Cover" sheetId="1"/>
+                <sheet name="Body" sheetId="2"/>
+            </sheets>
+            <definedNames>
+                <definedName name="_xlnm.Print_Titles" localSheetId="1">Body!$A:$C,Body!$1:$2</definedName>
+            </definedNames>
+        </workbook>"#;
+        let titles = print_titles(xml, "Body").expect("titles");
+        assert_eq!(titles.cols, Some([0, 2]));
+        assert_eq!(titles.rows, Some([0, 1]));
+        assert!(print_titles(xml, "Cover").is_none());
     }
 
     /// Only the strings that colour part of themselves keep their runs, the

@@ -543,6 +543,58 @@ export interface SheetLayout {
   icons: IconCell[];
   /** Cells carrying a note; Excel marks each with a red corner triangle. */
   notes?: NoteCell[];
+  /** The paper the sheet prints on, and where Excel breaks it into pages. */
+  pageSetup: PageSetup;
+}
+
+/**
+ * How a sheet is laid out for printing. Everything here is the file's own
+ * answer; the defaults are ECMA-376's, for the files that say nothing.
+ */
+export interface PageSetup {
+  /** `ST_PaperSize`; 9 is A4, 1 is Letter. */
+  paperSize: number;
+  landscape: boolean;
+  /** Percent, 10–400. Ignored when `fitToPage` is set. */
+  scale: number;
+  /** The sheet is scaled to fit a page count rather than printed at `scale`. */
+  fitToPage: boolean;
+  /** Pages the fit may use; 0 means automatic. */
+  fitToWidth: number;
+  fitToHeight: number;
+  /** `true` numbers pages across before down. */
+  pageOrderOverThenDown: boolean;
+  margins: PageMargins;
+  printOptions: PrintOptions;
+  /** Sheet rows and columns a manual break falls *after*, zero-based. */
+  rowBreaks: number[];
+  colBreaks: number[];
+  /** `_xlnm.Print_Titles`, zero-based inclusive bounds. */
+  printTitles?: PrintTitles | null;
+}
+
+/** Page margins in inches, as `<pageMargins>` writes them. */
+export interface PageMargins {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  header: number;
+  footer: number;
+}
+
+/** What a page carries besides the cells themselves. */
+export interface PrintOptions {
+  horizontalCentered: boolean;
+  verticalCentered: boolean;
+  headings: boolean;
+  gridLines: boolean;
+}
+
+/** Rows and columns repeated on every page. */
+export interface PrintTitles {
+  rows?: [number, number] | null;
+  cols?: [number, number] | null;
 }
 
 /**
