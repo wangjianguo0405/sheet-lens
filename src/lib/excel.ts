@@ -708,12 +708,18 @@ export function sheetLayout(path: string, sheet: string): Promise<SheetLayout> {
   return invoke<SheetLayout>("sheet_layout", { path, sheet });
 }
 
+/**
+ * Distinct values in one column, counted over the rows the other columns'
+ * filters leave visible — Excel's drop-down list. `criteria` is every active
+ * filter; the backend drops the one on `col` itself.
+ */
 export function columnValues(
   path: string,
   sheet: string,
   col: number,
   firstRow: number,
   lastRow: number,
+  criteria: FilterCriterion[],
   query: string,
 ): Promise<ValueCount[]> {
   return invoke<ValueCount[]>("column_values", {
@@ -722,6 +728,7 @@ export function columnValues(
     col,
     firstRow,
     lastRow,
+    criteria,
     query: query.trim() || null,
   });
 }

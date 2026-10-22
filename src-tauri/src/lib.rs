@@ -140,6 +140,7 @@ fn column_values(
     col: u32,
     first_row: u32,
     last_row: u32,
+    criteria: Vec<FilterCriterion>,
     query: Option<String>,
     store: State<'_, Shared>,
 ) -> Result<Vec<ValueCount>, String> {
@@ -147,7 +148,19 @@ fn column_values(
     let book = books
         .get(&path)
         .ok_or_else(|| format!("workbook not open: {path}"))?;
-    book.column_values(&sheet, col, first_row, last_row, query.as_deref(), MAX_VALUES)
+    let criteria: Vec<(u32, Vec<String>)> = criteria
+        .into_iter()
+        .map(|criterion| (criterion.col, criterion.values))
+        .collect();
+    book.column_values(
+        &sheet,
+        col,
+        first_row,
+        last_row,
+        &criteria,
+        query.as_deref(),
+        MAX_VALUES,
+    )
 }
 
 #[tauri::command(async)]

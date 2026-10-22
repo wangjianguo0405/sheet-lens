@@ -977,6 +977,12 @@ export function CanvasGrid({
     [printArea],
   );
 
+  /** The filters as the drop-down list's query takes them. */
+  const filterCriteria = useMemo(
+    () => [...filters].map(([col, values]) => ({ col, values })),
+    [filters],
+  );
+
   const displayRows = useMemo(() => {
     if (!visibleRows) return null;
     if (!autoFilter) return visibleRows;
@@ -4423,6 +4429,7 @@ export function CanvasGrid({
                   col={col}
                   firstRow={autoFilter.row + 1}
                   lastRow={autoFilter.row + autoFilter.rows - 1}
+                  criteria={filterCriteria}
                   selected={filters.get(col) ?? []}
                   filtered={customFilterCols.has(col)}
                   onApply={(values) => {
