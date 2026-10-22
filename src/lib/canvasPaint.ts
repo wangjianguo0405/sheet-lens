@@ -2516,8 +2516,11 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
         const w = spanAt(view.cols.offsets, active.col);
         const h = spanAt(view.rows.offsets, display);
         const size = Math.min(16, Math.max(9, h - 2));
-        const bx = x + w - size - 1;
-        const by = y + (h - size) / 2;
+        // Excel draws the button *outside* the cell: it starts on the right
+        // border and hangs over the next column, pinned to the bottom edge
+        // (measured 16x16, its bottom 2 px above the cell's).
+        const bx = x + w - 1;
+        const by = y + h - size - 2;
         fill(ctx, bx, by, size, size, view.theme.background);
         ring(ctx, bx, by, size, size, view.theme.border);
         const cx = bx + size / 2;

@@ -3475,8 +3475,10 @@ export function CanvasGrid({
       const screenX = (headerW + sheetX) * z - (at.col < freeze.cols ? 0 : el.scrollLeft);
       const screenY = (headerH + sheetY) * z - (display < freeze.rows ? 0 : el.scrollTop);
       const size = Math.min(16, Math.max(9, h - 2)) * z;
-      const left = rect.left + screenX + (w - size / z - 1) * z;
-      const top = rect.top + screenY + (h * z - size) / 2;
+      // The painter puts the button on the cell's right border, hanging over
+      // the next column, and pins it to the bottom edge.
+      const left = rect.left + screenX + (w - 1) * z;
+      const top = rect.top + screenY + (h - size / z - 2) * z;
       if (clientX < left || clientX > left + size || clientY < top || clientY > top + size) {
         return false;
       }
