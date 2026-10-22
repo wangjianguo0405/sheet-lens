@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 /**
@@ -45,7 +46,7 @@ interface UnhideDialogProps {
    * rather than appearing somewhere the pointer is not.
    */
   at: UnhideAnchor | null;
-  onUnhide: (sheet: string) => void;
+  onUnhide: (sheets: string[]) => void;
 }
 
 /**
@@ -56,6 +57,12 @@ interface UnhideDialogProps {
  * looking at the tab row they are the same thing, which is where this is opened
  * from. Nothing it does is written back — the flag it clears belongs to this
  * window, and reopening the workbook puts the file's own answer back.
+ *
+ * Excel's own dialog takes one name. This one takes several — a file can hide
+ * a dozen sheets at a time — and a filter box, because the six-name box it
+ * shares with Excel is not where a long list can be found by eye. The filter
+ * only narrows what is shown: a name picked before the query was typed stays
+ * picked, and is part of what the button confirms.
  */
 export function UnhideDialog({
   open,
@@ -65,15 +72,50 @@ export function UnhideDialog({
   onUnhide,
 }: UnhideDialogProps) {
   const { t } = useTranslation();
-  const [picked, setPicked] = useState<string | null>(null);
+  /** In the order they were picked, so the last one becomes the current sheet. */
+  const [picked, setPicked] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  /** The row a Shift-click measures its range from, as an index into `sheets`. */
+  const [anchor, setAnchor] = useState<number | null>(null);
 
   /** Opens on the last name in the list, chosen and ready to confirm. */
   useEffect(() => {
-    if (open) setPicked(sheets[sheets.length - 1] ?? null);
+    if (!open) return;
+    setPicked(sheets.length ? [sheets[sheets.length - 1]] : []);
+    setQuery("");
+    setAnchor(null);
   }, [open, sheets]);
 
-  const confirm = () => {
-    if (picked) onUnhide(picked);
+  const visible = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return needle
+      ? sheets.filter((name) => name.toLocaleLowerCase().includes(needle))
+      : sheets;
+  }, [sheets, query]);
+
+  const toggle = (name: string, shiftKey: boolean) => {
+    const index = sheets.indexOf(name);
+    if (shiftKey && anchor !== null) {
+      const [from, to] = anchor <= index ? [anchor, index] : [index, anchor];
+      const range = sheets.slice(from, to + 1);
+      setPicked((prev) => [...prev, ...range.filter((one) => !prev.includes(one))]);
+      return;
+    }
+    setAnchor(index);
+    setPicked((prev) =>
+      prev.includes(name) ? prev.filter((one) => one !== name) : [...prev, name],
+    );
+  };
+
+  /**
+   * Confirms everything picked. A double-click on a row that is not picked
+   * confirms that one name alone, which is what double-clicking a list of
+   * names has always done here — the row's own two clicks leave it unpicked,
+   * so the intent is read from that rather than from the click count.
+   */
+  const confirm = (only?: string) => {
+    const names = only ? [only] : picked;
+    if (names.length) onUnhide(names);
     onOpenChange(false);
   };
 
@@ -101,25 +143,39 @@ export function UnhideDialog({
           <DialogTitle className="text-sm">{t("sheets.unhideTitle")}</DialogTitle>
         </DialogHeader>
 
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") confirm();
+          }}
+          placeholder={t("sheets.unhideFilter")}
+          aria-label={t("sheets.unhideFilter")}
+          className="h-7 rounded border-border px-2 text-xs"
+        />
+
         <div
           role="listbox"
           aria-label={t("sheets.unhideTitle")}
+          aria-multiselectable="true"
           className="overflow-y-auto rounded border border-border"
           style={{ height: ROW_H * ROWS }}
         >
-          {sheets.map((name) => (
+          {visible.map((name) => (
             <button
               key={name}
               type="button"
               role="option"
-              aria-selected={name === picked}
-              onClick={() => setPicked(name)}
-              onDoubleClick={confirm}
+              aria-selected={picked.includes(name)}
+              onClick={(event) => toggle(name, event.shiftKey)}
+              onDoubleClick={() =>
+                confirm(picked.includes(name) ? undefined : name)
+              }
               className={cn(
                 "block w-full truncate px-2 text-left text-xs",
                 // The same blue a search hit is walked to in, so a list of
                 // names selects the same way in both panels.
-                name === picked
+                picked.includes(name)
                   ? "bg-[#0F6CBD] text-white"
                   : "hover:bg-accent/40",
               )}
@@ -128,16 +184,23 @@ export function UnhideDialog({
               {name}
             </button>
           ))}
+          {visible.length === 0 && (
+            <p className="px-2 py-2 text-xs text-muted-foreground">
+              {t("sheets.none")}
+            </p>
+          )}
         </div>
 
         <DialogFooter>
           <Button
             size="sm"
             className="h-7 text-xs"
-            disabled={!picked}
-            onClick={confirm}
+            disabled={picked.length === 0}
+            onClick={() => confirm()}
           >
-            {t("sheets.unhideGo")}
+            {picked.length > 1
+              ? `${t("sheets.unhideGo")} (${picked.length})`
+              : t("sheets.unhideGo")}
           </Button>
         </DialogFooter>
       </DialogContent>

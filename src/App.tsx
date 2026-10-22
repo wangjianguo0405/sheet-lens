@@ -732,14 +732,14 @@ export default function App() {
   );
 
   /**
-   * Bringing a sheet back makes it the current one, as Excel's Unhide does —
-   * you asked to see it, so it is what the window shows.
+   * Bringing sheets back makes the last one picked the current one, as Excel's
+   * Unhide does — you asked to see it, so it is what the window shows.
    */
-  const handleUnhideSheet = useCallback(
-    (name: string) => {
-      applySheetHidden(name, false);
+  const handleUnhideSheets = useCallback(
+    (names: string[]) => {
+      for (const name of names) applySheetHidden(name, false);
       setSheetGroup(null);
-      updateActive({ sheet: name });
+      if (names.length) updateActive({ sheet: names[names.length - 1] });
     },
     [applySheetHidden, updateActive],
   );
@@ -1325,7 +1325,7 @@ export default function App() {
           onOpenChange={setUnhideOpen}
           sheets={hiddenNames}
           at={unhideAt}
-          onUnhide={handleUnhideSheet}
+          onUnhide={handleUnhideSheets}
         />
 
         <UpdateDialog
