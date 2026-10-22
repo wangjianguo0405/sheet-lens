@@ -2882,8 +2882,15 @@ fn parse_sheet<R: BufRead>(
                     // split counts are authoritative; `topLeftCell` names the
                     // scrolling region's first cell, which is the same count
                     // when a writer leaves them out.
+                    //
+                    // Each custom sheet view keeps a pane of its own, and those
+                    // are somebody's saved views rather than the one the file
+                    // opens at — a workbook of thirteen of them left the grid
+                    // frozen and scrolled to the last one's corner.
                     b"pane" => {
-                        if attr(&element, b"state").as_deref() == Some("frozen") {
+                        if borrowed_filters == 0
+                            && attr(&element, b"state").as_deref() == Some("frozen")
+                        {
                             let split = |name: &[u8]| {
                                 attr(&element, name)
                                     .and_then(|value| value.parse::<u32>().ok())
@@ -3193,7 +3200,12 @@ fn parse_sheet<R: BufRead>(
                     // Notes live in a legacy VML part, not in the drawing.
                     b"legacyDrawing" => layout.legacy_rel = attr(&element, b"id"),
                     b"filterColumn" => {
-                        let offset = attr(&element, b"colId").and_then(|v| v.parse::<u32>().ok());
+                        // A custom sheet view's filter is relative to a range
+                        // of its own; reading its columns as this filter's
+                        // would hide buttons on columns Excel still shows.
+                        let offset = (borrowed_filters == 0)
+                            .then(|| attr(&element, b"colId").and_then(|v| v.parse::<u32>().ok()))
+                            .flatten();
                         // ECMA-376 defaults `showButton` to true; "0" is the
                         // file saying Excel draws no drop-down on that column
                         // — a merged header's covered columns are written that
@@ -3928,6 +3940,20 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_validation_list_escaped_as_entities() {
+        let cache = Cache::default();
+        // A file that escapes its characters delivers the list in pieces, with
+        // an entity event between them. Keeping only the last text fragment
+        // left a lone quote, and the in-cell dropdown then offered nothing.
+        let xml = br#"<worksheet><dataValidations><dataValidation type="list" sqref="B1"><formula1>"&#23550;&#35937;,&#23550;&#35937;&#22806;"</formula1></dataValidation></dataValidations><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        assert_eq!(
+            layout.validations[0].formula1.as_deref(),
+            Some("\"対象,対象外\"")
+        );
+    }
+
+    #[test]
     fn reads_the_rows_and_columns_a_sheet_view_freezes() {
         let cache = Cache::default();
         let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="1" ySplit="2" topLeftCell="B3" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetData/></worksheet>"#;
@@ -3946,18 +3972,25 @@ mod tests {
         assert_eq!((layout.frozen_rows, layout.frozen_cols), (0, 0));
     }
 
+    /// Custom sheet views each keep a pane of their own, and they are not where
+    /// the file opens: one workbook carried thirteen, and reading the last one
+    /// froze seven rows and scrolled the sheet to its corner.
     #[test]
-    fn reads_a_validation_list_escaped_as_entities() {
+    fn a_custom_sheet_views_pane_is_not_the_view_the_sheet_opens_at() {
         let cache = Cache::default();
-        // A file that escapes its characters delivers the list in pieces, with
-        // an entity event between them. Keeping only the last text fragment
-        // left a lone quote, and the in-cell dropdown then offered nothing.
-        let xml = br#"<worksheet><dataValidations><dataValidation type="list" sqref="B1"><formula1>"&#23550;&#35937;,&#23550;&#35937;&#22806;"</formula1></dataValidation></dataValidations><sheetData/></worksheet>"#;
+        let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="14" ySplit="4" topLeftCell="O5" state="frozen"/>
+                <autoFilter ref="O4:ET69"><filterColumn colId="1" showButton="0"/></autoFilter>
+            </sheetView></sheetViews>
+            <customSheetViews><customSheetView guid="{1}" showAutoFilter="1">
+                <pane xSplit="14" ySplit="7" topLeftCell="BW45" state="frozen"/>
+                <autoFilter ref="A7:EV119"><filterColumn colId="0" showButton="0"/></autoFilter>
+            </customSheetView></customSheetViews><sheetData/></worksheet>"#;
         let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
-        assert_eq!(
-            layout.validations[0].formula1.as_deref(),
-            Some("\"対象,対象外\"")
-        );
+        assert_eq!((layout.frozen_rows, layout.frozen_cols), (4, 14));
+        assert_eq!(layout.view_top_left, Some([4, 14]));
+        // Its filter columns are relative to its own range, not this one's.
+        let filter = layout.auto_filter.expect("the sheet view's filter");
+        assert_eq!(filter.hidden_buttons, vec![15]);
     }
 
     #[test]
