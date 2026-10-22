@@ -217,6 +217,12 @@ export interface AutoFilter {
    * filter button to draw Excel's funnel.
    */
   custom: number[];
+  /**
+   * Columns the file hides the drop-down on (`showButton="0"`), absolute. Excel
+   * writes one per column a merged header covers, so the region carries a
+   * single button at its right edge.
+   */
+  hiddenButtons?: number[];
 }
 
 /** One row's place in Excel's outline. */
