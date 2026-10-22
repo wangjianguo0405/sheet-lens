@@ -173,6 +173,11 @@ pub struct Align {
     /// rather than the line turned as a whole. It is not an angle, which is why
     /// it has a field of its own.
     pub stacked: bool,
+    /// `<alignment readingOrder>`: 0 is the context (left-to-right here), 1 is
+    /// explicitly left-to-right and 2 is right-to-left. Only 2 changes a
+    /// drawing: it sets the paragraph's bidi base direction, reordering mixed
+    /// text (`abc` + Hebrew) without changing the cell's alignment.
+    pub reading_order: u8,
 }
 
 /// One side of a cell's border, already reduced to what CSS needs.
@@ -246,6 +251,10 @@ pub struct CellStyle {
     /// `textRotation="255"`: characters one below the next, each upright.
     #[serde(skip_serializing_if = "is_false")]
     pub stacked: bool,
+    /// `readingOrder="2"`: lay the cell's text out right-to-left. Omitted for
+    /// the flat left-to-right cells, which are nearly all of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reading_order: Option<u8>,
     pub bold: bool,
     pub italic: bool,
     pub strike: bool,
@@ -298,6 +307,7 @@ impl PartialEq for CellStyle {
             && self.shrink == other.shrink
             && self.rotation == other.rotation
             && self.stacked == other.stacked
+            && self.reading_order == other.reading_order
             && self.bold == other.bold
             && self.italic == other.italic
             && self.strike == other.strike
@@ -323,6 +333,7 @@ impl std::hash::Hash for CellStyle {
         self.shrink.hash(state);
         self.rotation.hash(state);
         self.stacked.hash(state);
+        self.reading_order.hash(state);
         self.bold.hash(state);
         self.italic.hash(state);
         self.strike.hash(state);
@@ -346,6 +357,7 @@ impl CellStyle {
             && !self.shrink
             && self.rotation == 0
             && !self.stacked
+            && self.reading_order.is_none()
             && !self.bold
             && !self.italic
             && !self.strike
@@ -507,6 +519,7 @@ impl Styles {
             shrink: entry.align.shrink,
             rotation: entry.align.rotation,
             stacked: entry.align.stacked,
+            reading_order: (entry.align.reading_order != 0).then_some(entry.align.reading_order),
             bold: font.is_some_and(|font| font.bold),
             italic: font.is_some_and(|font| font.italic),
             strike: font.is_some_and(|font| font.strike),
@@ -2836,6 +2849,9 @@ fn read_alignment(element: &BytesStart, slot: &mut Align) {
             _ => {}
         }
     }
+    if let Some(value) = attr(element, b"readingOrder") {
+        slot.reading_order = value.trim().parse::<u8>().unwrap_or(0).min(2);
+    }
     if let Some(value) = attr(element, b"indent") {
         slot.indent = value.trim().parse::<u8>().unwrap_or(0);
     }
@@ -3595,6 +3611,46 @@ fn scan(xml: &str, element: &[u8]) -> Vec<HashMap<String, String>> {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn indexed_palette_overrides_the_stock_table() {
+        // A 55-entry list fills indexes 8..63, leaving 63 to the stock table.
+        let mut colors = String::new();
+        for i in 0..55 {
+            if i == 0 {
+                colors.push_str("<rgbColor rgb=\"00ABCDEF\"/>");
+            } else {
+                colors.push_str(&format!("<rgbColor rgb=\"00{:06X}\"/>", i));
+            }
+        }
+        let xml = format!(
+            "<styleSheet><colors><indexedColors>{colors}</indexedColors></colors></styleSheet>"
+        );
+        let indexed = indexed_palette(&xml);
+        assert_eq!(indexed[8].as_deref(), Some("#ABCDEF"));
+        assert_eq!(indexed[9].as_deref(), Some("#000001"));
+        assert_eq!(indexed[63].as_deref(), Some("#333333"));
+
+        let palette = Palette {
+            theme: &[],
+            indexed: &indexed,
+        };
+        let mut color = BytesStart::new("color");
+        color.push_attribute(("indexed", "8"));
+        assert_eq!(color_of(&color, palette).as_deref(), Some("#ABCDEF"));
+    }
+
+    #[test]
+    fn reading_order_survives_the_alignment_walk() {
+        let xml = r#"<styleSheet><cellXfs count="2">
+            <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"><alignment readingOrder="2"/></xf>
+            <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+        </cellXfs></styleSheet>"#;
+        let styles = parse_styles(xml, Palette::EMPTY);
+        let rtl = styles.cell_style(0, 11.0).expect("rtl style");
+        assert_eq!(rtl.reading_order, Some(2));
+        assert!(styles.cell_style(1, 11.0).is_none());
+    }
 
     fn sample_path() -> &'static str {
         concat!(
