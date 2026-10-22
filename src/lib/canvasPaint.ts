@@ -1791,17 +1791,10 @@ function paintSpanSurface(
   const lastCol = rect.col + rect.cols - 1;
 
   // Gridlines sit under fills: a region carrying one loses its own rules, and
-  // so does an edge whose neighbour is filled.
-  if (view.showGrid) {
-    const filled =
-      (style?.fill ?? null) !== null || (style?.pattern ?? null) !== null;
-    if (!filled && !columnFilled(view, lastCol + 1, rect.row, lastRow)) {
-      line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
-    }
-    if (!filled && !rowFilled(view, lastRow + 1, rect.col, lastCol)) {
-      line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
-    }
-  }
+  // so does an edge whose neighbour is filled. They are drawn per boundary
+  // cell inside the loop below, so that an edge with a border gets none — a
+  // dashed rule would otherwise show a gridline through its gaps.
+  const filled = (style?.fill ?? null) !== null || (style?.pattern ?? null) !== null;
 
   // The region's outline, resolved one boundary cell at a time, exactly as the
   // DOM renderer did — sides facing another cell of the same region are not
