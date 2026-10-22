@@ -12,6 +12,19 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.6] - 2026-10-22
+
+### Improved
+
+- A filter column's drop-down lists the values the other columns' filters leave on screen, as Excel does, instead of the whole column
+
+### Fixed
+
+- An in-cell list whose values the file escapes as character references now opens, and a list that names its range (a defined name such as `対象`) offers that range's values
+- The in-cell drop-down arrow sits on the cell's right edge, along the bottom, as Excel draws it — and the press that opens the list follows it there
+- A workbook with saved custom views opens at its own frozen rows, scroll position and column widths rather than at the last saved view's, and draws the filter buttons Excel shows
+- A narrow filter header keeps its text instead of cutting it down to the few pixels left beside the button
+
 ## [1.0.5] - 2026-10-22
 
 ### Added
