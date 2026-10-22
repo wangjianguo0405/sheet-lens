@@ -12,6 +12,23 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.5] - 2026-10-22
+
+### Added
+
+- The Unhide dialog filters the list and can bring several sheets back at once: Shift-click takes a run of names, everything picked returns together, and the last one picked becomes the current sheet
+
+### Improved
+
+- Hairline borders are dotted, the way Excel draws them, and a dashed or dotted edge keeps its rhythm from cell to cell instead of joining two dots into a wider one
+- A filter button is drawn only on the columns the file gives one — a merged header carries a single button at its right edge — and it never grows past its row
+
+### Fixed
+
+- A sheet with a fixed print scale whose print area is wider than the paper now breaks pages where Excel breaks them
+- The page number in Page Break Preview is the size Excel draws it, and shrinks to stay inside a narrow or short page
+- A gridline no longer shows through the gaps of a dashed or dotted border
+
 ## [1.0.4] - 2026-10-21
 
 ### Added
