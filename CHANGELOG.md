@@ -12,6 +12,24 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.7] - 2026-10-22
+
+### Added
+
+- A workbook opens where it was left: the same sheet, view, zoom and cursor, instead of always the first sheet at A1
+- Conditional formatting for date periods — today, yesterday, this week, last month and the rest — is drawn as Excel draws it
+- Justified and distributed text spreads across the cell, and accounting underlines run the whole width of the cell
+- A workbook that replaces Excel's indexed colours gets its own palette, and a cell marked right-to-left is laid out that way
+
+### Improved
+
+- Each of the thirteen border styles draws its own pattern; six dashed variants used to share one
+- The row-number column widens as the visible row numbers gain digits
+
+### Fixed
+
+- A negative data bar is drawn black unless the file names a colour; it used to take the positive bar's colour
+
 ## [1.0.6] - 2026-10-22
 
 ### Improved
