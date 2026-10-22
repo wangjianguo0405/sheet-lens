@@ -11,7 +11,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { columnValues, type ValueCount } from "@/lib/excel";
+import { columnValues, type FilterCriterion, type ValueCount } from "@/lib/excel";
 
 interface FilterButtonProps {
   path: string;
@@ -20,6 +20,11 @@ interface FilterButtonProps {
   /** Data rows only — the header row is excluded. */
   firstRow: number;
   lastRow: number;
+  /**
+   * Every filter the sheet has on, this column's included. The list is counted
+   * over the rows the *other* columns leave visible — see `columnValues`.
+   */
+  criteria: FilterCriterion[];
   selected: string[];
   /**
    * The file filters this column with a condition ("&gt; 20"), which the value
@@ -35,6 +40,7 @@ export function FilterButton({
   col,
   firstRow,
   lastRow,
+  criteria,
   selected,
   filtered,
   onApply,
@@ -60,7 +66,7 @@ export function FilterButton({
     // Typing in the search box re-queries the backend, so a column with more
     // distinct values than the cap still remains reachable.
     const timer = window.setTimeout(() => {
-      columnValues(path, sheet, col, firstRow, lastRow, query)
+      columnValues(path, sheet, col, firstRow, lastRow, criteria, query)
         .then((result) => {
           if (cancelled) return;
           setOptions(result);
@@ -78,7 +84,7 @@ export function FilterButton({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [open, path, sheet, col, firstRow, lastRow, query]);
+  }, [open, path, sheet, col, firstRow, lastRow, criteria, query]);
 
   const toggle = (value: string) =>
     setDraft((prev) => {

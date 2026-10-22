@@ -383,13 +383,20 @@ impl Book {
         Ok(None)
     }
 
-    /// Distinct display values in one column, most common first.
+    /// Distinct display values in one column, most common first, counted over
+    /// the rows the other columns' filters leave visible.
+    ///
+    /// That is the list Excel's drop-down offers: a column's own criterion is
+    /// not applied to it — the list is how the criterion gets changed, and a
+    /// list narrowed by its own filter could never offer back what was turned
+    /// off — while every other column's is.
     pub fn column_values(
         &self,
         sheet: &str,
         col: u32,
         first_row: u32,
         last_row: u32,
+        criteria: &[(u32, Vec<String>)],
         query: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ValueCount>, String> {
@@ -408,10 +415,26 @@ impl Book {
             .saturating_add(1)
             .min(origin_row.saturating_add(height as u32));
         let needle = query.map(str::to_lowercase);
+        let wanted: Vec<(u32, HashSet<String>)> = criteria
+            .iter()
+            .filter(|(criterion_col, _)| *criterion_col != col)
+            .map(|(criterion_col, values)| {
+                (
+                    *criterion_col,
+                    values.iter().map(|value| value.to_lowercase()).collect(),
+                )
+            })
+            .collect();
 
         let mut counts: HashMap<String, u32> = HashMap::new();
         let mut text = String::new();
-        for r in start..end {
+        'rows: for r in start..end {
+            for (criterion_col, accepted) in &wanted {
+                write_text(data.range.get_value((r, *criterion_col)), &mut text);
+                if !accepted.contains(&text.to_lowercase()) {
+                    continue 'rows;
+                }
+            }
             write_text(data.range.get_value((r, col)), &mut text);
             if let Some(needle) = &needle {
                 if !text.to_lowercase().contains(needle) {
@@ -1178,7 +1201,7 @@ mod tests {
 
         // The autofilter covers A1:E401, so data rows are 1..=400.
         let values = book
-            .column_values("Query", 4, 1, 400, None, 50)
+            .column_values("Query", 4, 1, 400, &[], None, 50)
             .unwrap();
         let flagged = values
             .iter()
@@ -1188,10 +1211,30 @@ mod tests {
         assert_eq!(flagged.count, 36);
 
         let filtered = book
-            .column_values("Query", 4, 1, 400, Some("要確"), 50)
+            .column_values("Query", 4, 1, 400, &[], Some("要確"), 50)
             .unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].value, "要確認");
+    }
+
+    #[test]
+    fn column_values_follow_the_other_columns_filters() {
+        let Some(book) = sample() else { return };
+        let criteria = [(4, vec!["要確認".to_owned()])];
+
+        // Another column lists only the rows the filter leaves — 36 of them.
+        let ids = book.column_values("Query", 0, 1, 400, &criteria, None, 500).unwrap();
+        assert_eq!(ids.iter().map(|entry| entry.count).sum::<u32>(), 36);
+
+        // The filtered column keeps its own full list: its criterion is how the
+        // list gets changed, so it must not narrow it.
+        let own = book.column_values("Query", 4, 1, 400, &criteria, None, 50).unwrap();
+        let flagged = own
+            .iter()
+            .find(|entry| entry.value == "要確認")
+            .expect("要確認 should appear");
+        assert_eq!(flagged.count, 36);
+        assert!(own.len() > 1, "the column's other values stay reachable");
     }
 
     #[test]
