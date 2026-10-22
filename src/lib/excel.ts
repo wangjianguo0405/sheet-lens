@@ -571,6 +571,8 @@ export interface PageSetup {
   colBreaks: number[];
   /** `_xlnm.Print_Titles`, zero-based inclusive bounds. */
   printTitles?: PrintTitles | null;
+  /** DPI the sheet was last laid out for, from the stored printer settings. */
+  printDpi?: number;
 }
 
 /** Page margins in inches, as `<pageMargins>` writes them. */
