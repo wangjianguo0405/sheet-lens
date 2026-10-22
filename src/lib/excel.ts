@@ -503,6 +503,12 @@ export interface SheetLayout {
   /** Data-validation rules: what a cell accepts, and what Excel offers for it. */
   validations: DataValidation[];
   /**
+   * The workbook's defined names this sheet can see, name -> formula. A list
+   * validation may name one (`対象` -> `LIST!$H$2:$H$23`) instead of spelling
+   * out the range.
+   */
+  names?: Record<string, string>;
+  /**
    * Rows and columns the file hides. Excel draws none of them and skips the
    * number, so the gap is the only sign it gives.
    */

@@ -3480,7 +3480,7 @@ export function CanvasGrid({
       if (clientX < left || clientX > left + size || clientY < top || clientY > top + size) {
         return false;
       }
-      void validationListItems(path, sheet.name, rule.formula1).then((items) => {
+      void validationListItems(path, sheet.name, rule.formula1, layout?.names).then((items) => {
         if (items.length === 0) return;
         const boxHeight = Math.min(items.length * 24 + 8, 272);
         const y = Math.min(rect.top + screenY + h * z + 2, window.innerHeight - boxHeight - 8);
