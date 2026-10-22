@@ -545,6 +545,7 @@ function paintPattern(
   y: number,
   length: number,
   fallback: string,
+  phase = 0,
 ): void {
   const color = edge.color ?? fallback;
   const w = Math.max(1, edge.width);
@@ -574,6 +575,10 @@ function paintPattern(
   ctx.lineCap = "butt";
   // CSS's own patterns, near enough: dashes about three widths, dots one.
   ctx.setLineDash(edge.line === "dotted" ? [w, w] : [3 * w, 2 * w]);
+  // Each cell strokes its own side; without carrying the pattern's phase from
+  // the sheet's origin, every cell restarts it and two dashes that meet at a
+  // cell edge read as one double-width dot.
+  ctx.lineDashOffset = -phase;
   ctx.beginPath();
   if (orientation === "h") {
     ctx.moveTo(x, y + w / 2);
@@ -680,12 +685,13 @@ function paintEdges(
   y: number,
   w: number,
   h: number,
+  origin: { x: number; y: number },
 ): void {
   const fallback = view.theme.border;
-  if (edges.top) strokeEdge(ctx, edges.top, "h", x, y, w, fallback);
-  if (edges.bottom) strokeEdge(ctx, edges.bottom, "h", x, y + h, w, fallback);
-  if (edges.left) strokeEdge(ctx, edges.left, "v", x, y, h, fallback);
-  if (edges.right) strokeEdge(ctx, edges.right, "v", x + w, y, h, fallback);
+  if (edges.top) strokeEdge(ctx, edges.top, "h", x, y, w, fallback, origin.x);
+  if (edges.bottom) strokeEdge(ctx, edges.bottom, "h", x, y + h, w, fallback, origin.x);
+  if (edges.left) strokeEdge(ctx, edges.left, "v", x, y, h, fallback, origin.y);
+  if (edges.right) strokeEdge(ctx, edges.right, "v", x + w, y, h, fallback, origin.y);
 }
 
 /**
@@ -1807,20 +1813,26 @@ function paintSpanSurface(
     const ch = spanAt(view.rows.offsets, at);
     for (let c = rect.col; c <= lastCol; c += 1) {
       if (c < view.colStart || c >= view.colEnd) continue;
-      paintEdges(
-        ctx,
-        view,
-        resolvedEdges(
-          view.styleAt,
-          { row: r, col: c, rows: 1, cols: 1 },
-          { rows: view.sheetRows, cols: view.sheetCols },
-          { top: r > rect.row, bottom: r < lastRow, left: c > rect.col, right: c < lastCol },
-        ),
-        ox + view.cols.offsets[c],
-        cy,
-        spanAt(view.cols.offsets, c),
-        ch,
+      const edges = resolvedEdges(
+        view.styleAt,
+        { row: r, col: c, rows: 1, cols: 1 },
+        { rows: view.sheetRows, cols: view.sheetCols },
+        { top: r > rect.row, bottom: r < lastRow, left: c > rect.col, right: c < lastCol },
       );
+      const cx = ox + view.cols.offsets[c];
+      const cw = spanAt(view.cols.offsets, c);
+      if (view.showGrid && !filled) {
+        if (c === lastCol && !edges.right && !columnFilled(view, lastCol + 1, rect.row, lastRow)) {
+          line(ctx, cx + cw - 1, cy, 1, ch, view.theme.gridline);
+        }
+        if (r === lastRow && !edges.bottom && !rowFilled(view, lastRow + 1, rect.col, lastCol)) {
+          line(ctx, cx, cy + ch - 1, cw, 1, view.theme.gridline);
+        }
+      }
+      paintEdges(ctx, view, edges, cx, cy, cw, ch, {
+        x: view.cols.offsets[c],
+        y: view.rows.offsets[at],
+      });
     }
   }
 
@@ -1943,36 +1955,38 @@ function paintCellSurface(
   // The hairline grid, before the borders so a border wins where both land. It
   // lies under fills as well: an edge with a filled cell on either side is not
   // drawn, which is what turns a filled block into a solid rectangle.
-  if (view.showGrid) {
-    if (!own && !pattern && !hasFill(view, sheetRow, col + 1)) {
-      line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
-    }
-    if (!own && !pattern && !hasFill(view, sheetRow + 1, col)) {
-      line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
-    }
-  }
-
+  //
+  // An edge that carries a border gets no gridline at all: a dashed or dotted
+  // rule leaves its gaps open, and a gridline underneath showed through them,
+  // so the whole edge read as a solid line.
+  //
   // Excel drops the borders between the cells of a Center-Across run: the run
   // is one box, so only its outer edges are drawn. Without this every cell kept
   // its own left and right rule, and a header centred across a dozen columns
   // came out as a dozen little boxes.
   const run = key === null ? undefined : view.centerRuns.at.get(key);
-  paintEdges(
-    ctx,
-    view,
-    resolvedEdges(
-      view.styleAt,
-      { row: sheetRow, col, rows: 1, cols: 1 },
-      { rows: view.sheetRows, cols: view.sheetCols },
-      run
-        ? { left: col > run.col, right: col < run.col + run.cols - 1 }
-        : undefined,
-    ),
-    x,
-    y,
-    w,
-    h,
+  const edges = resolvedEdges(
+    view.styleAt,
+    { row: sheetRow, col, rows: 1, cols: 1 },
+    { rows: view.sheetRows, cols: view.sheetCols },
+    run
+      ? { left: col > run.col, right: col < run.col + run.cols - 1 }
+      : undefined,
   );
+  if (view.showGrid) {
+    if (!edges.right && !own && !pattern && !hasFill(view, sheetRow, col + 1)) {
+      line(ctx, x + w - 1, y, 1, h, view.theme.gridline);
+    }
+    if (!edges.bottom && !own && !pattern && !hasFill(view, sheetRow + 1, col)) {
+      line(ctx, x, y + h - 1, w, 1, view.theme.gridline);
+    }
+  }
+
+  const display = view.displayOfRow(sheetRow);
+  paintEdges(ctx, view, edges, x, y, w, h, {
+    x: view.cols.offsets[col],
+    y: display >= 0 ? view.rows.offsets[display] : 0,
+  });
 
   paintDiagonal(
     ctx,

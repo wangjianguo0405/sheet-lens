@@ -2364,7 +2364,9 @@ fn pattern_kind(name: &str) -> Option<&'static str> {
 /// The rank follows Excel's own ordering so the heavier of two shared edges wins.
 fn edge_style(name: &str) -> Option<BorderEdge> {
     let (line, width, rank) = match name {
-        "hair" => ("solid", 1, 1),
+        // Excel's hairline is a dotted rule, not a thin solid one: a 1:1
+        // CopyPicture of a hair-bordered row shows 1 px dots with 1 px gaps.
+        "hair" => ("dotted", 1, 1),
         "dotted" => ("dotted", 1, 2),
         "dashed" => ("dashed", 1, 3),
         "thin" => ("solid", 1, 4),
