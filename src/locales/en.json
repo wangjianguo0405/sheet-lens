@@ -105,6 +105,7 @@
     "unhide": "Unhide (&U)",
     "copyName": "Copy sheet name (&C)",
     "unhideTitle": "Unhide sheet",
+    "unhideFilter": "Filter sheets",
     "unhideGo": "Unhide",
     "hidden": "Hidden"
   },

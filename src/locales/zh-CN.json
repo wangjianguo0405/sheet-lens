@@ -104,6 +104,7 @@
     "unhide": "取消隐藏(&U)",
     "copyName": "复制工作表名(&C)",
     "unhideTitle": "取消隐藏工作表",
+    "unhideFilter": "筛选工作表",
     "unhideGo": "取消隐藏",
     "hidden": "已隐藏"
   },

@@ -104,6 +104,7 @@
     "unhide": "再表示(&U)",
     "copyName": "シート名をコピー(&C)",
     "unhideTitle": "シートの再表示",
+    "unhideFilter": "シートを絞り込む",
     "unhideGo": "再表示",
     "hidden": "非表示"
   },
