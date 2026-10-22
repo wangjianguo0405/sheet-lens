@@ -17,11 +17,24 @@ export async function validationListItems(
   path: string,
   sheet: string,
   formula: string | null | undefined,
+  names: Record<string, string> = {},
 ): Promise<string[]> {
-  if (!formula) return [];
-  let text = formula.trim();
-  if (text.startsWith("=")) text = text.slice(1).trim();
+  // A sheet may keep its choices in a range and name it: `<formula1>対象</formula1>`
+  // with `対象` defined as `LIST!$H$2:$H$23`. Follow the name to the formula it
+  // stands for before deciding which kind of list this is.
+  let text = (formula ?? "").trim();
+  const seen = new Set<string>();
+  for (let depth = 0; depth < 4 && text; depth += 1) {
+    const bare = text.startsWith("=") ? text.slice(1).trim() : text;
+    text = bare;
+    if (bare.startsWith("\"")) break;
+    const target = definedName(names, bare);
+    if (!target || target === bare || seen.has(target)) break;
+    seen.add(target);
+    text = target;
+  }
 
+  if (!text) return [];
   if (text.startsWith("\"")) {
     const inner = text.slice(1, text.endsWith("\"") ? -1 : undefined).replace(/""/g, "\"");
     return inner
@@ -47,6 +60,16 @@ export async function validationListItems(
     .flat()
     .map((cell) => cell.text.trim())
     .filter((text) => text.length > 0);
+}
+
+/** A defined name is not case-sensitive, as it is not in Excel either. */
+function definedName(names: Record<string, string>, name: string): string | null {
+  if (!name) return null;
+  const key = name.toLowerCase();
+  for (const [candidate, formula] of Object.entries(names)) {
+    if (candidate.toLowerCase() === key) return formula;
+  }
+  return null;
 }
 
 /** `Sheet2!A1:B2` names its sheet; a bare `A1:B2` means the one on screen. */

@@ -560,6 +560,10 @@ pub struct SheetLayout {
     /// Data-validation rules: what a cell accepts, and the prompt or dropdown
     /// Excel offers for it.
     pub validations: Vec<DataValidation>,
+    /// The workbook's defined names as this sheet sees them, name -> formula.
+    /// A list validation may name one instead of writing out a range.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub names: HashMap<String, String>,
     /// Rows the file hides. Excel draws none of them and skips their numbers —
     /// there is no marker at the boundary, so the gap is the only sign. A
     /// hidden row keeps whatever height it had, which is what unhiding puts
@@ -929,6 +933,7 @@ impl SheetLayout {
             row_heights_px: HashMap::new(),
             merges: Vec::new(),
             validations: Vec::new(),
+            names: HashMap::new(),
             hidden_rows: Vec::new(),
             hidden_cols: Vec::new(),
             auto_filter: None,
@@ -1180,6 +1185,7 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     // past its last cell.
     layout.print_area = print_area(&workbook, sheet).or_else(|| layout.print_region());
     layout.page_setup.print_titles = print_titles(&workbook, sheet);
+    layout.names = visible_names(&workbook, sheet);
     layout.page_setup.print_dpi = read_print_dpi(&mut zip, &part);
     read_drawings(&mut zip, cache, &part, &mut layout);
     read_notes(&mut zip, &part, &mut layout);
@@ -1752,6 +1758,49 @@ fn print_area_names(workbook: &str) -> HashMap<String, String> {
     defined_names(workbook, "_xlnm.Print_Area")
 }
 
+/// Every `<definedName>` in `workbook.xml`: the sheet it is scoped to (`None`
+/// for a workbook-wide name), its name, and its formula.
+fn defined_name_entries(workbook: &str) -> Vec<(Option<usize>, String, String)> {
+    let mut out = Vec::new();
+    let mut reader = XmlReader::from_str(workbook);
+    let mut buf = Vec::new();
+    let mut open = false;
+    let mut scope: Option<usize> = None;
+    let mut name = String::new();
+    let mut formula = String::new();
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) if element.local_name().as_ref() == b"definedName" => {
+                open = true;
+                scope = attr(&element, b"localSheetId").and_then(|v| v.parse::<usize>().ok());
+                name = attr(&element, b"name").unwrap_or_default();
+                formula.clear();
+            }
+            Ok(Event::Text(text)) if open => {
+                if let Ok(content) = text.xml_content(XmlVersion::default()) {
+                    formula.push_str(&content);
+                }
+            }
+            // An escaped character arrives as its own event, as it does in a
+            // shared string, so the formula has to be stitched back together.
+            Ok(Event::GeneralRef(reference)) if open => {
+                if let Some(ch) = entity_text(&reference) {
+                    formula.push(ch);
+                }
+            }
+            Ok(Event::End(element)) if element.local_name().as_ref() == b"definedName" => {
+                open = false;
+                out.push((scope.take(), name.trim().to_owned(), formula.trim().to_owned()));
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Every defined name called `which` in `workbook.xml`, keyed by the sheet it
 /// belongs to. The scope is `localSheetId`, an index into the workbook's own
 /// sheet order; a formula that names the sheet as well usually agrees with it.
@@ -1762,56 +1811,49 @@ fn defined_names(workbook: &str, which: &str) -> HashMap<String, String> {
         .collect();
 
     let mut out = HashMap::new();
-    let mut reader = XmlReader::from_str(workbook);
-    let mut buf = Vec::new();
-    // The name being read: the sheet its scope points at, and the formula, which
-    // is the element's text rather than one of its attributes.
-    let mut printing = false;
-    let mut scope: Option<usize> = None;
-    let mut formula = String::new();
+    for (scope, name, formula) in defined_name_entries(workbook) {
+        if name != which {
+            continue;
+        }
+        // `<sheet>!<range>`, the sheet name quoted only when it must be — and a
+        // local name may leave the sheet out altogether, since the scope
+        // already says which it is.
+        let (named, range) = match formula.split_once('!') {
+            Some((owner, range)) => (Some(owner.trim_matches('\'')), range.trim()),
+            None => (None, formula.as_str()),
+        };
+        let owner = scope
+            .and_then(|index| sheets.get(index).cloned())
+            .or_else(|| named.map(str::to_owned));
+        if let Some(owner) = owner {
+            out.insert(owner, range.to_owned());
+        }
+    }
+    out
+}
 
-    loop {
-        buf.clear();
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(element)) if element.local_name().as_ref() == b"definedName" => {
-                printing = attr(&element, b"name").as_deref() == Some(which);
-                if printing {
-                    scope = attr(&element, b"localSheetId").and_then(|v| v.parse::<usize>().ok());
-                    formula.clear();
-                }
+/// The names one sheet can see: the workbook-wide ones, plus those scoped to
+/// it, which win — the order Excel resolves them in.
+///
+/// A data-validation list may name one of these instead of writing out a range
+/// (`<formula1>対象</formula1>`, with `対象` defined as `LIST!$H$2:$H$23`),
+/// which is what a sheet that keeps its choices on a hidden list does.
+fn visible_names(workbook: &str, sheet: &str) -> HashMap<String, String> {
+    let sheets: Vec<String> = scan(workbook, b"sheet")
+        .iter()
+        .filter_map(|element| element.get("name").cloned())
+        .collect();
+    let sheet_index = sheets.iter().position(|candidate| candidate == sheet);
+
+    let mut out = HashMap::new();
+    for (scope, name, formula) in defined_name_entries(workbook) {
+        match scope {
+            Some(owner) if Some(owner) == sheet_index => {
+                out.insert(name, formula);
             }
-            Ok(Event::Text(text)) if printing => {
-                if let Ok(content) = text.xml_content(XmlVersion::default()) {
-                    formula.push_str(&content);
-                }
+            None => {
+                out.entry(name).or_insert(formula);
             }
-            // An escaped character arrives as its own event, as it does in a
-            // shared string, so the formula has to be stitched back together.
-            Ok(Event::GeneralRef(reference)) if printing => {
-                if let Some(ch) = entity_text(&reference) {
-                    formula.push(ch);
-                }
-            }
-            Ok(Event::End(element)) if element.local_name().as_ref() == b"definedName" => {
-                if printing {
-                    printing = false;
-                    // `<sheet>!<range>`, the sheet name quoted only when it
-                    // must be — and a local name may leave the sheet out
-                    // altogether, since the scope already says which it is.
-                    let (named, range) = match formula.split_once('!') {
-                        Some((owner, range)) => (Some(owner.trim_matches('\'')), range.trim()),
-                        None => (None, formula.trim()),
-                    };
-                    let owner = scope
-                        .take()
-                        .and_then(|index| sheets.get(index).cloned())
-                        .or_else(|| named.map(str::to_owned));
-                    if let Some(owner) = owner {
-                        out.insert(owner, range.to_owned());
-                    }
-                }
-            }
-            Ok(Event::Eof) | Err(_) => break,
             _ => {}
         }
     }
@@ -3237,7 +3279,21 @@ fn parse_sheet<R: BufRead>(
                     b"colBreaks" => in_col_breaks = false,
                     b"v" => in_cell_value = false,
                     b"c" => rich_cell = None,
-                    b"formula1" | b"formula2" => formula_slot = None,
+                    b"formula1" | b"formula2" => {
+                        // The text arrives in pieces when the file escapes its
+                        // characters as entity references, so it is trimmed
+                        // once, here, rather than per fragment.
+                        if let Some(rule) = validation.as_mut() {
+                            let slot = if formula_slot == Some(1) {
+                                &mut rule.formula1
+                            } else {
+                                &mut rule.formula2
+                            };
+                            let trimmed = slot.as_deref().map(str::trim).unwrap_or("");
+                            *slot = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+                        }
+                        formula_slot = None;
+                    }
                     b"dataValidation" => {
                         if let Some(rule) = validation.take() {
                             layout.validations.push(rule);
@@ -3272,12 +3328,25 @@ fn parse_sheet<R: BufRead>(
                 if let (Some(rule), Ok(content)) =
                     (validation.as_mut(), text.xml_content(XmlVersion::default()))
                 {
-                    let content = content.trim().to_owned();
-                    if formula_slot == Some(1) {
-                        rule.formula1 = Some(content);
+                    let slot = if formula_slot == Some(1) {
+                        &mut rule.formula1
                     } else {
-                        rule.formula2 = Some(content);
-                    }
+                        &mut rule.formula2
+                    };
+                    slot.get_or_insert_with(String::new).push_str(&content);
+                }
+            }
+            // A character the file writes as an entity (`&#23550;`) arrives as
+            // its own event: without this the list of values breaks at the
+            // first such character and the rule reads as next to empty.
+            Ok(Event::GeneralRef(reference)) if formula_slot.is_some() => {
+                if let (Some(rule), Some(ch)) = (validation.as_mut(), entity_text(&reference)) {
+                    let slot = if formula_slot == Some(1) {
+                        &mut rule.formula1
+                    } else {
+                        &mut rule.formula2
+                    };
+                    slot.get_or_insert_with(String::new).push(ch);
                 }
             }
             Ok(Event::Eof) => break,
@@ -3878,6 +3947,20 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_validation_list_escaped_as_entities() {
+        let cache = Cache::default();
+        // A file that escapes its characters delivers the list in pieces, with
+        // an entity event between them. Keeping only the last text fragment
+        // left a lone quote, and the in-cell dropdown then offered nothing.
+        let xml = br#"<worksheet><dataValidations><dataValidation type="list" sqref="B1"><formula1>"&#23550;&#35937;,&#23550;&#35937;&#22806;"</formula1></dataValidation></dataValidations><sheetData/></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        assert_eq!(
+            layout.validations[0].formula1.as_deref(),
+            Some("\"対象,対象外\"")
+        );
+    }
+
+    #[test]
     fn reads_the_outline_levels_and_the_summary_side() {
         let cache = Cache::default();
         let xml = br#"<worksheet><sheetPr><outlinePr summaryBelow="0" summaryRight="0"/></sheetPr><cols>
@@ -4222,6 +4305,33 @@ mod tests {
         assert_eq!(areas.get("Cover").map(String::as_str), Some("$D$4:$E$9"));
         // Only print areas are worth keeping.
         assert_eq!(areas.len(), 3);
+    }
+
+    /// A list validation may name its range instead of spelling it out, and a
+    /// name scoped to a sheet has to win over the workbook-wide one — the
+    /// order Excel resolves a cell's formula in.
+    #[test]
+    fn a_sheet_sees_the_workbook_names_and_its_own() {
+        let xml = r#"<workbook>
+            <sheets>
+                <sheet name="One" sheetId="1"/>
+                <sheet name="Two" sheetId="2"/>
+            </sheets>
+            <definedNames>
+                <definedName name="対象">LIST!$H$2:$H$23</definedName>
+                <definedName name="対象" localSheetId="1">LIST!$I$2:$I$3</definedName>
+                <definedName name="OnlyTwo" localSheetId="1">One!$A$1</definedName>
+            </definedNames>
+        </workbook>"#;
+
+        let one = visible_names(xml, "One");
+        // The workbook-wide name, until this sheet defines its own.
+        assert_eq!(one.get("対象").map(String::as_str), Some("LIST!$H$2:$H$23"));
+        assert!(!one.contains_key("OnlyTwo"));
+
+        let two = visible_names(xml, "Two");
+        assert_eq!(two.get("対象").map(String::as_str), Some("LIST!$I$2:$I$3"));
+        assert_eq!(two.get("OnlyTwo").map(String::as_str), Some("One!$A$1"));
     }
 
     /// Excel prints the used range when a sheet defines no `_xlnm.Print_Area`,
