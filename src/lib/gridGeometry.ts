@@ -360,7 +360,7 @@ export function digitWidthPx(family: string | null, fontPx: number): number {
 export function horizontalOf(
   style: CellStyle | null,
   kind: Cell["kind"] | undefined,
-): "left" | "center" | "centerContinuous" | "right" {
+): "left" | "center" | "centerContinuous" | "right" | "justify" | "distributed" {
   return (
     style?.horizontal ??
     (kind === "number" || kind === "date"

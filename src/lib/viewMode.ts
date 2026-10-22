@@ -1,4 +1,4 @@
-import type { WorkbookInfo } from "@/lib/excel";
+import type { SheetInfo, WorkbookInfo } from "@/lib/excel";
 
 /**
  * Which of Excel's views the grid is drawing. `pageBreak` is Page Break
@@ -21,6 +21,9 @@ export type ViewMode = "normal" | "pageBreak";
  *
  * A default only: each sheet is switched on its own from there.
  */
-export function initialView(info: WorkbookInfo): ViewMode {
+export function initialView(info: WorkbookInfo, opening: SheetInfo | undefined): ViewMode {
+  // The file's own view wins when it states one: a document saved in Page
+  // Break Preview says so, and one saved in the ordinary view says nothing.
+  if (opening?.view === "pageBreakPreview") return "pageBreak";
   return info.sheets.some((sheet) => sheet.printArea) ? "pageBreak" : "normal";
 }

@@ -1,4 +1,5 @@
 import { cellRef, columnLabel } from "@/lib/column";
+import type { Block, SavedSelection } from "@/lib/excel";
 
 /**
  * One area of the sheet's selection: a single cell, a run of whole rows or
@@ -315,4 +316,47 @@ export function toggleArea(
 export function withArea(selection: Selection, area: Area): Selection {
   const areas = [...areasOf(selection), area];
   return { kind: "areas", areas, active: areas.length - 1 };
+}
+
+/**
+ * The cursor a file saved, in the grid's own model.
+ *
+ * `activeCell` is Excel's active cell and `sqref` the areas it sits in; the
+ * active cell is normally a corner of its area and the block grows away from
+ * it, so the far corner becomes the edge. A whole-row or whole-column area
+ * never arrives here — the backend cannot spell one as a rectangle and leaves
+ * it out, while the active cell still lands where the file put it.
+ */
+export function savedCursor(saved: SavedSelection | null | undefined): Selection | null {
+  if (!saved) return null;
+  const [row, col] = saved.active;
+  const areas = saved.areas.map((block) => areaOfBlock(block, row, col));
+  if (areas.length === 0) return { kind: "cell", row, col };
+  if (areas.length === 1) return areas[0];
+  const containing = saved.areas.findIndex(
+    (block) =>
+      row >= block.row &&
+      row < block.row + block.rows &&
+      col >= block.col &&
+      col < block.col + block.cols,
+  );
+  return { kind: "areas", areas, active: containing < 0 ? 0 : containing };
+}
+
+function areaOfBlock(block: Block, activeRow: number, activeCol: number): Area {
+  if (block.rows === 1 && block.cols === 1) {
+    return { kind: "cell", row: block.row, col: block.col };
+  }
+  return {
+    kind: "range",
+    row: block.row,
+    col: block.col,
+    rows: block.rows,
+    cols: block.cols,
+    anchor: { row: activeRow, col: activeCol },
+    edge: {
+      row: activeRow === block.row ? block.row + block.rows - 1 : block.row,
+      col: activeCol === block.col ? block.col + block.cols - 1 : block.col,
+    },
+  };
 }

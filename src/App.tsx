@@ -22,6 +22,7 @@ import { Welcome } from "@/components/Welcome";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   ORIGIN,
+  savedCursor,
   selectionRef,
   selectionSize,
   type Selection,
@@ -292,6 +293,13 @@ export default function App() {
     for (const path of paths) {
       try {
         const info = await openWorkbook(path);
+        // Excel opens on the tab the file was saved with, not on the first
+        // one; a hidden sheet cannot be current, so it is skipped.
+        const opening =
+          info.sheets.find((sheet) => sheet.selected && !sheet.hidden) ??
+          info.sheets.find((sheet) => !sheet.hidden) ??
+          info.sheets[0];
+        const cursor = savedCursor(opening?.selection);
         setTabs((prev) =>
           prev.some((tab) => tab.info.path === info.path)
             ? prev
@@ -299,18 +307,15 @@ export default function App() {
                 ...prev,
                 {
                   info,
-                  // A workbook opens on the first sheet it shows: one it
+                  // A workbook opens on the sheet it was saved on. One it
                   // hides has no tab to be current, which is the sheet Excel
                   // would be on too.
-                  sheet:
-                    info.sheets.find((sheet) => !sheet.hidden)?.name ??
-                    info.sheets[0]?.name ??
-                    "",
-                  cursors: {},
+                  sheet: opening?.name ?? "",
+                  cursors: cursor && opening ? { [opening.name]: cursor } : {},
                   marks: new Map(),
                   tabColors: new Map(),
                   sheetHidden: new Map(),
-                  defaultView: initialView(info),
+                  defaultView: initialView(info, opening),
                   views: {},
                   revision: 0,
                 },
@@ -488,7 +493,7 @@ export default function App() {
             sheet,
             // Which view the workbook opens in is read from the file, so a file
             // that has changed its print areas changes its answer too.
-            defaultView: initialView(info),
+            defaultView: initialView(info, here),
             revision: tab.revision + 1,
           };
         }),

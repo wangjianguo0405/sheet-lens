@@ -34,6 +34,11 @@ pub struct SheetInfo {
     /// with none anywhere opens in the ordinary view rather than under the page
     /// shading, so this is read before any layout is.
     pub print_area: bool,
+    /// How the file left this sheet: the view it was in, whether its tab was
+    /// the selected one, and where its cursor was. Absent for a sheet whose
+    /// part could not be read.
+    #[serde(flatten)]
+    pub state: layout::SheetState,
 }
 
 #[derive(Serialize, Clone)]
@@ -105,6 +110,9 @@ pub fn load(path: &str) -> Result<Book, String> {
     // And which sheets the file keeps off the tab strip, which the strip needs
     // before it draws a single tab.
     let hidden = layout::hidden_sheets(path);
+    // And how each sheet was left — the view, the selected tab and the cursor —
+    // which decides what the workbook opens on.
+    let states = layout::sheet_states(path);
 
     for name in names {
         let range = workbook
@@ -119,6 +127,7 @@ pub fn load(path: &str) -> Result<Book, String> {
             tab_color: tab_colors.get(&name).cloned(),
             hidden: hidden.contains(&name),
             print_area: print_areas.contains(&name),
+            state: states.get(&name).cloned().unwrap_or_default(),
         });
         sheets.insert(name, Sheet { range, origin });
     }
@@ -950,6 +959,7 @@ mod tests {
                     tab_color: None,
                     hidden: false,
                     print_area: false,
+                    state: layout::SheetState::default(),
                 }],
             },
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
@@ -1011,6 +1021,7 @@ mod tests {
                     tab_color: None,
                     hidden: false,
                     print_area: false,
+                    state: layout::SheetState::default(),
                 }],
             },
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
@@ -1147,6 +1158,7 @@ mod tests {
             tab_color: None,
             hidden,
             print_area: false,
+            state: layout::SheetState::default(),
         };
         let book = Book {
             info: WorkbookInfo {
