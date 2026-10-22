@@ -212,6 +212,31 @@ function pageCount(scale: number, setup: PageSetup, area: MergeRect, cols: Metri
   };
 }
 
+/** Columns the print area spans at 100%, in sheet pixels. */
+function contentWidth(area: MergeRect, cols: Metrics): number {
+  return offsetAt(cols.offsets, area.col + area.cols) - offsetAt(cols.offsets, area.col);
+}
+
+/**
+ * The scale a fixed-percentage sheet really prints at.
+ *
+ * Excel will not print wider than the paper: when the print area at the
+ * sheet's own scale is wider than the page, it shrinks the whole page to the
+ * largest whole percentage that fits, and the row breaks move with it. Two
+ * 54-column sheets measured on the design documents (93% and 94% of A4
+ * landscape, 10 mm and 19 mm margins) print at 92% of their stated scale for
+ * exactly this reason; their page breaks only line up once that is applied.
+ * Sheets whose content already fits are left alone.
+ */
+function widthFit(scale: number, setup: PageSetup, area: MergeRect, cols: Metrics): number {
+  const width = contentWidth(area, cols);
+  if (width <= 0) return scale;
+  const pageWidth = printable(setup, 1).width;
+  if (width * scale <= pageWidth + EPSILON) return scale;
+  const fit = Math.floor((pageWidth / width) * 100) / 100;
+  return scale * Math.max(0.1, fit);
+}
+
 /**
  * The scale the sheet prints at.
  *
@@ -227,7 +252,12 @@ function resolveScale(
   displayOfRow: (row: number) => number,
 ): number {
   const fixed = Math.min(4, Math.max(0.1, (setup.scale || 100) / 100));
-  if (!setup.fitToPage) return fixed;
+  // Excel works in whole percents: the width fit is taken at the largest
+  // integer percentage that fits, and the scale it leaves behind is whole
+  // too. Keeping the fraction (93% x 93% = 86.49) lands a row short on the
+  // design documents' fit sheets; 86 does not. Measured over the 04 営業支援
+  // corpus: 573 of 1173 breaks follow this way, 549 without the floor.
+  if (!setup.fitToPage) return Math.floor(widthFit(fixed, setup, area, cols) * 100) / 100;
   // Both bounds automatic leaves the scale alone; Excel prints at 100%.
   if (setup.fitToWidth === 0 && setup.fitToHeight === 0) return 1;
 
