@@ -777,6 +777,9 @@ mod tests {
         let only: Option<Vec<String>> = std::env::var("SHEETLENS_SHEETS")
             .ok()
             .map(|list| list.split(',').map(|s| s.trim().to_owned()).collect());
+        // The whole point of a sweep over hundreds of workbooks is the page
+        // layout; serialising every cell as well turns it into gigabytes.
+        let layout_only = std::env::var("SHEETLENS_LAYOUT_ONLY").is_ok();
 
         let mut book = load(&path).expect("workbook should load");
         let mut sheets = serde_json::Map::new();
@@ -787,6 +790,10 @@ mod tests {
                 }
             }
             let layout = book.layout(&info.name).expect("layout");
+            if layout_only {
+                sheets.insert(info.name.clone(), serde_json::json!({ "layout": layout }));
+                continue;
+            }
             let rows = layout.rows.max(info.rows);
             let cols = layout.cols.max(info.cols);
             let cells = book.cells(&info.name, 0, 0, rows, cols).expect("cells");
