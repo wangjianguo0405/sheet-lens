@@ -1359,14 +1359,16 @@ const PAGE_BREAK_DASH = [9, 3];
 /**
  * The page number watermark Page Break Preview puts in the middle of a page.
  *
- * Measured off Excel's own window: `#969696` glyphs 170px wide and 52px tall
- * at 100%, the same on an 8pt sheet as on a 20pt one — it is chrome, not part
- * of the document, so the sheet's font does not size it. A page too small to
- * hold it at that size takes a proportionally smaller one.
+ * Measured off Excel's own window: `#969696`, 340px wide and 104px tall at
+ * 100% (the 170×52 recorded earlier was at 50%), the same on an 8pt sheet as
+ * on a 20pt one — it is chrome, not part of the document, so the sheet's font
+ * does not size it. 104 is the most it is ever drawn at; a page that cannot
+ * hold it keeps it inside its own edges.
  */
 const PAGE_NUMBER_INK = "#969696";
-const PAGE_NUMBER_PX = 56;
-const PAGE_NUMBER_FIT = 0.21;
+const PAGE_NUMBER_PX = 104;
+/** How much of a page's width and height the number may take, a gutter each side. */
+const PAGE_NUMBER_FIT_ROOM = 0.9;
 
 /**
  * The big faint page number in the middle of every page.
@@ -1403,14 +1405,30 @@ function paintPageNumbers(
     // own size at worst, so this only skips what could not be reached.
     if (x < left - 400 || x > left + width + 400) continue;
     if (y < top - 400 || y > top + height + 400) continue;
-    const size = Math.round(
-      Math.min(PAGE_NUMBER_PX, (page.y1 - page.y0) * PAGE_NUMBER_FIT),
+    // 56 is the ceiling, not a target: the number only gets smaller when the
+    // page cannot hold it. Height first, then the measured width.
+    const size = Math.max(
+      1,
+      Math.min(
+        PAGE_NUMBER_PX,
+        Math.floor((page.y1 - page.y0) * PAGE_NUMBER_FIT_ROOM),
+      ),
     );
     if (size !== sized) {
       sized = size;
       ctx.font = fontString(stack, size, false);
     }
-    ctx.fillText(view.pageLabel(page.number), x, y);
+    const label = view.pageLabel(page.number);
+    const room = (page.x1 - page.x0) * PAGE_NUMBER_FIT_ROOM;
+    const drawn = ctx.measureText(label).width;
+    if (drawn > room) {
+      const fitted = Math.max(1, Math.floor((size * room) / drawn));
+      if (fitted !== sized) {
+        sized = fitted;
+        ctx.font = fontString(stack, fitted, false);
+      }
+    }
+    ctx.fillText(label, x, y);
   }
   ctx.restore();
 }
