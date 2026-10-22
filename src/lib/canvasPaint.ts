@@ -1037,9 +1037,11 @@ function paintText(
   padRight: number,
   /** The string's coloured runs, when the file split it into any. */
   runs: RichRun[] | null,
+  /** `padRight` is the room a filter header keeps for its button. */
+  reserveRight = false,
 ): void {
   if (text === "") return;
-  const available = box.w - padLeft - padRight;
+  let available = box.w - padLeft - padRight;
 
   /**
    * A turned cell — `textRotation` 90 or −90, or 255's stacked form — runs
@@ -1169,23 +1171,27 @@ function paintText(
         ? box.y + (box.h - blockHeight) / 2
         : box.y + box.h - blockHeight;
 
-  const innerX = box.x + padLeft;
   const horizontal = horizontalOf(style, kind);
-  let x: number;
-  let align: CanvasTextAlign;
-  if (horizontal === "right") {
-    x = innerX + available;
-    align = "right";
-  } else if (horizontal === "center" || horizontal === "centerContinuous") {
-    x = innerX + available / 2;
-    align = "center";
-  } else {
-    x = innerX;
-    align = "left";
-  }
+  let innerX = box.x + padLeft;
+  let x!: number;
+  let align!: CanvasTextAlign;
+  const place = () => {
+    innerX = box.x + padLeft;
+    if (horizontal === "right") {
+      x = innerX + available;
+      align = "right";
+    } else if (horizontal === "center" || horizontal === "centerContinuous") {
+      x = innerX + available / 2;
+      align = "center";
+    } else {
+      x = innerX;
+      align = "left";
+    }
+  };
+  place();
 
   ctx.font = font;
-  ctx.textAlign = align;
+  ctx.textAlign = align!;
   ctx.textBaseline = "alphabetic";
 
   /**
@@ -1213,6 +1219,15 @@ function paintText(
    * something actually overflows: `clip()` is not cheap and this runs for every
    * cell on screen.
    */
+  // A filter header keeps room for its button, but a narrow column cannot have
+  // both: Excel keeps the value and lets the button sit over it. Cutting the
+  // value down to the strip left of the button showed a sliver of it.
+  if (reserveRight && lineWidths.some((width) => width > available)) {
+    available = box.w - padLeft - CELL_PAD_RIGHT;
+    place();
+    ctx.textAlign = align!;
+  }
+
   const tooWide = wrap ? false : lineWidths.some((width) => width > available);
   const needsClip = blockHeight > box.h || tooWide;
   if (needsClip) {
@@ -2089,6 +2104,7 @@ function paintCellText(
     padLeft,
     padRight,
     key === null ? null : view.cellRich.get(key) ?? null,
+    isFilterHeader,
   );
   return true;
 }
