@@ -358,6 +358,12 @@ pub struct AutoFilter {
     /// such a filter hides are already the file's `hidden` rows.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub custom: Vec<u32>,
+    /// Columns whose drop-down the file hides (`showButton="0"`), absolute.
+    /// Excel writes one for every column a merged header covers, so that the
+    /// region shows a single button at its right edge rather than one per
+    /// column.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_buttons: Vec<u32>,
 }
 
 impl SheetLayout {
@@ -3134,6 +3140,7 @@ fn parse_sheet<R: BufRead>(
                                     cols: rect.cols,
                                     applied: HashMap::new(),
                                     custom: Vec::new(),
+                                    hidden_buttons: Vec::new(),
                                 });
                             }
                         }
@@ -3144,7 +3151,24 @@ fn parse_sheet<R: BufRead>(
                     // Notes live in a legacy VML part, not in the drawing.
                     b"legacyDrawing" => layout.legacy_rel = attr(&element, b"id"),
                     b"filterColumn" => {
-                        filter_col = attr(&element, b"colId").and_then(|v| v.parse::<u32>().ok());
+                        let offset = attr(&element, b"colId").and_then(|v| v.parse::<u32>().ok());
+                        // ECMA-376 defaults `showButton` to true; "0" is the
+                        // file saying Excel draws no drop-down on that column
+                        // — a merged header's covered columns are written that
+                        // way, so only the region's right edge carries one.
+                        if let (Some(offset), Some(filter)) =
+                            (offset, layout.auto_filter.as_mut())
+                        {
+                            let shown = match attr(&element, b"showButton") {
+                                Some(value) => value != "0" && value != "false",
+                                None => true,
+                            };
+                            let column = filter.col + offset;
+                            if !shown && !filter.hidden_buttons.contains(&column) {
+                                filter.hidden_buttons.push(column);
+                            }
+                        }
+                        filter_col = offset;
                     }
                     b"customFilter" => {
                         // A condition — "greater than 20" — rather than a value

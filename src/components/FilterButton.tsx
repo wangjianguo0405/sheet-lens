@@ -27,8 +27,6 @@ interface FilterButtonProps {
    */
   filtered?: boolean;
   onApply: (values: string[] | null) => void;
-  /** The grid's own zoom, so the button scales with the cells it sits in. */
-  zoom: number;
 }
 
 export function FilterButton({
@@ -40,7 +38,6 @@ export function FilterButton({
   selected,
   filtered,
   onApply,
-  zoom,
 }: FilterButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -102,22 +99,27 @@ export function FilterButton({
           onClick={(event) => event.stopPropagation()}
           aria-label={isFiltered ? t("filter.edit") : t("filter.column")}
           // Measured off Excel's own render (CopyPicture of a filtered range):
-          // a 17 px square pinned to the bottom-right corner with a 1 px inset,
-          // a 1 px #a6acb3 edge and a white-to-grey face. A filtered column does
-          // not change the button — only the glyph, a caret becomes a funnel.
+          // a square pinned to the bottom-right corner with a 1 px inset, a 1 px
+          // #a6acb3 edge and a white-to-grey face. A filtered column does not
+          // change the button — only the glyph, a caret becomes a funnel.
+          // The square is chrome and never outgrows its row: it takes the row's
+          // height less the two 1 px insets, capped at 17 px. Measured against
+          // Excel at 8/12/20 pt rows (9–10 / 15 / 17 px) and at 70–205% zoom.
           // `pointer-events-auto` because the canvas grid puts this inside a
           // click-through overlay, where the default would swallow the press.
           style={{
-            width: 17 * zoom,
-            height: 17 * zoom,
-            right: zoom,
-            bottom: zoom,
+            height: "calc(100% - 2px)",
+            aspectRatio: "1",
+            maxWidth: 17,
+            maxHeight: 17,
+            right: 1,
+            bottom: 1,
           }}
           className="pointer-events-auto absolute flex items-center justify-center border border-[#a6acb3] bg-linear-to-b from-[#feffff] to-[#eff2f7] text-[#656769] hover:brightness-[0.97]"
         >
           <svg
-            width={15 * zoom}
-            height={15 * zoom}
+            width="100%"
+            height="100%"
             viewBox="0 0 15 15"
             aria-hidden="true"
             fill="currentColor"

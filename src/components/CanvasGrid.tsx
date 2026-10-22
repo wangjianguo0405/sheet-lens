@@ -953,9 +953,13 @@ export function CanvasGrid({
    */
   const filterCols = useMemo(() => {
     if (!autoFilter) return [] as number[];
+    // A column the file marks `showButton="0"` gets no drop-down: Excel writes
+    // that for every column a merged header covers, so a merged title shows a
+    // single button at its right edge instead of one on each column.
+    const hidden = new Set(autoFilter.hiddenButtons ?? []);
     const out: number[] = [];
     for (let c = autoFilter.col; c < autoFilter.col + autoFilter.cols; c += 1) {
-      if (c < sheetColsGuess) out.push(c);
+      if (c < sheetColsGuess && !hidden.has(c)) out.push(c);
     }
     return out;
   }, [autoFilter, sheetColsGuess]);
@@ -4421,7 +4425,6 @@ export function CanvasGrid({
                   lastRow={autoFilter.row + autoFilter.rows - 1}
                   selected={filters.get(col) ?? []}
                   filtered={customFilterCols.has(col)}
-                  zoom={zoom / 100}
                   onApply={(values) => {
                     const next = new Map(filters);
                     if (values && values.length > 0) next.set(col, values);
