@@ -24,7 +24,8 @@ pub(crate) const BLACK: &str = "#000000";
 const WHITE: &str = "#FFFFFF";
 
 /// The legacy indexed palette (ECMA-376 §18.8.27) that `indexed="N"` refers to.
-/// None of the workbooks seen so far override it, so the stock table applies.
+/// Most workbooks leave it alone; the 23 in the corpus that override it write
+/// `<colors><indexedColors>` at the end of styles.xml.
 const INDEXED: [&str; 64] = [
     "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF", "000000",
     "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF", "800000", "008000",
@@ -35,6 +36,65 @@ const INDEXED: [&str; 64] = [
     "666699", "969696", "003366", "339966", "003300", "333300", "993300", "993366", "333399",
     "333333",
 ];
+
+/// The two colour tables a `<color>` can name: the theme's twelve slots and the
+/// workbook's indexed palette. Both travel together wherever a colour is read.
+#[derive(Clone, Copy)]
+pub(crate) struct Palette<'a> {
+    pub theme: &'a [Option<String>],
+    pub indexed: &'a [Option<String>],
+}
+
+impl Palette<'_> {
+    /// For callers that resolve no colours, and for tests.
+    #[cfg(test)]
+    pub(crate) const EMPTY: Palette<'static> = Palette {
+        theme: &[],
+        indexed: &[],
+    };
+}
+
+/// The workbook's indexed palette, merged over the stock table.
+///
+/// Excel writes `<indexedColors>` after the fonts, fills and borders that refer
+/// to it, so the walk cannot discover it in time; it is read once before the
+/// walk instead. A file with 64 entries redefines every index, one with 56
+/// starts at 8 (the first eight are fixed).
+fn indexed_palette(xml: &str) -> Vec<Option<String>> {
+    let mut palette: Vec<Option<String>> = INDEXED
+        .iter()
+        .map(|hex| Some(format!("#{hex}")))
+        .collect();
+    let Some(start) = xml.find("<indexedColors") else {
+        return palette;
+    };
+    let Some(open_end) = xml[start..].find('>').map(|at| start + at + 1) else {
+        return palette;
+    };
+    let Some(end) = xml[open_end..]
+        .find("</indexedColors>")
+        .map(|at| open_end + at)
+    else {
+        return palette;
+    };
+    let mut colors = Vec::new();
+    let mut rest = &xml[open_end..end];
+    while let Some(at) = rest.find("rgb=\"") {
+        rest = &rest[at + 5..];
+        let Some(close) = rest.find('"') else { break };
+        if let Some(color) = parse_color(&rest[..close]) {
+            colors.push(color);
+        }
+        rest = &rest[close + 1..];
+    }
+    let offset = if colors.len() >= 64 { 0 } else { 8 };
+    for (index, color) in colors.into_iter().enumerate() {
+        if let Some(slot) = palette.get_mut(offset + index) {
+            *slot = Some(color);
+        }
+    }
+    palette
+}
 
 /// The theme's twelve colours, in the order `theme="N"` indexes them.
 ///
@@ -1010,6 +1070,9 @@ struct Styles {
     num_formats: HashMap<u32, String>,
     /// The workbook's `<dxfs>`: what each conditional-format rule paints.
     dxfs: Vec<crate::cond::Patch>,
+    /// The workbook's own indexed palette, when it writes `<indexedColors>`.
+    /// Empty means the stock table in `INDEXED` applies.
+    indexed: Vec<Option<String>>,
 }
 
 /// Workbook-wide parse results. The styles and theme tables are shared by every
@@ -1044,10 +1107,12 @@ impl Cache {
         &self.shared_strings
     }
 
-    /// The theme's colour slots, which a rule's `theme`/`tint` colours resolve
-    /// against.
-    pub(crate) fn theme(&self) -> &[Option<String>] {
-        &self.theme
+    /// The two colour tables together, for anything resolving a `<color>`.
+    pub(crate) fn palette(&self) -> Palette<'_> {
+        Palette {
+            theme: &self.theme,
+            indexed: &self.styles.indexed,
+        }
     }
 
     pub fn load(&mut self, path: &str) -> Result<(), String> {
@@ -1063,7 +1128,11 @@ impl Cache {
         // Absent in a workbook that writes its strings inline, which is why
         // this is a lookup on failure rather than an error.
         if let Ok(xml) = read_entry(&mut zip, "xl/sharedStrings.xml") {
-            self.rich_strings = rich_strings(&xml, &self.theme);
+            let palette = Palette {
+                theme: &self.theme,
+                indexed: &self.styles.indexed,
+            };
+            self.rich_strings = rich_strings(&xml, palette);
             self.shared_strings = shared_strings(&xml);
         }
         self.loaded = true;
@@ -1131,6 +1200,13 @@ pub fn tab_colors(path: &str) -> HashMap<String, String> {
         return colors;
     };
     let theme = theme_slots(&read_theme(&mut zip));
+    let indexed = read_entry(&mut zip, "xl/styles.xml")
+        .map(|xml| indexed_palette(&xml))
+        .unwrap_or_default();
+    let palette = Palette {
+        theme: &theme,
+        indexed: &indexed,
+    };
 
     for element in scan(&workbook, b"sheet") {
         let Some(name) = element.get("name") else {
@@ -1148,7 +1224,7 @@ pub fn tab_colors(path: &str) -> HashMap<String, String> {
         }
         // The byte run is a document cut off mid-element, which `scan` is
         // already happy with: it keeps what it read and stops.
-        if let Some(color) = tab_color(&String::from_utf8_lossy(&head), &theme) {
+        if let Some(color) = tab_color(&String::from_utf8_lossy(&head), palette) {
             colors.insert(name.clone(), color);
         }
     }
@@ -1157,12 +1233,12 @@ pub fn tab_colors(path: &str) -> HashMap<String, String> {
 
 /// `<sheetPr><tabColor rgb="FF00B050"/></sheetPr>`, resolved the way a cell's
 /// colour is: `rgb`, `theme` and `indexed` are all three in use.
-fn tab_color(head: &str, theme: &[Option<String>]) -> Option<String> {
+fn tab_color(head: &str, palette: Palette) -> Option<String> {
     let mut element = BytesStart::new("color");
     for (key, value) in scan(head, b"tabColor").first()? {
         element.push_attribute((key.as_str(), value.as_str()));
     }
-    color_of(&element, theme)
+    color_of(&element, palette)
 }
 
 /// Reads one sheet's layout, reusing the workbook-wide tables in `cache`.
@@ -1599,8 +1675,8 @@ fn shared_strings(xml: &str) -> Vec<String> {
 
 /// Records a run's colour, which is written as `<color …/>` beside the font
 /// properties of its `<rPr>`.
-fn set_run_color(element: &BytesStart, run: Option<&mut RichRun>, theme: &[Option<String>]) {
-    if let (Some(run), Some(color)) = (run, color_of(element, theme)) {
+fn set_run_color(element: &BytesStart, run: Option<&mut RichRun>, palette: Palette) {
+    if let (Some(run), Some(color)) = (run, color_of(element, palette)) {
         run.color = Some(color);
     }
 }
@@ -1660,7 +1736,7 @@ fn read_run_font(element: &BytesStart, font: Option<&mut RichFont>) {
 /// Only strings whose runs really say something are kept. A run that merely
 /// restates the cell's own colour draws exactly like the plain text, and keeping
 /// those would put most of the workbook in the table.
-fn rich_strings(xml: &str, theme: &[Option<String>]) -> Vec<Option<Vec<RichRun>>> {
+fn rich_strings(xml: &str, palette: Palette) -> Vec<Option<Vec<RichRun>>> {
     let mut out: Vec<Option<Vec<RichRun>>> = Vec::new();
     let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
@@ -1687,7 +1763,7 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> Vec<Option<Vec<RichRun>>
                 }
                 b"rPr" => font = Some(RichFont::default()),
                 b"t" => in_text = true,
-                b"color" => set_run_color(&element, run.as_mut(), theme),
+                b"color" => set_run_color(&element, run.as_mut(), palette),
                 _ => read_run_font(&element, font.as_mut()),
             },
             // A font property and a run's colour are written as empty elements,
@@ -1695,7 +1771,7 @@ fn rich_strings(xml: &str, theme: &[Option<String>]) -> Vec<Option<Vec<RichRun>>
             // property spelled the long way, hence both arms.
             Ok(Event::Empty(element)) => match element.local_name().as_ref() {
                 b"si" => out.push(None),
-                b"color" => set_run_color(&element, run.as_mut(), theme),
+                b"color" => set_run_color(&element, run.as_mut(), palette),
                 _ => read_run_font(&element, font.as_mut()),
             },
             // An entity arrives as its own event, so the text around it has to be
@@ -1984,11 +2060,22 @@ fn read_styles<R: Read + Seek>(
     let Ok(xml) = read_entry(zip, "xl/styles.xml") else {
         return Styles::default();
     };
-    parse_styles(&xml, theme)
+    // The palette is written at the end of the part, so it is read before the
+    // walk rather than discovered by it.
+    let indexed = indexed_palette(&xml);
+    let mut styles = parse_styles(
+        &xml,
+        Palette {
+            theme,
+            indexed: &indexed,
+        },
+    );
+    styles.indexed = indexed;
+    styles
 }
 
 /// Walks `xl/styles.xml` — the split that lets the walk be tested on a string.
-fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
+fn parse_styles(xml: &str, palette: Palette) -> Styles {
     let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
     let mut styles = Styles::default();
@@ -2024,7 +2111,7 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 b"left" | b"right" | b"top" | b"bottom" | b"diagonal" if in_borders => {
                     edge = set_edge(&element, border.as_mut(), &element.local_name().as_ref());
                 }
-                b"color" if in_borders => color_edge(&element, border.as_mut(), edge, theme),
+                b"color" if in_borders => color_edge(&element, border.as_mut(), edge, palette),
                 // A solid `<patternFill>` paints its `fgColor`; gradients and
                 // the stock none/gray125 entries have no flat colour to show.
                 b"fills" => in_fills = true,
@@ -2041,12 +2128,12 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 b"fgColor" if in_fills => {
                     // A solid fill paints its `fgColor`; a pattern draws it as
                     // the hatch colour over `bgColor`.
-                    fill_fg = color_of(&element, theme);
+                    fill_fg = color_of(&element, palette);
                     if fill_pattern == Some("solid") {
                         fill = fill_fg.clone();
                     }
                 }
-                b"bgColor" if in_fills => fill_bg = color_of(&element, theme),
+                b"bgColor" if in_fills => fill_bg = color_of(&element, palette),
                 b"fonts" => in_fonts = true,
                 b"numFmts" => in_num_fmts = true,
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
@@ -2075,7 +2162,7 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 }
                 b"color" if in_fonts => {
                     if let Some(slot) = font.as_mut() {
-                        slot.color = color_of(&element, theme);
+                        slot.color = color_of(&element, palette);
                     }
                 }
                 b"cellStyleXfs" => in_named_xfs = true,
@@ -2110,19 +2197,19 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                     set_edge(&element, border.as_mut(), &element.local_name().as_ref());
                 }
                 // Excel writes the colour self-closing, e.g. `<color rgb="FF000000"/>`.
-                b"color" if in_borders => color_edge(&element, border.as_mut(), edge, theme),
+                b"color" if in_borders => color_edge(&element, border.as_mut(), edge, palette),
                 b"fill" if in_fills => styles.fills.push(None),
                 b"patternFill" if in_fills => {
                     fill_pattern =
                         attr(&element, b"patternType").and_then(|kind| pattern_kind(&kind));
                 }
                 b"fgColor" if in_fills => {
-                    fill_fg = color_of(&element, theme);
+                    fill_fg = color_of(&element, palette);
                     if fill_pattern == Some("solid") {
                         fill = fill_fg.clone();
                     }
                 }
-                b"bgColor" if in_fills => fill_bg = color_of(&element, theme),
+                b"bgColor" if in_fills => fill_bg = color_of(&element, palette),
                 b"font" if in_fonts => styles.fonts.push(FontInfo::default()),
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
                 b"b" | b"i" | b"u" | b"strike" if in_fonts => {
@@ -2150,7 +2237,7 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
                 // Excel writes font colours self-closing too.
                 b"color" if in_fonts => {
                     if let Some(slot) = font.as_mut() {
-                        slot.color = color_of(&element, theme);
+                        slot.color = color_of(&element, palette);
                     }
                 }
                 b"xf" if in_cell_xfs => styles.xfs.push(new_xf(&element)),
@@ -2225,7 +2312,7 @@ fn parse_styles(xml: &str, theme: &[Option<String>]) -> Styles {
     // read in a walk of their own: a differential format is its own small schema,
     // and folding it into this one would mean carrying its state through every
     // branch above.
-    styles.dxfs = crate::cond::dxfs(xml, theme);
+    styles.dxfs = crate::cond::dxfs(xml, palette);
     styles
 }
 
@@ -2362,12 +2449,12 @@ pub(crate) fn color_edge(
     element: &BytesStart,
     border: Option<&mut CellBorder>,
     side: Option<Side>,
-    theme: &[Option<String>],
+    palette: Palette,
 ) {
     let (Some(border), Some(side)) = (border, side) else {
         return;
     };
-    let Some(color) = color_of(element, theme) else {
+    let Some(color) = color_of(element, palette) else {
         return;
     };
     let slot = match side {
@@ -2620,7 +2707,7 @@ fn parse_theme(xml: &str) -> HashMap<String, String> {
 /// Resolves a `<color …/>` however it names its colour: `rgb`, `theme`,
 /// `indexed`, or `auto`. The theme and indexed forms are what real documents
 /// lean on, and reading only `rgb` left most of their colours unresolved.
-pub(crate) fn color_of(element: &BytesStart, theme: &[Option<String>]) -> Option<String> {
+pub(crate) fn color_of(element: &BytesStart, palette: Palette) -> Option<String> {
     if let Some(rgb) = attr(element, b"rgb").as_deref().and_then(parse_color) {
         return Some(tint(rgb, attr(element, b"tint")));
     }
@@ -2628,7 +2715,7 @@ pub(crate) fn color_of(element: &BytesStart, theme: &[Option<String>]) -> Option
         return Some(BLACK.to_owned());
     }
     if let Some(index) = attr(element, b"theme").and_then(|v| v.parse::<usize>().ok()) {
-        return match theme.get(index).and_then(|slot| slot.clone()) {
+        return match palette.theme.get(index).and_then(|slot| slot.clone()) {
             Some(base) => Some(tint(base, attr(element, b"tint"))),
             // Without a parsed theme, slot 1 is the text colour and 0 the page —
             // and the tint applies to those two just the same.
@@ -2640,6 +2727,9 @@ pub(crate) fn color_of(element: &BytesStart, theme: &[Option<String>]) -> Option
         };
     }
     if let Some(index) = attr(element, b"indexed").and_then(|v| v.parse::<usize>().ok()) {
+        if let Some(color) = palette.indexed.get(index).and_then(|slot| slot.clone()) {
+            return Some(color);
+        }
         return match index {
             i if i < INDEXED.len() => Some(format!("#{}", INDEXED[i])),
             64 => Some(BLACK.to_owned()),
@@ -3808,7 +3898,7 @@ mod tests {
             </fills>
             <cellXfs count="5"><xf fillId="0"/><xf fillId="1"/><xf fillId="2"/><xf fillId="3"/><xf fillId="4"/></cellXfs>
         </styleSheet>"#;
-        let styles = parse_styles(xml, &[]);
+        let styles = parse_styles(xml, Palette::EMPTY);
         assert!(styles.cell_style(0, 14.67).is_none());
 
         // A pattern with no colours is Excel's automatic pair: black on white.
@@ -3835,7 +3925,7 @@ mod tests {
             <border diagonalDown="1"><left/><right/><top/><bottom/><diagonal style="thick"><color rgb="FF0000FF"/></diagonal></border>
             <border diagonalUp="1" diagonalDown="1"><left/><right/><top/><bottom/><diagonal style="dashed"><color rgb="FFFF0000"/></diagonal></border>
         </borders><cellXfs count="3"><xf borderId="0"/><xf borderId="1"/><xf borderId="2"/></cellXfs></styleSheet>"#;
-        let styles = parse_styles(xml, &[]);
+        let styles = parse_styles(xml, Palette::EMPTY);
 
         // The stock placeholder every border carries is not a rule.
         assert!(styles.cell_style(0, 14.67).is_none());
@@ -3863,7 +3953,7 @@ mod tests {
             </fonts>
             <cellXfs count="3"><xf fontId="0"/><xf fontId="1"/><xf fontId="2"/></cellXfs>
         </styleSheet>"#;
-        let styles = parse_styles(xml, &[]);
+        let styles = parse_styles(xml, Palette::EMPTY);
         assert!(styles.cell_style(0, 14.67).is_none());
         assert_eq!(
             styles.cell_style(1, 14.67).unwrap().vert_align,
@@ -3876,7 +3966,7 @@ mod tests {
 
         // A run says the same thing in its own `<rPr>`.
         let xml = r#"<sst><si><r><t>X</t></r><r><rPr><vertAlign val="superscript"/><sz val="11"/></rPr><t>2</t></r></si></sst>"#;
-        let runs = rich_strings(xml, &[]);
+        let runs = rich_strings(xml, Palette::EMPTY);
         let run = &runs[0].as_ref().unwrap()[1];
         assert_eq!(run.font.as_ref().unwrap().vert_align, Some("superscript"));
     }
@@ -3891,7 +3981,7 @@ mod tests {
             </fills>
             <cellXfs count="2"><xf fontId="0" fillId="0"/><xf fontId="0" fillId="1"/></cellXfs>
         </styleSheet>"#;
-        let styles = parse_styles(xml, &[]);
+        let styles = parse_styles(xml, Palette::EMPTY);
         let sheet = br#"<worksheet><sheetData>
             <row r="1" s="1"/>
             <row r="2" s="1" customFormat="1"/>
@@ -4087,7 +4177,7 @@ mod tests {
                 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="1" applyFont="1" applyFill="0"/>
             </cellXfs>
         </styleSheet>"#;
-        let styles = parse_styles(xml, &[]);
+        let styles = parse_styles(xml, Palette::EMPTY);
         let default_font_px = points_to_font_px(11.0);
         let style = |index: usize| {
             styles
@@ -4143,7 +4233,7 @@ mod tests {
                 <xf numFmtId="0" fontId="4" fillId="0" borderId="0"/>
             </cellXfs>
         </styleSheet>"#;
-        let styles = parse_styles(xml, &[]);
+        let styles = parse_styles(xml, Palette::EMPTY);
         let default_font_px = points_to_font_px(11.0);
         let style = |index: usize| {
             styles
@@ -4189,48 +4279,52 @@ mod tests {
             ("dk1".to_owned(), "#000000".to_owned()),
             ("accent5".to_owned(), "#5B9BD5".to_owned()),
         ]));
+        let palette = Palette {
+            theme: &theme,
+            indexed: &[],
+        };
 
         // Literal.
         assert_eq!(
-            color_of(&element(r#"<color rgb="FF808080"/>"#), &theme).as_deref(),
+            color_of(&element(r#"<color rgb="FF808080"/>"#), palette).as_deref(),
             Some("#808080")
         );
         // Plain borders are written as "automatic", which Excel draws black.
         assert_eq!(
-            color_of(&element(r#"<color auto="1"/>"#), &theme).as_deref(),
+            color_of(&element(r#"<color auto="1"/>"#), palette).as_deref(),
             Some("#000000")
         );
         // The legacy palette; 12 is blue, 8 is black, 64 is automatic.
         assert_eq!(
-            color_of(&element(r#"<color indexed="12"/>"#), &theme).as_deref(),
+            color_of(&element(r#"<color indexed="12"/>"#), palette).as_deref(),
             Some("#0000FF")
         );
         assert_eq!(
-            color_of(&element(r#"<color indexed="8"/>"#), &theme).as_deref(),
+            color_of(&element(r#"<color indexed="8"/>"#), palette).as_deref(),
             Some("#000000")
         );
         // 31 is the pale blue these design documents fill their headings with,
         // and it is the one slot the palette is easy to get wrong: read from a
         // neighbouring entry it comes out grey and the fill looks plausible.
         assert_eq!(
-            color_of(&element(r#"<color indexed="31"/>"#), &theme).as_deref(),
+            color_of(&element(r#"<color indexed="31"/>"#), palette).as_deref(),
             Some("#CCCCFF")
         );
         assert_eq!(
-            color_of(&element(r#"<color indexed="64"/>"#), &theme).as_deref(),
+            color_of(&element(r#"<color indexed="64"/>"#), palette).as_deref(),
             Some("#000000")
         );
         // Theme slots are indexed from lt1, not from the order theme1.xml lists.
         assert_eq!(
-            color_of(&element(r#"<color theme="1"/>"#), &theme).as_deref(),
+            color_of(&element(r#"<color theme="1"/>"#), palette).as_deref(),
             Some("#000000")
         );
         assert_eq!(
-            color_of(&element(r#"<color theme="0"/>"#), &theme).as_deref(),
+            color_of(&element(r#"<color theme="0"/>"#), palette).as_deref(),
             Some("#FFFFFF")
         );
         // Nothing resolvable still falls back to the grid's own colour.
-        assert_eq!(color_of(&element(r#"<color theme="9"/>"#), &theme), None);
+        assert_eq!(color_of(&element(r#"<color theme="9"/>"#), palette), None);
     }
 
     #[test]
@@ -4462,7 +4556,7 @@ mod tests {
     #[test]
     fn keeps_the_runs_of_a_string_that_colours_a_word() {
         let xml = r#"<sst><si><t>plain</t></si><si><r><rPr><sz val="9"/></rPr><t>a</t></r><r><rPr><color rgb="FFFF0000"/></rPr><t>red</t></r><r><t>w&lt;&gt;ord</t></r></si></sst>"#;
-        let runs = rich_strings(xml, &[]);
+        let runs = rich_strings(xml, Palette::EMPTY);
         assert_eq!(runs.len(), 2, "one slot per <si>, whether or not it is kept");
         assert!(runs[0].is_none(), "a string with no colour is not worth a table entry");
         let list = runs[1].as_ref().expect("the coloured string keeps its runs");
@@ -4486,7 +4580,7 @@ mod tests {
             <si><r><rPr><u val="double"/></rPr><t>c</t></r></si>
             <si><r><rPr><b val="0"/><u val="none"/></rPr><t>d</t></r></si>
         </sst>"#;
-        let runs = rich_strings(xml, &[]);
+        let runs = rich_strings(xml, Palette::EMPTY);
         assert_eq!(
             runs.iter().flatten().count(),
             3,

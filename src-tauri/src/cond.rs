@@ -15,13 +15,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use chrono::{Datelike, Duration, Local, NaiveDate};
 use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
 use quick_xml::XmlVersion;
 
 use crate::layout::{
     attr, color_edge, color_of, entity_text, intern, parse_cell, parse_range, set_edge, Cache,
-    CellBorder, CellStyle, MergeRect, SheetLayout, Side,
+    CellBorder, CellStyle, MergeRect, Palette, SheetLayout, Side,
 };
 
 /// The most cells any one sheet's rules may be evaluated over. A rule written
@@ -194,7 +195,7 @@ fn cell_op(name: &str) -> Option<CellOp> {
 /// A rule whose operands cannot be read is dropped here rather than at every
 /// cell: there is nothing to evaluate it with, and a rule that never fires
 /// paints nothing, which is what not being there looks like too.
-pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
+pub fn rules(xml: &str, palette: Palette) -> Vec<Rule> {
     let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
     let mut out = Vec::new();
@@ -254,7 +255,7 @@ pub fn rules(xml: &str, theme: &[Option<String>]) -> Vec<Rule> {
                 }
                 b"color" if collecting.is_some() => {
                     if let (Some(color), Some(current)) =
-                        (color_of(&element, theme), current.as_mut())
+                        (color_of(&element, palette), current.as_mut())
                     {
                         current.colors.push(color);
                     }
@@ -554,7 +555,7 @@ struct X14Settings {
 
 /// The extension block's data bars, in file order, each with the GUID a base
 /// rule names.
-fn x14_bars(xml: &str, theme: &[Option<String>]) -> Vec<(String, X14Settings)> {
+fn x14_bars(xml: &str, palette: Palette) -> Vec<(String, X14Settings)> {
     let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
     let mut out = Vec::new();
@@ -589,10 +590,10 @@ fn x14_bars(xml: &str, theme: &[Option<String>]) -> Vec<(String, X14Settings)> {
                             flag(attr(&element, b"negativeBarColorSameAsPositive"));
                     }
                     b"negativeFillColor" if inside && is_bar => {
-                        settings.negative_color = color_of(&element, theme);
+                        settings.negative_color = color_of(&element, palette);
                     }
                     b"axisColor" if inside && is_bar => {
-                        settings.axis_color = color_of(&element, theme);
+                        settings.axis_color = color_of(&element, palette);
                     }
                     _ => {}
                 }
@@ -621,8 +622,8 @@ fn x14_bars(xml: &str, theme: &[Option<String>]) -> Vec<(String, X14Settings)> {
 /// left alone, because Excel leaves it alone: a hand-edited file whose base
 /// rules were removed exports a picture with no bars at all. The extension is
 /// an addition to a rule, not a rule of its own.
-fn attach_x14(rules: &mut [Rule], xml: &str, theme: &[Option<String>]) {
-    let bars = x14_bars(xml, theme);
+fn attach_x14(rules: &mut [Rule], xml: &str, palette: Palette) {
+    let bars = x14_bars(xml, palette);
     if bars.is_empty() {
         return;
     }
@@ -893,7 +894,7 @@ fn mix(from: &str, to: &str, t: f64) -> String {
 }
 
 /// Reads the workbook's `<dxfs>`.
-pub fn dxfs(xml: &str, theme: &[Option<String>]) -> Vec<Patch> {
+pub fn dxfs(xml: &str, palette: Palette) -> Vec<Patch> {
     let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
     let mut out = Vec::new();
@@ -955,11 +956,11 @@ pub fn dxfs(xml: &str, theme: &[Option<String>]) -> Vec<Patch> {
                     // where it lands.
                     b"color" if part == Part::Border => {
                         let border = patch.as_mut().and_then(|patch| patch.border.as_mut());
-                        color_edge(&element, border, edge, theme);
+                        color_edge(&element, border, edge, palette);
                     }
                     b"color" if part == Part::Font => {
                         if let Some(patch) = patch.as_mut() {
-                            patch.color = color_of(&element, theme);
+                            patch.color = color_of(&element, palette);
                         }
                     }
                     b"b" if part == Part::Font => {
@@ -971,8 +972,8 @@ pub fn dxfs(xml: &str, theme: &[Option<String>]) -> Vec<Patch> {
                     b"patternFill" if part == Part::Fill => {
                         pattern_type = attr(&element, b"patternType");
                     }
-                    b"fgColor" if part == Part::Fill => fg = color_of(&element, theme),
-                    b"bgColor" if part == Part::Fill => bg = color_of(&element, theme),
+                    b"fgColor" if part == Part::Fill => fg = color_of(&element, palette),
+                    b"bgColor" if part == Part::Fill => bg = color_of(&element, palette),
                     _ => {}
                 }
             }
@@ -1167,8 +1168,9 @@ pub fn apply(xml: &str, cache: &Cache, layout: &mut SheetLayout) {
         return;
     }
     let patches = cache.patches();
-    let mut rules = rules(xml, cache.theme());
-    attach_x14(&mut rules, xml, cache.theme());
+    let palette = cache.palette();
+    let mut rules = rules(xml, palette);
+    attach_x14(&mut rules, xml, palette);
     if rules.is_empty() {
         return;
     }
@@ -2397,7 +2399,7 @@ mod tests {
             <dxf><fill><patternFill patternType="none"><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf>
         </dxfs></styleSheet>"#;
 
-        let patches = dxfs(xml, &[]);
+        let patches = dxfs(xml, Palette::EMPTY);
         assert_eq!(patches.len(), 3);
         // White darkened by a quarter, which is the grey Excel paints — and the
         // same number its object model reported for these cells. An empty theme
@@ -2413,7 +2415,7 @@ mod tests {
     #[test]
     fn reads_a_differential_border() {
         let xml = r#"<styleSheet><dxfs count="1"><dxf><border><top style="thin"><color indexed="64"/></top></border></dxf></dxfs></styleSheet>"#;
-        let patches = dxfs(xml, &[]);
+        let patches = dxfs(xml, Palette::EMPTY);
         let border = patches[0].border.as_ref().expect("a border");
         assert_eq!(border.top.as_ref().map(|edge| edge.line), Some("solid"));
         assert_eq!(
@@ -2426,7 +2428,7 @@ mod tests {
     #[test]
     fn reads_an_expression_rule() {
         let xml = r#"<worksheet><conditionalFormatting sqref="B8:N161"><cfRule type="expression" dxfId="0" priority="5" stopIfTrue="1"><formula>OR(AND($G8="対象外",$H8&lt;&gt;"対象"),$H8="対象外")</formula></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 1);
         let rule = &rules[0];
         assert!(matches!(rule.paint, Paint::Dxf(0)));
@@ -2444,7 +2446,7 @@ mod tests {
     #[test]
     fn reads_a_cell_is_rule_and_compares_the_cell() {
         let xml = r#"<worksheet><conditionalFormatting sqref="B2:B9"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThanOrEqual"><formula>50</formula></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 1);
         let rule = &rules[0];
         // B, the column the rule has to read to know the cell's own value.
@@ -2461,7 +2463,7 @@ mod tests {
     #[test]
     fn a_cell_is_rule_can_ask_for_a_between() {
         let xml = r#"<worksheet><conditionalFormatting sqref="A1:A4"><cfRule type="cellIs" dxfId="0" priority="1" operator="between"><formula>10</formula><formula>20</formula></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 1);
         assert!(fires(&rules[0], 0, 0, &[((0, 0), Value::Number(15.0))]));
         assert!(!fires(&rules[0], 0, 0, &[((0, 0), Value::Number(25.0))]));
@@ -2478,7 +2480,7 @@ mod tests {
             <conditionalFormatting sqref="C1:C9"><cfRule type="endsWith" dxfId="0" priority="3" operator="endsWith" text="z"><formula>RIGHT(C1,1)="z"</formula></cfRule></conditionalFormatting>
             <conditionalFormatting sqref="D1:D9"><cfRule type="notContainsText" dxfId="0" priority="4" operator="notContainsText" text="q"><formula>ISERROR(SEARCH("q",D1))</formula></cfRule></conditionalFormatting>
         </worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 4);
         // Excel's text tests ignore case.
         assert!(fires(&rules[0], 0, 0, &[((0, 0), text("xABCx"))]));
@@ -2496,7 +2498,7 @@ mod tests {
             <conditionalFormatting sqref="A1:A5"><cfRule type="duplicateValues" dxfId="0" priority="1"/></conditionalFormatting>
             <conditionalFormatting sqref="A1:A5"><cfRule type="uniqueValues" dxfId="0" priority="2"/></conditionalFormatting>
         </worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 2, "a rule with no children is complete on its own");
         let cells = [
             ((0, 0), Value::Number(1.0)),
@@ -2520,7 +2522,7 @@ mod tests {
     #[test]
     fn reads_a_colour_scale_and_mixes_between_its_stops() {
         let xml = r#"<worksheet><conditionalFormatting sqref="B2:B11"><cfRule type="colorScale" priority="1"><colorScale><cfvo type="min"/><cfvo type="max"/><color rgb="FF0000FF"/><color rgb="FFFF0000"/></colorScale></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 1);
         let Paint::ColorScale(scale) = &rules[0].paint else {
             panic!("a colour scale");
@@ -2547,7 +2549,7 @@ mod tests {
     #[test]
     fn reads_a_data_bar_and_measures_the_cell() {
         let xml = r#"<worksheet><conditionalFormatting sqref="D2:D11"><cfRule type="dataBar" priority="1"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF0000FF"/></dataBar></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 1);
         let Paint::DataBar(bar) = &rules[0].paint else {
             panic!("a data bar");
@@ -2621,7 +2623,7 @@ mod tests {
             <conditionalFormatting sqref="B1:B10"><cfRule type="top10" dxfId="0" priority="2" rank="2" bottom="1"/></conditionalFormatting>
             <conditionalFormatting sqref="C1:C10"><cfRule type="top10" dxfId="0" priority="3" rank="20" percent="1"/></conditionalFormatting>
         </worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 3);
         let numbers: Vec<f64> = (1..=10).map(|n| n as f64 * 10.0).collect();
         let top3 = |value: f64| {
@@ -2673,7 +2675,7 @@ mod tests {
             <conditionalFormatting sqref="A1:A10"><cfRule type="aboveAverage" dxfId="0" priority="1"/></conditionalFormatting>
             <conditionalFormatting sqref="B1:B10"><cfRule type="aboveAverage" dxfId="0" priority="2" aboveAverage="0" equalAverage="1"/></conditionalFormatting>
         </worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 2);
         // 10 through 100: the mean is 55.
         let numbers: Vec<f64> = (1..=10).map(|n| n as f64 * 10.0).collect();
@@ -2711,7 +2713,7 @@ mod tests {
             <conditionalFormatting sqref="A2:A11"><cfRule type="iconSet" priority="1"><iconSet iconSet="3Arrows"><cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/></iconSet></cfRule></conditionalFormatting>
             <conditionalFormatting sqref="B2:B11"><cfRule type="iconSet" priority="2"><iconSet iconSet="3TrafficLights1" reverse="1"><cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/></iconSet></cfRule></conditionalFormatting>
         </worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 2);
         let Paint::IconSet(set) = &rules[0].paint else {
             panic!("an icon set");
@@ -2743,7 +2745,7 @@ mod tests {
     #[test]
     fn keeps_several_ranges_on_one_rule() {
         let xml = r#"<worksheet><conditionalFormatting sqref="A1:A5 C1:C5"><cfRule type="expression" dxfId="2" priority="1"><formula>$A1&gt;0</formula></cfRule></conditionalFormatting></worksheet>"#;
-        let rules = rules(xml, &[]);
+        let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules[0].ranges.len(), 2);
         assert_eq!(rules[0].ranges[1].col, 2);
     }
@@ -2758,7 +2760,7 @@ mod tests {
             <cfRule type="expression" dxfId="0" priority="2"><formula>Sheet2!A1&gt;0</formula></cfRule>
             <cfRule type="expression" dxfId="7" priority="3"><formula>COUNTIF($A:$A,$A1)&gt;1</formula></cfRule>
         </conditionalFormatting></worksheet>"#;
-        assert!(rules(xml, &[]).is_empty());
+        assert!(rules(xml, Palette::EMPTY).is_empty());
     }
 
     #[test]
@@ -2848,7 +2850,7 @@ mod tests {
 
         let rules = rules(
             r#"<conditionalFormatting sqref="A1:C4"><cfRule type="expression" dxfId="0" priority="1"><formula>$A1&gt;=2</formula></cfRule></conditionalFormatting>"#,
-            &[],
+            Palette::EMPTY,
         );
         let values: HashMap<(u32, u32), Value> = (0..4)
             .map(|row| ((row, 0), Value::Number(row as f64 + 1.0)))
@@ -2881,7 +2883,7 @@ mod tests {
                 <cfRule type="expression" dxfId="0" priority="1"><formula>TRUE</formula></cfRule>
                 <cfRule type="expression" dxfId="1" priority="2"><formula>TRUE</formula></cfRule>
             </conditionalFormatting>"#,
-            &[],
+            Palette::EMPTY,
         );
         let patches = vec![
             Patch {
@@ -2915,7 +2917,7 @@ mod tests {
                 <cfRule type="expression" dxfId="0" priority="1" stopIfTrue="1"><formula>TRUE</formula></cfRule>
                 <cfRule type="expression" dxfId="1" priority="2"><formula>TRUE</formula></cfRule>
             </conditionalFormatting>"#,
-            &[],
+            Palette::EMPTY,
         );
         let patches = vec![
             Patch {
