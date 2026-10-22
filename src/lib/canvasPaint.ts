@@ -922,6 +922,7 @@ function paintTurnedText(
   ctx.font = font;
   ctx.fillStyle = color;
   ctx.textBaseline = "alphabetic";
+  ctx.direction = style?.readingOrder === 2 ? "rtl" : "ltr";
 
   if (style?.stacked) {
     const chars = [...content];
@@ -1193,6 +1194,9 @@ function paintText(
   ctx.font = font;
   ctx.textAlign = align!;
   ctx.textBaseline = "alphabetic";
+  // `readingOrder="2"` is a bidi base direction, not an alignment change:
+  // Excel keeps a General RTL cell left-aligned and reorders its mixed runs.
+  ctx.direction = style?.readingOrder === 2 ? "rtl" : "ltr";
 
   /**
    * Where each line's text sits in the source, and how wide its ink is.

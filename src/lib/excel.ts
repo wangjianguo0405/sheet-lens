@@ -87,6 +87,8 @@ export interface CellStyle {
   rotation?: number;
   /** `textRotation="255"`: characters one below the next, each upright. */
   stacked?: boolean;
+  /** `readingOrder="2"`: the cell's text is laid out right-to-left. */
+  readingOrder?: 1 | 2;
   bold: boolean;
   italic: boolean;
   strike: boolean;
