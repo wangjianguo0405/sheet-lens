@@ -72,7 +72,6 @@ import {
   GUTTER_TINT,
   OUTSIDE_PRINT,
   RING_W,
-  ROW_HEADER_W,
   SELECTION_WASH,
   indentPadding,
   horizontalOf,
@@ -127,6 +126,8 @@ export interface GridView {
    */
   headerW: number;
   headerH: number;
+  /** The number band alone; `headerW` also carries the outline gutter. */
+  rowHeaderW: number;
   /** The sheet's outline groups, or null where it groups nothing. */
   outlineRows: LineOutline | null;
   outlineCols: LineOutline | null;
@@ -2166,9 +2167,9 @@ function paintGutterBands(
 ): void {
   const muted = view.theme.muted;
   const grid = view.theme.gridline;
-  const rowGutter = view.headerW - ROW_HEADER_W;
+  const rowGutter = view.headerW - view.rowHeaderW;
   const colGutter = view.headerH - COL_HEADER_H;
-  const numW = ROW_HEADER_W;
+  const numW = view.rowHeaderW;
   const numH = COL_HEADER_H;
 
   // The outline gutter sits between the sheet's edge and the numbers, and
@@ -2398,7 +2399,7 @@ function paintLevelButton(
   vertical: boolean,
 ): void {
   const rect = vertical
-    ? colLevelButtonRect(index, view.headerW - ROW_HEADER_W)
+    ? colLevelButtonRect(index, view.headerW - view.rowHeaderW, view.rowHeaderW)
     : rowLevelButtonRect(index, view.headerH - COL_HEADER_H);
   // Excel numbers them from 1: the level to show, so a sheet with one group
   // has a 1 (all closed) and a 2 (all open).
@@ -2613,7 +2614,7 @@ function paintGutterLabels(
   ctx.font = fontString(stack, GUTTER_FONT_PX, false);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const rowGutter = view.headerW - ROW_HEADER_W;
+  const rowGutter = view.headerW - view.rowHeaderW;
   const colGutter = view.headerH - COL_HEADER_H;
 
   // Each strip is clipped to itself, because both passes walk cells that begin
@@ -2623,7 +2624,7 @@ function paintGutterLabels(
   // same to the same corner. The clip is what keeps each label on its own strip.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(rowGutter, view.headerH, ROW_HEADER_W, view.height - view.headerH);
+  ctx.rect(rowGutter, view.headerH, view.rowHeaderW, view.height - view.headerH);
   ctx.clip();
 
   for (const { sheetRow, display } of rows) {
@@ -2633,7 +2634,7 @@ function paintGutterLabels(
     const h = spanAt(view.rows.offsets, display);
     const lit = litRow(view.selection, sheetRow);
     if (lit) {
-      fill(ctx, rowGutter, y, ROW_HEADER_W - 1, h, GUTTER_TINT);
+      fill(ctx, rowGutter, y, view.rowHeaderW - 1, h, GUTTER_TINT);
       ctx.font = fontString(stack, GUTTER_FONT_PX, true);
     } else {
       ctx.font = fontString(stack, GUTTER_FONT_PX, false);
@@ -2651,7 +2652,7 @@ function paintGutterLabels(
       : filtering
         ? FILTERED_INK
         : view.theme.mutedForeground;
-    ctx.fillText(String(sheetRow + 1), rowGutter + ROW_HEADER_W / 2, y + h / 2);
+    ctx.fillText(String(sheetRow + 1), rowGutter + view.rowHeaderW / 2, y + h / 2);
   }
   ctx.restore();
 

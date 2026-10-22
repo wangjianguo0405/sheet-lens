@@ -84,7 +84,7 @@ import {
   PRINT_AREA_LINE,
   RESIZE_HANDLE,
   RING_W,
-  ROW_HEADER_W,
+  rowHeaderWidth,
   buildMetrics,
   cellKey,
   charsToPx,
@@ -1090,7 +1090,10 @@ export function CanvasGrid({
   );
   const rowGutter = outlineGutter(outlineRows?.strips ?? 0);
   const colGutter = outlineGutter(outlineCols?.strips ?? 0);
-  const headerW = ROW_HEADER_W + rowGutter;
+  // The number band widens with the digits of the largest row on screen, the
+  // way Excel's does; the outline gutter sits beside it, not inside it.
+  const [rowHeaderW, setRowHeaderW] = useState(() => rowHeaderWidth(1));
+  const headerW = rowHeaderW + rowGutter;
   const headerH = COL_HEADER_H + colGutter;
 
   /**
@@ -1160,6 +1163,22 @@ export function CanvasGrid({
       }),
     [rowView, rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf, hiddenRows],
   );
+
+  /**
+   * Keeps the row-number band as wide as the largest row it is showing, which
+   * is what Excel does: 28px until row 999, 36 at 1000, 44 at 10000, and so on.
+   * Only the digit count matters, so this changes at each power of ten rather
+   * than on every scroll.
+   */
+  const refreshRowHeader = useCallback(() => {
+    const node = viewportRef.current;
+    const z = zoomRef.current;
+    const height = (sizeRef.current?.height || node?.clientHeight || 0) / z;
+    const top = Math.max(0, (node ? node.scrollTop / z : scrollRef.current.top) - headerH);
+    const last = Math.min(indexAt(rows.offsets, top + height), Math.max(0, rowCount - 1));
+    const next = rowHeaderWidth(sheetRowOf(last) + 1);
+    setRowHeaderW((current) => (current === next ? current : next));
+  }, [headerH, rows, rowCount, sheetRowOf]);
 
   const minRowH = Math.max(MIN_ROW_H, Math.ceil(fontSize * LINE_HEIGHT));
 
@@ -2045,11 +2064,18 @@ export function CanvasGrid({
     scrollRef.current = view;
     bySheet.set(sheet.name, view);
     views.set(path, bySheet);
+    refreshRowHeader();
     // The blank area is what makes a scroll past the data possible at all, so
     // every scroll asks for as much of it as the next one will want.
     resizeVoidRef.current();
     schedule("both");
-  }, [schedule, views, path, sheet.name]);
+  }, [refreshRowHeader, schedule, views, path, sheet.name]);
+
+  // The first paint of a sheet has no scroll event to size the band, and the
+  // row count changes when a filter does.
+  useEffect(() => {
+    refreshRowHeader();
+  }, [refreshRowHeader, layout, layoutSheet, sheet.name, rowView]);
 
   /** Repaint the block layer whenever the data, the layout or the sheet moves. */
   useEffect(() => {
@@ -2468,6 +2494,7 @@ export function CanvasGrid({
       hiddenCols,
       headerW,
       headerH,
+      rowHeaderW: headerW - rowGutter,
       outlineRows,
       outlineCols,
       ...range,
@@ -3046,7 +3073,7 @@ export function CanvasGrid({
           }
         }
         for (let index = 0; outlineCols && index < outlineCols.strips; index += 1) {
-          const box = colLevelButtonRect(index, rowGutter);
+          const box = colLevelButtonRect(index, rowGutter, rowHeaderW);
           if (
             px >= box.x * z &&
             px < (box.x + box.w) * z &&
@@ -3059,7 +3086,7 @@ export function CanvasGrid({
         return null;
       }
 
-      if (outlineRows && px < (headerW - ROW_HEADER_W) * z && py >= top) {
+      if (outlineRows && px < (headerW - rowHeaderW) * z && py >= top) {
         for (const group of outlineRows.groups) {
           if (hiddenRows.has(group.summary)) continue;
           const display = displayOfRow(group.summary);
