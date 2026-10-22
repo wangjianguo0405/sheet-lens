@@ -154,6 +154,9 @@ enum Matcher {
     },
     /// A colour scale or a data bar covers its whole range.
     Always,
+    /// `timePeriod`: the cell's date falls inside one of Excel's named windows,
+    /// measured against the current date.
+    TimePeriod(TimePeriod),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -356,9 +359,91 @@ enum Kind {
         equal: bool,
         deviations: u32,
     },
+    TimePeriod(TimePeriod),
     ColorScale,
     DataBar,
     IconSet,
+}
+
+/// The named date windows a `timePeriod` rule tests.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum TimePeriod {
+    Yesterday,
+    Today,
+    Tomorrow,
+    Last7Days,
+    LastWeek,
+    ThisWeek,
+    NextWeek,
+    LastMonth,
+    ThisMonth,
+    NextMonth,
+}
+
+impl TimePeriod {
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "yesterday" => Self::Yesterday,
+            "today" => Self::Today,
+            "tomorrow" => Self::Tomorrow,
+            "last7Days" => Self::Last7Days,
+            "lastWeek" => Self::LastWeek,
+            "thisWeek" => Self::ThisWeek,
+            "nextWeek" => Self::NextWeek,
+            "lastMonth" => Self::LastMonth,
+            "thisMonth" => Self::ThisMonth,
+            "nextMonth" => Self::NextMonth,
+            _ => return None,
+        })
+    }
+
+    /// Measured against Excel (2026-10-22): it compares the value's **date
+    /// part** — a time of day does not matter, and neither does the cell's
+    /// number format — and its weeks run Sunday to Saturday.
+    fn matches(self, date: NaiveDate, today: NaiveDate) -> bool {
+        let week = |start: NaiveDate| date >= start && date < start + Duration::days(7);
+        let this_week = today - Duration::days(today.weekday().num_days_from_sunday() as i64);
+        let first_of_month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap();
+        let before = first_of_month - Duration::days(1);
+        let last_month = NaiveDate::from_ymd_opt(before.year(), before.month(), 1).unwrap();
+        let after = first_of_month + Duration::days(32);
+        let next_month = NaiveDate::from_ymd_opt(after.year(), after.month(), 1).unwrap();
+        let month = |first: NaiveDate| {
+            date.year() == first.year() && date.month() == first.month()
+        };
+        match self {
+            Self::Yesterday => date == today - Duration::days(1),
+            Self::Today => date == today,
+            Self::Tomorrow => date == today + Duration::days(1),
+            // "Last 7 Days" includes today and the six before it.
+            Self::Last7Days => date >= today - Duration::days(6) && date <= today,
+            Self::LastWeek => week(this_week - Duration::days(7)),
+            Self::ThisWeek => week(this_week),
+            Self::NextWeek => week(this_week + Duration::days(7)),
+            Self::LastMonth => month(last_month),
+            Self::ThisMonth => month(first_of_month),
+            Self::NextMonth => month(next_month),
+        }
+    }
+}
+
+/// An Excel date serial as a calendar date. Serial 60 is the 1900 leap-year
+/// bug's nonexistent 29 February and is rejected; the 1904 system is not
+/// handled.
+fn date_of_serial(serial: f64) -> Option<NaiveDate> {
+    if !serial.is_finite() {
+        return None;
+    }
+    let serial = serial.floor();
+    if serial < 1.0 || serial == 60.0 {
+        return None;
+    }
+    let days = if serial < 61.0 {
+        serial - 25568.0
+    } else {
+        serial - 25569.0
+    };
+    NaiveDate::from_ymd_opt(1970, 1, 1)?.checked_add_signed(Duration::days(days as i64))
 }
 
 /// An optional OOXML boolean: absent means false.
@@ -398,6 +483,9 @@ fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
                 .map(i32::unsigned_abs)
                 .unwrap_or(0),
         },
+        Some("timePeriod") => Kind::TimePeriod(TimePeriod::parse(
+            &attr(element, b"timePeriod")?,
+        )?),
         Some("colorScale") => Kind::ColorScale,
         Some("dataBar") => Kind::DataBar,
         Some("iconSet") => Kind::IconSet,
@@ -486,6 +574,7 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
             equal: *equal,
             deviations: *deviations,
         },
+        Kind::TimePeriod(period) => Matcher::TimePeriod(*period),
         Kind::ColorScale | Kind::DataBar | Kind::IconSet => Matcher::Always,
     };
     let paint = match pending.kind {
@@ -670,6 +759,7 @@ impl Rule {
             | Matcher::Duplicate { .. }
             | Matcher::Top { .. }
             | Matcher::Average { .. }
+            | Matcher::TimePeriod(_)
             | Matcher::Always => self.range_columns(out),
         }
     }
@@ -1207,6 +1297,7 @@ fn fold(
     if ordered.is_empty() {
         return;
     }
+    let today = Local::now().date_naive();
 
     // The multiset a duplicate or unique rule needs, built once for its whole
     // range rather than once per cell it asks about.
@@ -1296,6 +1387,7 @@ fn fold(
                     anchor_row: span.anchor_row,
                     anchor_col: span.anchor_col,
                     values,
+                    today,
                 };
                 let numbers = numbers[span.index].as_deref().unwrap_or(&[]);
                 if !span
@@ -1518,6 +1610,9 @@ struct Context<'a> {
     anchor_row: u32,
     anchor_col: u32,
     values: &'a HashMap<(u32, u32), Value>,
+    /// The local date the sheet is being viewed on; `timePeriod` measures
+    /// against it.
+    today: NaiveDate,
 }
 
 impl Context<'_> {
@@ -1681,6 +1776,14 @@ impl Matcher {
                 } else {
                     value < threshold
                 }
+            }
+            Matcher::TimePeriod(period) => {
+                let Value::Number(serial) = context.value() else {
+                    return false;
+                };
+                // Excel compares the date part only; a General-format serial
+                // fires just as a date-formatted cell does.
+                date_of_serial(serial).is_some_and(|date| period.matches(date, context.today))
             }
             Matcher::Always => true,
         }
@@ -2310,6 +2413,57 @@ impl Parser {
 mod tests {
     use super::*;
 
+    #[test]
+    fn time_periods_match_excels_windows() {
+        // 2026-10-22 is a Thursday; Excel's weeks run Sunday to Saturday.
+        let today = NaiveDate::from_ymd_opt(2026, 10, 22).unwrap();
+        let date = |month, day| NaiveDate::from_ymd_opt(2026, month, day).unwrap();
+
+        assert!(TimePeriod::Yesterday.matches(date(10, 21), today));
+        assert!(TimePeriod::Today.matches(date(10, 22), today));
+        assert!(TimePeriod::Tomorrow.matches(date(10, 23), today));
+
+        assert!(TimePeriod::Last7Days.matches(date(10, 16), today));
+        assert!(!TimePeriod::Last7Days.matches(date(10, 15), today));
+
+        assert!(TimePeriod::ThisWeek.matches(date(10, 18), today));
+        assert!(TimePeriod::ThisWeek.matches(date(10, 24), today));
+        assert!(!TimePeriod::ThisWeek.matches(date(10, 25), today));
+        assert!(TimePeriod::LastWeek.matches(date(10, 11), today));
+        assert!(TimePeriod::LastWeek.matches(date(10, 17), today));
+        assert!(!TimePeriod::LastWeek.matches(date(10, 18), today));
+        assert!(TimePeriod::NextWeek.matches(date(10, 25), today));
+        assert!(TimePeriod::NextWeek.matches(date(10, 31), today));
+
+        assert!(TimePeriod::LastMonth.matches(date(9, 1), today));
+        assert!(TimePeriod::LastMonth.matches(date(9, 30), today));
+        assert!(!TimePeriod::LastMonth.matches(date(10, 1), today));
+        assert!(TimePeriod::ThisMonth.matches(date(10, 1), today));
+        assert!(TimePeriod::ThisMonth.matches(date(10, 31), today));
+        assert!(TimePeriod::NextMonth.matches(date(11, 1), today));
+        assert!(TimePeriod::NextMonth.matches(date(11, 30), today));
+    }
+
+    #[test]
+    fn excel_serials_keep_the_date_part() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 22).unwrap();
+        assert_eq!(date_of_serial(46317.0), Some(today));
+        assert_eq!(date_of_serial(46317.752), Some(today));
+        assert_eq!(date_of_serial(60.0), None);
+        assert_eq!(date_of_serial(0.0), None);
+    }
+
+    #[test]
+    fn time_period_rule_is_read() {
+        let xml = r#"<worksheet><conditionalFormatting sqref="A1:A3"><cfRule type="timePeriod" timePeriod="thisWeek" dxfId="0" priority="1"/></conditionalFormatting></worksheet>"#;
+        let rules = rules(xml, Palette::EMPTY);
+        assert_eq!(rules.len(), 1);
+        assert!(matches!(
+            rules[0].matcher,
+            Matcher::TimePeriod(TimePeriod::ThisWeek)
+        ));
+    }
+
     fn patch() -> Patch {
         Patch {
             fill: Some("#BFBFBF".to_owned()),
@@ -2338,6 +2492,7 @@ mod tests {
             anchor_row,
             anchor_col,
             values: &values,
+            today: NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
         };
         Formula::parse(formula)?.eval(&context)
     }
@@ -2366,6 +2521,7 @@ mod tests {
             anchor_row: 0,
             anchor_col: 0,
             values: &values,
+            today: NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
         };
         let counts = match &rule.matcher {
             Matcher::Duplicate { .. } => Some(rule.value_counts(&values, 8, 8)),
@@ -2536,6 +2692,7 @@ mod tests {
                 anchor_row: 0,
                 anchor_col: 0,
                 values: &values,
+                today: NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
             };
             scale.color(&context, &numbers)
         };
@@ -2564,6 +2721,7 @@ mod tests {
                 anchor_row: 0,
                 anchor_col: 0,
                 values: &values,
+                today: NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
             };
             bar.cell(&context, &numbers).map(|bar| (bar.from, bar.to))
         };
@@ -2596,6 +2754,7 @@ mod tests {
                 anchor_row: 0,
                 anchor_col: 0,
                 values: &values,
+                today: NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
             };
             bar.cell(&context, &numbers)
         };
@@ -2731,6 +2890,7 @@ mod tests {
                 anchor_row: 0,
                 anchor_col: 0,
                 values: &values,
+                today: NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
             };
             set.level(&context, &numbers)
         };
