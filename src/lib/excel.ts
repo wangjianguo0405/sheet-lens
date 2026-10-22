@@ -25,6 +25,26 @@ export interface SheetInfo {
    * would otherwise be drawn around a page nobody asked for.
    */
   printArea: boolean;
+  /** `<sheetView tabSelected>`: the tab the file was saved on. */
+  selected?: boolean;
+  /**
+   * `<sheetView view>`: `pageBreakPreview` or `pageLayout`, absent for the
+   * ordinary view. Only the first one is drawn differently here.
+   */
+  view?: string | null;
+  /** Where the file left the cursor, from the sheet's `<selection>`. */
+  selection?: SavedSelection | null;
+}
+
+/** A cursor the file saved: its active cell and the areas selected. */
+export interface SavedSelection {
+  /** Zero-based `[row, col]`. */
+  active: [number, number];
+  /**
+   * `sqref` split into rectangles. A whole-row or whole-column selection has
+   * no cell reference to parse and is left out; the active cell still lands.
+   */
+  areas: Block[];
 }
 
 export interface WorkbookInfo {
@@ -46,8 +66,23 @@ export interface SearchOptions {
 }
 
 export interface BorderEdge {
-  /** A CSS `border-style`. */
-  line: "solid" | "dashed" | "dotted" | "double";
+  /**
+   * The file's own line style, kept apart because Excel draws thirteen
+   * different patterns: hair (1 on 1 off), dotted (2/2), dashed (3/1),
+   * dashDot (9,3,3,3), dashDotDot, and their medium (2 px) forms.
+   */
+  line:
+    | "solid"
+    | "double"
+    | "hair"
+    | "dotted"
+    | "dashed"
+    | "dashDot"
+    | "dashDotDot"
+    | "slantDashDot"
+    | "mediumDashed"
+    | "mediumDashDot"
+    | "mediumDashDotDot";
   width: number;
   /** Excel's border precedence — the heavier of two shared edges wins. */
   rank: number;
@@ -73,7 +108,14 @@ export interface CellStyle {
    * `centerContinuous` is Excel's Center Across Selection, which the grid draws
    * as one block over the run of cells carrying it — not centred in one cell.
    */
-  horizontal: "left" | "center" | "centerContinuous" | "right" | null;
+  horizontal:
+    | "left"
+    | "center"
+    | "centerContinuous"
+    | "right"
+    | "justify"
+    | "distributed"
+    | null;
   vertical: "top" | "middle" | "bottom" | null;
   /** Indent levels; one is three spaces of the cell's font (ECMA-376 §18.8.1). */
   indent: number;
@@ -94,6 +136,16 @@ export interface CellStyle {
   strike: boolean;
   /** `single` or `double`; null when the font carries no underline. */
   underline: "single" | "double" | null;
+  /**
+   * The accounting pair draws its rule across the whole cell rather than under
+   * the text, a little lower. Measured off `CopyPicture` (`fonts-deco.xlsx`).
+   */
+  underlineAccounting?: boolean;
+  /**
+   * `<justifyLastLine="0"/>` on a distributed cell. Absent is the usual case
+   * and means Excel stretches the last line too.
+   */
+  justifyLastLine?: boolean | null;
   /** Set when the cell's font draws raised or lowered (sup/subscript). */
   vertAlign?: "superscript" | "subscript" | null;
   /** Set only when the cell's font differs from the workbook default. */

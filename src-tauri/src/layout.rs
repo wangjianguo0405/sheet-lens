@@ -178,6 +178,10 @@ pub struct Align {
     /// drawing: it sets the paragraph's bidi base direction, reordering mixed
     /// text (`abc` + Hebrew) without changing the cell's alignment.
     pub reading_order: u8,
+    /// `<alignment justifyLastLine>`, for a `distributed` cell. Excel's own
+    /// files leave the attribute out and still stretch the last line, so an
+    /// absent value means "yes"; only an explicit `0` leaves it short.
+    pub justify_last_line: Option<bool>,
 }
 
 /// One side of a cell's border, already reduced to what CSS needs.
@@ -255,11 +259,22 @@ pub struct CellStyle {
     /// the flat left-to-right cells, which are nearly all of them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reading_order: Option<u8>,
+    /// `<justifyLastLine="0"/>` on a distributed cell: leave the last line
+    /// short. Only written when the file says so — Excel's own files stretch
+    /// every line and write no attribute at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub justify_last_line: Option<bool>,
     pub bold: bool,
     pub italic: bool,
     pub strike: bool,
     /// `single` or `double`; absent when the font has no underline.
     pub underline: Option<&'static str>,
+    /// The accounting forms of the two above: Excel draws that rule across the
+    /// whole cell instead of under the text, and a little lower. Measured off
+    /// `CopyPicture` (`fonts-deco.xlsx`): the rule spans the cell's inner width
+    /// and sits 0.0375 em below the text underline.
+    #[serde(skip_serializing_if = "is_false")]
+    pub underline_accounting: bool,
     /// `superscript` or `subscript` for a font that draws raised or lowered at
     /// two thirds of its size. Excel keeps the stored size; the scale is a
     /// drawing rule, measured off `CopyPicture`.
@@ -308,10 +323,12 @@ impl PartialEq for CellStyle {
             && self.rotation == other.rotation
             && self.stacked == other.stacked
             && self.reading_order == other.reading_order
+            && self.justify_last_line == other.justify_last_line
             && self.bold == other.bold
             && self.italic == other.italic
             && self.strike == other.strike
             && self.underline == other.underline
+            && self.underline_accounting == other.underline_accounting
             && self.vert_align == other.vert_align
             && self.size_px == other.size_px
             && self.family == other.family
@@ -334,10 +351,12 @@ impl std::hash::Hash for CellStyle {
         self.rotation.hash(state);
         self.stacked.hash(state);
         self.reading_order.hash(state);
+        self.justify_last_line.hash(state);
         self.bold.hash(state);
         self.italic.hash(state);
         self.strike.hash(state);
         self.underline.hash(state);
+        self.underline_accounting.hash(state);
         self.vert_align.hash(state);
         self.size_px.map(f64::to_bits).hash(state);
         self.family.hash(state);
@@ -358,10 +377,12 @@ impl CellStyle {
             && self.rotation == 0
             && !self.stacked
             && self.reading_order.is_none()
+            && self.justify_last_line.is_none()
             && !self.bold
             && !self.italic
             && !self.strike
             && self.underline.is_none()
+            && !self.underline_accounting
             && self.vert_align.is_none()
             && self.size_px.is_none()
             && self.family.is_none()
@@ -374,7 +395,7 @@ impl CellStyle {
 }
 
 /// A merged block, anchored at its top-left cell.
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeRect {
     pub row: u32,
@@ -520,10 +541,12 @@ impl Styles {
             rotation: entry.align.rotation,
             stacked: entry.align.stacked,
             reading_order: (entry.align.reading_order != 0).then_some(entry.align.reading_order),
+            justify_last_line: entry.align.justify_last_line,
             bold: font.is_some_and(|font| font.bold),
             italic: font.is_some_and(|font| font.italic),
             strike: font.is_some_and(|font| font.strike),
             underline: font.and_then(|font| font.underline),
+            underline_accounting: font.is_some_and(|font| font.accounting),
             vert_align: font.and_then(|font| font.vert_align),
             size_px,
             family,
@@ -1036,9 +1059,10 @@ struct FontInfo {
     bold: bool,
     italic: bool,
     strike: bool,
-    /// `single` or `double`. The two accounting forms draw the same line, only
-    /// spanning the cell rather than the text, and land on one of these.
+    /// `single` or `double`. The accounting pair draws the same two rules but
+    /// across the cell rather than the text; `accounting` keeps them apart.
     underline: Option<&'static str>,
+    accounting: bool,
     /// `superscript` or `subscript`; the cell's whole text draws raised or
     /// lowered at two thirds of its size.
     vert_align: Option<&'static str>,
@@ -1165,6 +1189,129 @@ const SHEET_HEAD_BYTES: u64 = 8192;
 /// Excel opens. `state="veryHidden"` is hidden the same way here — Excel keeps
 /// those out of its Unhide list because a macro is usually what put them there,
 /// and nothing in the corpus uses the value.
+/// How a sheet was left when the file was saved: which view it was in, whether
+/// its tab was the selected one, and where its cursor sits.
+///
+/// Excel keeps these in the sheet's own `<sheetViews>`, and they decide what a
+/// reader should open on — a workbook saved on sheet 3 in Page Break Preview
+/// with `D5:E7` selected is not opened on sheet 1 at A1, as it used to be.
+/// Read up front with the tab colours, before any layout.
+#[derive(Serialize, Clone, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetState {
+    /// `<sheetView tabSelected="1">`: the tab the file was saved on.
+    pub selected: bool,
+    /// `<sheetView view>` — `pageBreakPreview` is the only one this viewer
+    /// draws differently; `normal` and `pageLayout` are both the ordinary
+    /// grid here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
+    /// `<selection activeCell sqref>`: where the cursor was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<SavedSelection>,
+}
+
+/// A saved cursor: the active cell, and every area the selection covered.
+#[derive(Serialize, Clone, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSelection {
+    /// Zero-based `[row, col]`.
+    pub active: [u32; 2],
+    /// `sqref` split into rectangles. Rows and columns selected whole
+    /// (`3:3`) have no cell reference to parse and are left out; the active
+    /// cell still lands where the file put it.
+    pub areas: Vec<MergeRect>,
+}
+
+/// Every sheet's saved view state, keyed by name. A workbook whose sheet parts
+/// cannot be read simply reports nothing and opens the old way.
+pub fn sheet_states(path: &str) -> HashMap<String, SheetState> {
+    let mut states = HashMap::new();
+    let Ok(file) = File::open(path) else {
+        return states;
+    };
+    let Ok(mut zip) = ZipArchive::new(BufReader::new(file)) else {
+        return states;
+    };
+    let Ok(workbook) = read_entry(&mut zip, "xl/workbook.xml") else {
+        return states;
+    };
+    let Ok(rels) = read_entry(&mut zip, "xl/_rels/workbook.xml.rels") else {
+        return states;
+    };
+    for element in scan(&workbook, b"sheet") {
+        let Some(name) = element.get("name") else {
+            continue;
+        };
+        let Ok(part) = sheet_part(&workbook, &rels, name) else {
+            continue;
+        };
+        let Ok(entry) = zip.by_name(&part) else {
+            continue;
+        };
+        let mut head = Vec::new();
+        if entry.take(SHEET_HEAD_BYTES).read_to_end(&mut head).is_err() {
+            continue;
+        }
+        states.insert(name.clone(), sheet_state(&String::from_utf8_lossy(&head)));
+    }
+    states
+}
+
+/// The rules, split out from the zip read so they can be tested on XML alone.
+fn sheet_state(xml: &str) -> SheetState {
+    // Only `<sheetViews>` is the sheet's own view: `<customSheetViews>` holds
+    // somebody's saved views, with panes and selections of their own, and
+    // letting those stand in once opened a WBS at the wrong corner (§1.5h).
+    let own = xml.find("</sheetViews>").map_or(xml, |end| &xml[..end]);
+    let views = scan(own, b"sheetView");
+    let view_element = views.first();
+    let selected = view_element
+        .and_then(|view| view.get("tabselected"))
+        .is_some_and(|value| value == "1" || value == "true");
+    let view = view_element
+        .and_then(|view| view.get("view"))
+        .filter(|value| value.as_str() != "normal")
+        .cloned();
+    // Several `<selection>` elements appear when the window is split, one per
+    // pane. Excel's own `Selection` is the active pane's, and the file says
+    // which that is; without the hint the first one is the top-left pane.
+    let selections = scan(own, b"selection");
+    let active_pane = scan(own, b"pane")
+        .first()
+        .and_then(|pane| pane.get("activepane"))
+        .cloned();
+    let picked = active_pane
+        .as_deref()
+        .and_then(|pane| {
+            selections.iter().find(|selection| {
+                selection.get("pane").map(|value| value.as_str()) == Some(pane)
+            })
+        })
+        .or_else(|| selections.first());
+    let selection = picked.and_then(|selection| {
+        let active = selection.get("activecell").and_then(|cell| parse_cell(cell))?;
+        let areas = selection
+            .get("sqref")
+            .map(|sqref| {
+                sqref
+                    .split_whitespace()
+                    .filter_map(parse_range)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(SavedSelection {
+            active: [active.0, active.1],
+            areas,
+        })
+    });
+    SheetState {
+        selected,
+        view,
+        selection,
+    }
+}
+
 pub fn hidden_sheets(path: &str) -> HashSet<String> {
     let Ok(file) = File::open(path) else {
         return HashSet::new();
@@ -2374,13 +2521,17 @@ fn read_font_prop(element: &BytesStart, font: Option<&mut FontInfo>) {
             }
         }
         b"u" => {
-            // The two accounting forms draw the same line, spanning the cell
-            // rather than the text; they land on single and double.
-            font.underline = match attr(element, b"val").as_deref() {
+            // The two accounting forms are the same one and two rules as
+            // `single`/`double`, but Excel draws them across the whole cell
+            // rather than under the text, and 0.0375 em lower — measured off
+            // `CopyPicture` in `fonts-deco.xlsx`.
+            let value = attr(element, b"val");
+            font.underline = match value.as_deref() {
                 Some("none") => None,
                 Some("double" | "doubleAccounting") => Some("double"),
                 _ => Some("single"),
             };
+            font.accounting = matches!(value.as_deref(), Some("singleAccounting" | "doubleAccounting"));
         }
         _ => {}
     }
@@ -2511,20 +2662,24 @@ fn pattern_kind(name: &str) -> Option<&'static str> {
 /// Excel's border names reduced to a CSS style, a width and a precedence rank.
 /// The rank follows Excel's own ordering so the heavier of two shared edges wins.
 fn edge_style(name: &str) -> Option<BorderEdge> {
+    // The pattern names are the file's own; the renderer turns each into the
+    // dash array measured off `CopyPicture` at 1:1 (`border-styles.xlsx`).
+    // Collapsing the dot variants onto "dashed" drew six of the thirteen styles
+    // as the same line.
     let (line, width, rank) = match name {
         // Excel's hairline is a dotted rule, not a thin solid one: a 1:1
         // CopyPicture of a hair-bordered row shows 1 px dots with 1 px gaps.
-        "hair" => ("dotted", 1, 1),
+        "hair" => ("hair", 1, 1),
         "dotted" => ("dotted", 1, 2),
         "dashed" => ("dashed", 1, 3),
         "thin" => ("solid", 1, 4),
-        "mediumDashed" => ("dashed", 2, 5),
-        "dashDot" => ("dashed", 1, 6),
-        "mediumDashDot" => ("dashed", 2, 7),
-        "dashDotDot" => ("dashed", 1, 8),
+        "mediumDashed" => ("mediumDashed", 2, 5),
+        "dashDot" => ("dashDot", 1, 6),
+        "mediumDashDot" => ("mediumDashDot", 2, 7),
+        "dashDotDot" => ("dashDotDot", 1, 8),
         "medium" => ("solid", 2, 9),
-        "mediumDashDotDot" => ("dashed", 2, 10),
-        "slantDashDot" => ("dashed", 1, 11),
+        "mediumDashDotDot" => ("mediumDashDotDot", 2, 10),
+        "slantDashDot" => ("slantDashDot", 1, 11),
         "thick" => ("solid", 3, 12),
         "double" => ("double", 3, 13),
         _ => return None,
@@ -2813,7 +2968,12 @@ pub(crate) fn tint(hex: String, tint: Option<String>) -> String {
 fn read_alignment(element: &BytesStart, slot: &mut Align) {
     if let Some(value) = attr(element, b"horizontal") {
         slot.horizontal = match value.as_str() {
-            "left" | "justify" | "distributed" => Some("left"),
+            "left" => Some("left"),
+            // Justified text keeps its own placement: Excel stretches every
+            // line but the last to the cell's width, which is not "left".
+            "justify" => Some("justify"),
+            // Distributed does the same to every line, last one included.
+            "distributed" => Some("distributed"),
             "center" => Some("center"),
             // Center Across Selection is not "centred inside the cell": Excel
             // centres the text across the run of neighbours carrying the same
@@ -2854,6 +3014,9 @@ fn read_alignment(element: &BytesStart, slot: &mut Align) {
     }
     if let Some(value) = attr(element, b"indent") {
         slot.indent = value.trim().parse::<u8>().unwrap_or(0);
+    }
+    if let Some(value) = attr(element, b"justifyLastLine") {
+        slot.justify_last_line = Some(value != "0" && value != "false");
     }
 }
 
@@ -4314,6 +4477,127 @@ mod tests {
         // Turning all three off leaves nothing to draw, which is what proves
         // the zeroes were read — an unread `<b val="0"/>` would leave it bold.
         assert!(styles.cell_style(4, default_font_px).is_none());
+    }
+
+    /// The accounting underline is the same one or two rules as `single` and
+    /// `double` but spans the cell instead of the text, and justified text is
+    /// not "left". Both used to collapse into the ordinary form.
+    #[test]
+    fn keeps_accounting_underlines_and_justified_text_apart() {
+        let xml = r#"<styleSheet>
+            <fonts count="3">
+                <font><sz val="11"/><name val="Calibri"/></font>
+                <font><u val="singleAccounting"/></font>
+                <font><u val="doubleAccounting"/></font>
+            </fonts>
+            <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+            <borders count="1"><border/></borders>
+            <cellXfs count="5">
+                <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+                <xf numFmtId="0" fontId="1" fillId="0" borderId="0"/>
+                <xf numFmtId="0" fontId="2" fillId="0" borderId="0"/>
+                <xf numFmtId="0" fontId="0" fillId="0" borderId="0">
+                    <alignment horizontal="distributed" wrapText="1"/>
+                </xf>
+                <xf numFmtId="0" fontId="0" fillId="0" borderId="0">
+                    <alignment horizontal="justify" justifyLastLine="0"/>
+                </xf>
+            </cellXfs>
+        </styleSheet>"#;
+        let styles = parse_styles(xml, Palette::EMPTY);
+        let default_font_px = points_to_font_px(11.0);
+        let style = |index: usize| {
+            styles
+                .cell_style(index, default_font_px)
+                .expect("a styled entry")
+        };
+
+        let single = style(1);
+        assert_eq!(single.underline, Some("single"));
+        assert!(single.underline_accounting, "the rule spans the cell");
+
+        let double = style(2);
+        assert_eq!(double.underline, Some("double"));
+        assert!(double.underline_accounting);
+
+        let distributed = style(3);
+        assert_eq!(distributed.horizontal, Some("distributed"));
+        // Excel's own files write no attribute and stretch the last line.
+        assert_eq!(distributed.justify_last_line, None);
+
+        let justified = style(4);
+        assert_eq!(justified.horizontal, Some("justify"));
+        assert_eq!(justified.justify_last_line, Some(false));
+    }
+
+    /// Which sheet the file was saved on, where its cursor was, and the view it
+    /// was in — the three things that decide what a reader opens on.
+    #[test]
+    fn reads_where_a_sheet_was_left() {
+        let xml = r#"<worksheet>
+            <sheetViews>
+                <sheetView tabSelected="1" view="pageBreakPreview" zoomScale="60">
+                    <selection activeCell="D5" sqref="D5:E7"/>
+                </sheetView>
+            </sheetViews>
+            <sheetData/>
+            <customSheetViews>
+                <customSheetView>
+                    <pane state="frozen" ySplit="7" activePane="bottomLeft"/>
+                    <selection pane="bottomLeft" activeCell="BV45"/>
+                </customSheetView>
+            </customSheetViews>
+        </worksheet>"#;
+        let state = sheet_state(xml);
+        assert!(state.selected);
+        assert_eq!(state.view.as_deref(), Some("pageBreakPreview"));
+        let selection = state.selection.expect("a saved cursor");
+        assert_eq!(selection.active, [4, 3]);
+        assert_eq!(
+            selection.areas,
+            vec![MergeRect {
+                row: 4,
+                col: 3,
+                rows: 3,
+                cols: 2,
+            }]
+        );
+    }
+
+    /// A sheet with no saved cursor must not borrow the one in a custom view.
+    #[test]
+    fn an_empty_sheet_view_has_no_selection() {
+        let xml = r#"<worksheet>
+            <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+            <sheetData/>
+            <customSheetViews><customSheetView>
+                <selection activeCell="C3" sqref="C3"/>
+            </customSheetView></customSheetViews>
+        </worksheet>"#;
+        assert_eq!(sheet_state(xml).selection, None);
+    }
+
+    /// Thirteen border styles are thirteen different lines; six of them used to
+    /// come out as the same dashes.
+    #[test]
+    fn every_border_style_keeps_its_own_pattern() {
+        let names = [
+            "hair",
+            "dotted",
+            "dashed",
+            "dashDot",
+            "dashDotDot",
+            "slantDashDot",
+            "mediumDashed",
+            "mediumDashDot",
+            "mediumDashDotDot",
+        ];
+        let mut seen: Vec<&str> = Vec::new();
+        for name in names {
+            let line = edge_style(name).expect(name).line;
+            assert!(!seen.contains(&line), "{name} shares {line}");
+            seen.push(line);
+        }
     }
 
     #[test]

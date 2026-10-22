@@ -534,11 +534,37 @@ function paintPattern(
 }
 
 /**
+ * The dash pattern Excel draws for each of its border styles, in sheet pixels.
+ *
+ * Counted off a 1:1 `CopyPicture` of `border-styles.xlsx` at 96 dpi: hair is
+ * 1 on / 1 off, dotted 2/2, dashed 3/1, dashDot 9 on 3 off 3 on 3 off, and the
+ * medium forms double the thickness but keep the same runs. `slantDashDot` is
+ * drawn with slanted dash ends, which a canvas dash array cannot express; its
+ * runs stand in for it.
+ */
+const BORDER_DASH: Partial<Record<BorderEdge["line"], number[]>> = {
+  hair: [1, 1],
+  dotted: [2, 2],
+  dashed: [3, 1],
+  dashDot: [9, 3, 3, 3],
+  dashDotDot: [9, 3, 3, 3, 3, 3],
+  slantDashDot: [9, 3, 3, 3],
+  mediumDashed: [9, 3],
+  mediumDashDot: [9, 3, 3, 3],
+  mediumDashDotDot: [9, 3, 3, 3, 3, 3],
+};
+
+function borderDash(line: BorderEdge["line"]): number[] {
+  return BORDER_DASH[line] ?? [];
+}
+
+/**
  * A border edge in whatever style the file asked for. Dashes and dots have to
  * be stroked — a dash pattern cannot be faked with rectangles — and `double`,
  * which canvas has no primitive for, is drawn as the two parallel strokes CSS
  * would.
- */function strokeEdge(
+ */
+function strokeEdge(
   ctx: CanvasRenderingContext2D,
   edge: BorderEdge,
   orientation: "h" | "v",
@@ -574,8 +600,7 @@ function paintPattern(
   ctx.strokeStyle = color;
   ctx.lineWidth = w;
   ctx.lineCap = "butt";
-  // CSS's own patterns, near enough: dashes about three widths, dots one.
-  ctx.setLineDash(edge.line === "dotted" ? [w, w] : [3 * w, 2 * w]);
+  ctx.setLineDash(borderDash(edge.line));
   // Each cell strokes its own side; without carrying the pattern's phase from
   // the sheet's origin, every cell restarts it and two dashes that meet at a
   // cell edge read as one double-width dot.
@@ -630,13 +655,7 @@ function paintDiagonal(
   const double = edge.line === "double";
   ctx.lineWidth = double ? Math.max(1, width / 3) : width;
   ctx.lineCap = "butt";
-  ctx.setLineDash(
-    edge.line === "dotted"
-      ? [width, width]
-      : edge.line === "dashed"
-        ? [3 * width, 2 * width]
-        : [],
-  );
+  ctx.setLineDash(double ? [] : borderDash(edge.line));
   const offsets = double ? [-width / 3, width / 3] : [0];
   const segment = (ax: number, ay: number, bx: number, by: number, off: number) => {
     const length = Math.hypot(bx - ax, by - ay) || 1;
@@ -857,7 +876,9 @@ function paintDecoration(
   sizePx: number,
   color: string,
   /** The cell's style, or a run's own font — whichever is drawing this piece. */
-  source: { underline?: string | null; strike?: boolean } | null,
+  source: { underline?: string | null; strike?: boolean; underlineAccounting?: boolean } | null,
+  /** The cell's inner width, which only an accounting rule spans. */
+  full?: { left: number; width: number } | null,
 ): void {
   const underline = source?.underline ?? null;
   const strike = source?.strike ?? false;
@@ -868,19 +889,40 @@ function paintDecoration(
     // The measured offset is the struck line's centre.
     ctx.fillRect(left, baseline - metrics.strike * sizePx - thickness / 2, width, thickness);
   }
+  if (underline !== "single" && underline !== "double") return;
+  // The accounting forms draw across the whole cell and a little lower — see
+  // `ACCOUNTING_DROP`.
+  const accounting = source?.underlineAccounting === true && full != null;
+  // The rule keeps a margin from both cell edges, wider as the font grows:
+  // 3.5 px a side at 11 pt, 5.5 at 20 pt and 42 at 200 pt, which is 0.15 em
+  // plus one pixel each time (`fonts-deco.xlsx`).
+  const inset = ACCOUNTING_INSET * sizePx + 1;
+  const ruleLeft = accounting && full ? full.left + inset : left;
+  const ruleWidth = accounting && full ? Math.max(0, full.width - inset * 2) : width;
+  const drop = accounting ? ACCOUNTING_DROP * sizePx : 0;
   if (underline === "single") {
     ctx.fillRect(
-      left,
-      baseline + metrics.underline * sizePx,
-      width,
+      ruleLeft,
+      baseline + metrics.underline * sizePx + drop,
+      ruleWidth,
       metrics.underlineThickness * sizePx,
     );
-  } else if (underline === "double") {
+  } else {
     const thickness = metrics.doubleThickness * sizePx;
-    ctx.fillRect(left, baseline + metrics.double[0] * sizePx, width, thickness);
-    ctx.fillRect(left, baseline + metrics.double[1] * sizePx, width, thickness);
+    ctx.fillRect(ruleLeft, baseline + metrics.double[0] * sizePx + drop, ruleWidth, thickness);
+    ctx.fillRect(ruleLeft, baseline + metrics.double[1] * sizePx + drop, ruleWidth, thickness);
   }
 }
+
+/**
+ * How much lower than an ordinary underline Excel draws the accounting pair,
+ * in em. Measured off `CopyPicture` at 11, 20 and 200 pt in `fonts-deco.xlsx`:
+ * the rule sits 0–1 px lower at body sizes and 10 px at 200 pt (0.0375 em).
+ */
+const ACCOUNTING_DROP = 0.0375;
+
+/** The margin an accounting rule keeps from each cell edge, in em (and 1 px). */
+const ACCOUNTING_INSET = 0.15;
 
 /** The gap a turned cell keeps from the edge it is measured against. */
 const TURN_INSET = 2;
@@ -1174,6 +1216,22 @@ function paintText(
         : box.y + box.h - blockHeight;
 
   const horizontal = horizontalOf(style, kind);
+  /**
+   * Justified text. Excel stretches a line to the cell's width by widening the
+   * gaps between words — not the letters — and which lines it stretches is
+   * what tells the two styles apart, measured off `justify.xlsx`:
+   *
+   * - `justify`: every line but the last; the last stops at its own ink.
+   * - `distributed`: every line, the last one included. `justifyLastLine="0"`
+   *   on a distributed cell asks for the justify behaviour instead. Excel's
+   *   own files write no such attribute and stretch everything.
+   * - With an `indent`, a distributed cell insets both sides by the indent,
+   *   not just the left one (`justify.xlsx` row 3: 15..182 in a 3..194 cell).
+   */
+  const justifyAll = horizontal === "distributed";
+  const justifyLast = style?.justifyLastLine !== false;
+  const justifyTarget =
+    justifyAll && padLeft > CELL_PAD_LEFT ? available - (padLeft - CELL_PAD_LEFT) : available;
   let innerX = box.x + padLeft;
   let x!: number;
   let align!: CanvasTextAlign;
@@ -1263,6 +1321,41 @@ function paintText(
     if (!spans) {
       const drawBaseline = baseline + riseOf(null);
       ctx.fillStyle = base;
+      // A justified line is drawn word by word: the extra width goes into the
+      // gaps, so a single `fillText` cannot produce it.
+      const stretches =
+        (horizontal === "justify" || justifyAll) &&
+        (i < lines.length - 1 || (justifyAll && justifyLast));
+      if (stretches && width < justifyTarget - 0.5) {
+        const words = source.trim().split(/\s+/);
+        // Latin text is spread at its word gaps, which is what `justify.xlsx`
+        // showed; text with no spaces — nearly every Japanese line — is spread
+        // between characters instead, the way Excel's 均等割り付け reads.
+        const parts = words.length > 1 ? words : Array.from(source.trim());
+        if (parts.length > 1) {
+          const partWidths = parts.map((part) => textWidth(font, part));
+          const inkTotal = partWidths.reduce((sum, part) => sum + part, 0);
+          const gap = (justifyTarget - inkTotal) / (parts.length - 1);
+          ctx.textAlign = "left";
+          let at = innerX;
+          for (let k = 0; k < parts.length; k += 1) {
+            ctx.fillText(parts[k], at, drawBaseline);
+            at += partWidths[k] + gap;
+          }
+          paintDecoration(
+            ctx,
+            cellDecoration,
+            innerX,
+            justifyTarget,
+            drawBaseline,
+            piecePx(null),
+            base,
+            style,
+            { left: innerX, width: available },
+          );
+          continue;
+        }
+      }
       ctx.fillText(source, x, drawBaseline);
       paintDecoration(
         ctx,
@@ -1273,6 +1366,7 @@ function paintText(
         piecePx(null),
         base,
         style,
+        { left: innerX, width: available },
       );
       continue;
     }

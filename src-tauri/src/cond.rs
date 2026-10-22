@@ -897,9 +897,14 @@ impl DataBar {
             (axis - (-value / -min) * axis, axis, true)
         };
         let color = if negative {
+            // `negativeBarColorSameAsPositive="0"` with no `negativeFillColor`
+            // draws the bar black — measured off `CopyPicture` of
+            // `cond-negdefault.xlsx`, whose negative bar fades from #D8D8D8 to
+            // #000000 at the axis. Falling back to the positive colour, as this
+            // used to, painted a blue bar on the wrong side.
             self.negative_color
                 .clone()
-                .unwrap_or_else(|| self.color.clone())
+                .unwrap_or_else(|| "#000000".to_owned())
         } else {
             self.color.clone()
         };
