@@ -29,7 +29,17 @@ export const LINE_HEIGHT = 1.269;
 /** Fonts covering the Japanese glyphs design documents are full of. */
 export const CJK_FALLBACK = '"Yu Gothic UI", Meiryo, "MS PGothic", "MS UI Gothic"';
 
-export const ROW_HEADER_W = 56;
+/**
+ * Excel's row header width, measured off its window at 100%:
+ * 28px for a one-digit row, then 8px per extra digit — 36 at row 1000,
+ * 44 at 10000, 52 at 100000, 60 at 1048576. It tracks the largest row number
+ * currently on screen, not the sheet's extent, so it widens as you scroll.
+ */
+export function rowHeaderWidth(lastRowNumber: number): number {
+  const digits = String(Math.max(1, Math.floor(lastRowNumber))).length;
+  return Math.max(28, 4 + 8 * digits);
+}
+
 export const COL_HEADER_H = 26;
 export const OVERSCAN_ROWS = 8;
 export const OVERSCAN_COLS = 2;

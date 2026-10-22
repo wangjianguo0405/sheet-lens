@@ -1,5 +1,5 @@
 import type { OutlineCol, OutlineRow } from "./excel";
-import { COL_HEADER_H, ROW_HEADER_W } from "./gridGeometry";
+import { COL_HEADER_H } from "./gridGeometry";
 
 /**
  * Excel's outline (Data > Group), turned from the levels the file records into
@@ -124,11 +124,12 @@ export function rowLevelButtonRect(
 export function colLevelButtonRect(
   index: number,
   rowGutter: number,
+  rowHeaderW: number,
 ): { x: number; y: number; w: number; h: number } {
   // They stack down one column, so it is one button's width being centred,
   // not the run of strips.
   return {
-    x: rowGutter + Math.round((ROW_HEADER_W - OUTLINE_BUTTON) / 2),
+    x: rowGutter + Math.round((rowHeaderW - OUTLINE_BUTTON) / 2),
     y: stripStart(index),
     w: OUTLINE_BUTTON,
     h: OUTLINE_BUTTON,
