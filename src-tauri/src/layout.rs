@@ -654,6 +654,12 @@ pub struct PageSetup {
     /// `_xlnm.Print_Titles`: the rows and columns repeated on every page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub print_titles: Option<PrintTitles>,
+    /// Dots per inch the sheet is laid out for, from the printer settings the
+    /// file was saved with (`printerSettings*.bin`). `None` when the workbook
+    /// carries none, or when the stored value is a resolution code
+    /// (`DMRES_HIGH` and friends) rather than a DPI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub print_dpi: Option<u16>,
 }
 
 impl Default for PageSetup {
@@ -671,6 +677,7 @@ impl Default for PageSetup {
             row_breaks: Vec::new(),
             col_breaks: Vec::new(),
             print_titles: None,
+            print_dpi: None,
         }
     }
 }
@@ -1167,6 +1174,7 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     // past its last cell.
     layout.print_area = print_area(&workbook, sheet).or_else(|| layout.print_region());
     layout.page_setup.print_titles = print_titles(&workbook, sheet);
+    layout.page_setup.print_dpi = read_print_dpi(&mut zip, &part);
     read_drawings(&mut zip, cache, &part, &mut layout);
     read_notes(&mut zip, &part, &mut layout);
     // Last, so that the extent a rule is clamped to is the finished one.
@@ -1223,6 +1231,26 @@ fn part_by_type<R: Read + Seek>(
         }
         Some(resolve_target(dir, element.get("target")?))
     })
+}
+
+/// The DPI the sheet was last laid out for: the DEVMODE in the workbook's
+/// printer settings part. Excel writes one of these per sheet when a sheet is
+/// printed, and the 600 dpi it carries is what the page breaks are snapped to.
+fn read_print_dpi<R: Read + Seek>(zip: &mut ZipArchive<R>, part: &str) -> Option<u16> {
+    let bin = part_by_type(zip, part, "/printerSettings")?;
+    let mut entry = zip.by_name(&bin).ok()?;
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes).ok()?;
+    devmode_dpi(&bytes)
+}
+
+/// `dmPrintQuality` (offset 90) is a positive DPI, or a `DMRES_*` code when
+/// negative — in which case `dmYResolution` (offset 96) is the real number.
+fn devmode_dpi(bytes: &[u8]) -> Option<u16> {
+    let word = |at: usize| bytes.get(at..at + 2).map(|b| i16::from_le_bytes([b[0], b[1]]));
+    let quality = word(90)?;
+    let dpi = if quality > 0 { quality } else { word(96)? };
+    (72..=4800).contains(&dpi).then_some(dpi as u16)
 }
 
 /// Walks a VML drawing for its `<x:ClientData ObjectType="Note">` shapes. The
@@ -3384,6 +3412,23 @@ mod tests {
             return None;
         }
         Some(read_cached(&mut Cache::default(), sample_path(), sheet).expect("layout should parse"))
+    }
+
+    /// The print DPI comes from the DEVMODE Excel stores beside the sheet: a
+    /// positive `dmPrintQuality`, or `dmYResolution` when that field holds a
+    /// `DMRES_*` code instead.
+    #[test]
+    fn printer_dpi_comes_from_the_stored_devmode() {
+        let mut devmode = vec![0u8; 220];
+        devmode[90..92].copy_from_slice(&600i16.to_le_bytes());
+        assert_eq!(devmode_dpi(&devmode), Some(600));
+
+        devmode[90..92].copy_from_slice(&(-1i16).to_le_bytes());
+        devmode[96..98].copy_from_slice(&1200i16.to_le_bytes());
+        assert_eq!(devmode_dpi(&devmode), Some(1200));
+
+        devmode[96..98].copy_from_slice(&0i16.to_le_bytes());
+        assert_eq!(devmode_dpi(&devmode), None);
     }
 
     /// The style stored for one cell, or `None` when it carries none.
