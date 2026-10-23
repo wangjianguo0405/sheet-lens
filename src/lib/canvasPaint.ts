@@ -1606,12 +1606,12 @@ function paintPageBreaks(
 }
 
 /**
- * Paints a block's background, shading whatever part of it lies outside the
- * print area. * The split matters for a block that straddles the boundary — a Center-Across
- * run of sixty cells starts inside the page and ends outside it. Asking "is
- * this block outside?" once, of its anchor, painted the whole run in the
- * anchor's own fill and left the tail looking like a normal filled cell where
- * Excel's preview shows the page edge.
+ * Paints a block's background inside the print area, leaving whatever part of it
+ * lies outside under `paintBase`'s flood. The split matters for a block that
+ * straddles the boundary — a Center-Across run of sixty cells starts inside the
+ * page and ends outside it. Asking "is this block outside?" once, of its anchor,
+ * painted the whole run in the anchor's own fill and left the tail looking like
+ * a normal filled cell where Excel's preview shows the page edge.
  */
 function fillBlock(
   ctx: CanvasRenderingContext2D,
@@ -1629,7 +1629,13 @@ function fillBlock(
     else if (fillColor) fill(ctx, x, y, w, h, fillColor);
     return;
   }
-  fill(ctx, x, y, w, h, OUTSIDE_PRINT);
+  // Nothing is shaded here: `paintBase` already flooded the cell area with the
+  // same ink and cut the page back out of it, so the part of this block that
+  // lies outside the page is that colour already. Shading the block and then
+  // painting the page's part over it left the ink along the block's own edges —
+  // at a fractional zoom the two fills cover the edge pixel only partly, and the
+  // 160-grey under the white came back as #E7E7E7 rules around every merged
+  // region on the sheet. See the print-area entry in `ooxml-inventory.md`.
   const ix = Math.max(x, page.x0);
   const iy = Math.max(y, page.y0);
   const ix1 = Math.min(x + w, page.x1);
