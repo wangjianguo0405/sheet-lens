@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Copy, Ellipsis, Eye, EyeOff } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Ellipsis,
+  Eye,
+  EyeOff,
+  Search,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -17,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Accelerated";
 import { ColorPalette } from "@/components/ColorPalette";
+import { Input } from "@/components/ui/input";
 import { type UnhideAnchor } from "@/components/UnhideDialog";
 import { copyText } from "@/lib/clipboard";
 import { toast } from "sonner";
@@ -168,8 +178,28 @@ export function SheetTabs({
    * may not choose the side it opens on.
    */
   const [listMenu, setListMenu] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * The sheet list's own filter. A workbook of this size can carry more tabs
+   * than the list holds at once — the list is the way to reach one without
+   * walking the arrows, so it has to be searchable for the same reason the
+   * sidebar's list is: typing a name is how you find it.
+   */
+  const [listFilter, setListFilter] = useState("");
+  const listInput = useRef<HTMLInputElement>(null);
   /** The tab's own menu, measured to place the dialog Unhide opens. */
   const tabMenu = useRef<HTMLDivElement>(null);
+  /**
+   * The filter takes the focus the list would give its first row — opened any
+   * other way, the first keystroke would walk the rows instead of typing into
+   * the field. A tick late because the menu focuses itself once it is mounted,
+   * and its content does not expose the autofocus hook that would have run
+   * first.
+   */
+  useEffect(() => {
+    if (!listMenu) return;
+    const id = window.setTimeout(() => listInput.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [listMenu]);
 
   const sync = useCallback(() => {
     const node = strip.current;
@@ -463,6 +493,15 @@ export function SheetTabs({
         : "text-muted-foreground/30",
     );
 
+  /**
+   * The list menu's rows, narrowed by its filter. Matched on the name alone and
+   * case-insensitively, the same rule the sidebar's own list uses.
+   */
+  const needle = listFilter.trim().toLowerCase();
+  const listed = needle
+    ? sheets.filter((sheet) => sheet.name.toLowerCase().includes(needle))
+    : sheets;
+
   return (
     <div
       data-sheet-strip
@@ -686,11 +725,20 @@ export function SheetTabs({
         belongs at the press. It opens *downwards* from the point, so the
         pointer sits at its top-left corner; at the foot of a window there is
         nowhere below to go, so it flips up over the sheet.
+
+        Its first row is a filter. The list is how a sheet is reached without
+        walking the arrows, and a workbook with enough sheets for that is one
+        where typing the name beats reading the list.
       */}
       <DropdownMenu
         open={listMenu !== null}
         onOpenChange={(open) => {
-          if (!open) setListMenu(null);
+          if (!open) {
+            setListMenu(null);
+            // Every opening starts from the whole list: a filter that outlived
+            // its menu would hide sheets without saying so.
+            setListFilter("");
+          }
         }}
       >
         <DropdownMenuTrigger asChild>
@@ -704,13 +752,58 @@ export function SheetTabs({
           side="bottom"
           align="start"
           sideOffset={3}
-          className="max-h-80 min-w-40"
+          className="max-h-80 min-w-48"
         >
           <DropdownMenuLabel className="text-[10px]">
             {t("sheets.list")}
           </DropdownMenuLabel>
-          <DropdownMenuRadioGroup value={active} onValueChange={onSelect}>
-            {sheets.map((sheet) => (
+          <div className="mx-1 mb-1 flex items-center gap-1.5 border-b border-border px-1 pb-1">
+            <Search className="size-3.5 shrink-0 text-muted-foreground" />
+            <Input
+              ref={listInput}
+              value={listFilter}
+              onChange={(event) => setListFilter(event.target.value)}
+              onKeyDown={(event) => {
+                // A menu reads the keyboard itself — arrows between items,
+                // letters as typeahead — so the field keeps those and hands
+                // back only the two keys that mean something in a filter.
+                event.stopPropagation();
+                if (event.key === "Escape") {
+                  setListMenu(null);
+                  setListFilter("");
+                } else if (event.key === "Enter") {
+                  const first = listed[0];
+                  if (!first) return;
+                  onSelect(first.name);
+                  setListMenu(null);
+                  setListFilter("");
+                }
+              }}
+              placeholder={t("sheets.filter")}
+              className="h-6 border-0 bg-transparent px-0 text-xs shadow-none select-text focus-visible:ring-0"
+            />
+            {listFilter && (
+              <button
+                type="button"
+                aria-label={t("sheets.clearFilter")}
+                onClick={() => {
+                  setListFilter("");
+                  listInput.current?.focus();
+                }}
+                className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent"
+              >
+                <X className="size-3" />
+              </button>
+            )}
+          </div>
+          {/* The rows scroll under the filter rather than with it: a field that
+              slid out of view at the top of a long list would be no filter. */}
+          <DropdownMenuRadioGroup
+            value={active}
+            onValueChange={onSelect}
+            className="max-h-60 overflow-y-auto"
+          >
+            {listed.map((sheet) => (
               <DropdownMenuRadioItem
                 key={sheet.name}
                 value={sheet.name}
@@ -720,6 +813,11 @@ export function SheetTabs({
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
+          {listed.length === 0 && (
+            <p className="px-2 py-3 text-xs text-muted-foreground">
+              {t("sheets.none")}
+            </p>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
