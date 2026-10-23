@@ -12,6 +12,28 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.8] - 2026-10-23
+
+### Added
+
+- A ribbon under the file tabs: view (sidebar, sheet tabs, freeze, split), font (family, size, bold, italic, underline), alignment, the review fill, and data (filter, outline). Its edits last for the session and are never written back to the file
+- Excel's split view: every row band and column band gets its own scrollbar, drawn in the sheet tab row while the tabs are shown; a split across rows only, or columns only, gives the two panes it should, and a split saved in the file opens as one
+- The keyboard a sheet is read with: Shift+Space and Ctrl+Space take a whole row or column, Ctrl+Shift+Home/End carry the selection to the sheet's ends, Enter and Tab step the cursor, Alt+PageUp/PageDown move a screen sideways, Ctrl+Tab walks the open workbooks, Ctrl+B/I/U set the selection's bold, italic and underline, Ctrl+Shift+L switches the filter, and F5 opens Go To
+- The list the sheet tab arrows open now has a filter: type part of a name to narrow it, and Enter takes the first match
+- The start page keeps folders of its own: pin the folder a workbook was opened from, and remove one together with the workbooks it holds
+- The font list is every font installed on this machine, not a fixed handful
+- A double press on the empty part of the file tab strip opens another workbook, as the "+" beside it does
+
+### Improved
+
+- Hover hints are the app's own: they show at once instead of after the system's pause, look like the rest of the app, and never stand between the pointer and the control under it
+- The start page separates what is fixed from what was opened lately, and its shortcut list reads in three columns
+
+### Fixed
+
+- Ctrl+F with the search panel already open puts the cursor back in its field instead of closing the panel
+- In page break preview a merged block no longer shows a pale outline around itself at 125% and 150% zoom
+
 ## [1.0.7] - 2026-10-22
 
 ### Added
