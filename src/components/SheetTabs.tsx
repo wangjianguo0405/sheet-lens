@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Accelerated";
 import { ColorPalette } from "@/components/ColorPalette";
+import { Hint } from "@/components/Hint";
 import { Input } from "@/components/ui/input";
 import { type UnhideAnchor } from "@/components/UnhideDialog";
 import { copyText } from "@/lib/clipboard";
@@ -73,6 +74,12 @@ interface SheetTabsProps {
   onReorder: (from: number, to: number) => void;
   /** Drawn at the right end of the row: the sheet's own scrollbar. */
   trailing?: ReactNode;
+  /**
+   * Where the split line lies, in pixels from the row's left edge, when the
+   * sheet is split. The row is where Excel draws a split's horizontal bars,
+   * so the tabs have to leave them the ground up to that line.
+   */
+  splitX?: number | null;
 }
 
 /** How far a press has to travel before it is a drag rather than a click. */
@@ -136,9 +143,14 @@ export function SheetTabs({
   hiddenCount,
   onReorder,
   trailing,
+  splitX = null,
 }: SheetTabsProps) {
   const { t } = useTranslation();
   const strip = useRef<HTMLDivElement>(null);
+  /** The row itself, which the strip's own offset is measured against. */
+  const row = useRef<HTMLDivElement>(null);
+  /** How far into the row the strip starts: the left arrows' width. */
+  const [stripLeft, setStripLeft] = useState(0);
   /** The "…" at each end, measured so they are not counted as tabs that fit. */
   const moreLeft = useRef<HTMLButtonElement>(null);
   const moreRight = useRef<HTMLButtonElement>(null);
@@ -429,6 +441,16 @@ export function SheetTabs({
   const atStart = bar.left <= 0;
   const atEnd = bar.left + bar.view >= bar.total - 1;
 
+  /**
+   * How far into the row the tabs begin. It follows the arrows, which change
+   * with the overflow, rather than the tabs themselves — so it is read again
+   * when a split needs the strip's own limit, not on every scroll.
+   */
+  useLayoutEffect(() => {
+    const left = strip.current?.offsetLeft ?? 0;
+    setStripLeft((prev) => (prev === left ? prev : left));
+  }, [splitX, overflowing]);
+
   const step = useCallback(
     (direction: 1 | -1) => {
       const node = strip.current;
@@ -504,8 +526,9 @@ export function SheetTabs({
 
   return (
     <div
+      ref={row}
       data-sheet-strip
-      className="flex shrink-0 items-stretch border-t border-border bg-muted/40"
+      className="relative flex shrink-0 items-stretch border-t border-border bg-muted/40"
     >
       {/*
         Excel's sheet list hangs off a right-click on the tab arrows: with more
@@ -520,30 +543,32 @@ export function SheetTabs({
           setListMenu({ x: event.clientX, y: event.clientY });
         }}
       >
-        <button
-          type="button"
-          aria-label={t("sheets.scrollLeft")}
-          title={t("sheets.scrollLeft")}
-          disabled={!overflowing || atStart}
-          onClick={(event) =>
-            event.ctrlKey || event.metaKey ? jump(-1) : step(-1)
-          }
-          className={cn(arrowClass(overflowing && !atStart), "border-r")}
-        >
-          <ChevronLeft className="size-3.5" />
-        </button>
-        <button
-          type="button"
-          aria-label={t("sheets.scrollRight")}
-          title={t("sheets.scrollRight")}
-          disabled={!overflowing || atEnd}
-          onClick={(event) =>
-            event.ctrlKey || event.metaKey ? jump(1) : step(1)
-          }
-          className={cn(arrowClass(overflowing && !atEnd), "border-r")}
-        >
-          <ChevronRight className="size-3.5" />
-        </button>
+        <Hint label={t("sheets.scrollLeft")}>
+          <button
+            type="button"
+            aria-label={t("sheets.scrollLeft")}
+            disabled={!overflowing || atStart}
+            onClick={(event) =>
+              event.ctrlKey || event.metaKey ? jump(-1) : step(-1)
+            }
+            className={cn(arrowClass(overflowing && !atStart), "border-r")}
+          >
+            <ChevronLeft className="size-3.5" />
+          </button>
+        </Hint>
+        <Hint label={t("sheets.scrollRight")}>
+          <button
+            type="button"
+            aria-label={t("sheets.scrollRight")}
+            disabled={!overflowing || atEnd}
+            onClick={(event) =>
+              event.ctrlKey || event.metaKey ? jump(1) : step(1)
+            }
+            className={cn(arrowClass(overflowing && !atEnd), "border-r")}
+          >
+            <ChevronRight className="size-3.5" />
+          </button>
+        </Hint>
       </div>
 
       {/*
@@ -564,23 +589,33 @@ export function SheetTabs({
         keeps the tabs scrolling under nothing.
       */}
       {overflowing && (
-        <button
-          ref={moreLeft}
-          type="button"
-          aria-label={t("sheets.moreLeft")}
-          title={t("sheets.moreLeft")}
-          disabled={atStart}
-          onClick={() => reveal(-1)}
-          className={cn(arrowClass(!atStart), "border-r px-1")}
-        >
-          <Ellipsis className={cn("size-3.5", atStart && "invisible")} />
-        </button>
+        <Hint label={t("sheets.moreLeft")}>
+          <button
+            ref={moreLeft}
+            type="button"
+            aria-label={t("sheets.moreLeft")}
+            disabled={atStart}
+            onClick={() => reveal(-1)}
+            className={cn(arrowClass(!atStart), "border-r px-1")}
+          >
+            <Ellipsis className={cn("size-3.5", atStart && "invisible")} />
+          </button>
+        </Hint>
       )}
 
       <div
         ref={strip}
         onScroll={sync}
-        className="relative flex min-w-24 flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        // A split drawing its bars in this row leaves them the ground up to the
+        // line: the tabs take what they need and stop there, scrolling inside
+        // it once they no longer fit.
+        className={cn(
+          "relative flex items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+          splitX == null ? "min-w-24 flex-1" : "flex-none",
+        )}
+        style={
+          splitX == null ? undefined : { maxWidth: Math.max(0, splitX - stripLeft) }
+        }
       >
         {/*
           Where the tab being carried would land. The strip itself does not
@@ -664,58 +699,59 @@ export function SheetTabs({
           }
 
           return (
-            <button
-              key={sheet.name}
-              type="button"
-              data-sheet={sheet.name}
-              onPointerDown={(event) => {
-                if (event.button !== 0) return;
-                drag.current = {
-                  name: sheet.name,
-                  from: index,
-                  x: event.clientX,
-                  moved: false,
-                  gap: null,
-                };
-              }}
-              onClick={(event) =>
-                onTabClick(sheet.name, {
-                  ctrl: event.ctrlKey || event.metaKey,
-                  shift: event.shiftKey,
-                })
-              }
-              // The second press is the one that opens the name, and the first
-              // has selected the sheet by then — which is what Excel does with a
-              // tab that is not the current one.
-              onDoubleClick={() => setEditing(sheet.name)}
-              // The colour menu, opened from where the press was rather than
-              // from the tab's own box: see the strip's menu below.
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setMenu({ sheet: sheet.name, x: event.clientX, y: event.clientY });
-              }}
-              title={title}
-              className={className}
-              style={style}
-            >
-              {sheet.name}
-            </button>
+            <Hint key={sheet.name} label={title}>
+              <button
+                type="button"
+                data-sheet={sheet.name}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  drag.current = {
+                    name: sheet.name,
+                    from: index,
+                    x: event.clientX,
+                    moved: false,
+                    gap: null,
+                  };
+                }}
+                onClick={(event) =>
+                  onTabClick(sheet.name, {
+                    ctrl: event.ctrlKey || event.metaKey,
+                    shift: event.shiftKey,
+                  })
+                }
+                // The second press is the one that opens the name, and the first
+                // has selected the sheet by then — which is what Excel does with a
+                // tab that is not the current one.
+                onDoubleClick={() => setEditing(sheet.name)}
+                // The colour menu, opened from where the press was rather than
+                // from the tab's own box: see the strip's menu below.
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setMenu({ sheet: sheet.name, x: event.clientX, y: event.clientY });
+                }}
+                className={className}
+                style={style}
+              >
+                {sheet.name}
+              </button>
+            </Hint>
           );
         })}
       </div>
 
       {overflowing && (
-        <button
-          ref={moreRight}
-          type="button"
-          aria-label={t("sheets.moreRight")}
-          title={t("sheets.moreRight")}
-          disabled={atEnd}
-          onClick={() => reveal(1)}
-          className={cn(arrowClass(!atEnd), "border-l px-1")}
-        >
-          <Ellipsis className={cn("size-3.5", atEnd && "invisible")} />
-        </button>
+        <Hint label={t("sheets.moreRight")}>
+          <button
+            ref={moreRight}
+            type="button"
+            aria-label={t("sheets.moreRight")}
+            disabled={atEnd}
+            onClick={() => reveal(1)}
+            className={cn(arrowClass(!atEnd), "border-l px-1")}
+          >
+            <Ellipsis className={cn("size-3.5", atEnd && "invisible")} />
+          </button>
+        </Hint>
       )}
 
       {/*

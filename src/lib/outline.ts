@@ -1,5 +1,109 @@
-import type { OutlineCol, OutlineRow } from "./excel";
+import type { OutlineCol, OutlineData, OutlineRow } from "./excel";
 import { COL_HEADER_H } from "./gridGeometry";
+
+/**
+ * The groups the reader added or took away from the ribbon.
+ *
+ * A viewer has nowhere to write Excel's `outlineLevel`, so these are kept
+ * beside the file's own outline instead: the grid rebuilds the bands from the
+ * two together, and closing the tab is what forgets the reader's half.
+ */
+export interface SessionOutline {
+  added: { rows: [number, number][]; cols: [number, number][] };
+  removed: { rows: [number, number][]; cols: [number, number][] };
+}
+
+/** Runs of consecutive columns sharing a level, from a column -> facts map. */
+function colRuns(levels: Map<number, { level: number; collapsed: boolean }>): OutlineCol[] {
+  const lines = [...levels.entries()]
+    .filter(([, facts]) => facts.level > 0 || facts.collapsed)
+    .sort(([a], [b]) => a - b);
+  const runs: OutlineCol[] = [];
+  for (const [col, facts] of lines) {
+    const last = runs[runs.length - 1];
+    if (
+      last &&
+      last.to === col - 1 &&
+      last.level === facts.level &&
+      last.collapsed === facts.collapsed
+    ) {
+      last.to = col;
+      continue;
+    }
+    runs.push({ from: col, to: col, level: facts.level, collapsed: facts.collapsed });
+  }
+  return runs;
+}
+
+/**
+ * The outline in force: the file's groups with the reader's additions and
+ * removals laid over them. A removal wins over the file, and an addition wins
+ * over a removal in the same place — pressing Group after Ungroup is meant to
+ * put the group back.
+ */
+export function withSessionOutline(
+  base: OutlineData | null | undefined,
+  session: SessionOutline | null | undefined,
+): OutlineData | null {
+  if (!base && !session) return null;
+
+  const rowFacts = new Map<number, { level: number; collapsed: boolean }>();
+  for (const row of base?.rows ?? []) {
+    rowFacts.set(row.row, { level: row.level, collapsed: row.collapsed });
+  }
+  const colFacts = new Map<number, { level: number; collapsed: boolean }>();
+  for (const run of base?.cols ?? []) {
+    for (let col = run.from; col <= run.to; col += 1) {
+      colFacts.set(col, { level: run.level, collapsed: run.collapsed });
+    }
+  }
+
+  const setRange = (
+    facts: Map<number, { level: number; collapsed: boolean }>,
+    [from, to]: [number, number],
+    apply: (current: { level: number; collapsed: boolean }) => { level: number; collapsed: boolean },
+  ) => {
+    for (let line = Math.min(from, to); line <= Math.max(from, to); line += 1) {
+      const current = facts.get(line) ?? { level: 0, collapsed: false };
+      const next = apply(current);
+      // A line that has just left every group carries nothing worth keeping.
+      if (next.level <= 0 && !next.collapsed) facts.delete(line);
+      else facts.set(line, next);
+    }
+  };
+
+  for (const range of session?.removed.rows ?? []) {
+    setRange(rowFacts, range, () => ({ level: 0, collapsed: false }));
+  }
+  for (const range of session?.removed.cols ?? []) {
+    setRange(colFacts, range, () => ({ level: 0, collapsed: false }));
+  }
+  for (const range of session?.added.rows ?? []) {
+    setRange(rowFacts, range, (current) => ({
+      level: Math.max(current.level, 1),
+      collapsed: current.collapsed,
+    }));
+  }
+  for (const range of session?.added.cols ?? []) {
+    setRange(colFacts, range, (current) => ({
+      level: Math.max(current.level, 1),
+      collapsed: current.collapsed,
+    }));
+  }
+
+  const rows: OutlineRow[] = [...rowFacts.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([row, facts]) => ({ row, level: facts.level, collapsed: facts.collapsed }));
+  const cols = colRuns(colFacts);
+
+  if (rows.length === 0 && cols.length === 0) return null;
+  return {
+    rows,
+    cols,
+    summaryBelow: base?.summaryBelow ?? true,
+    summaryRight: base?.summaryRight ?? true,
+  };
+}
 
 /**
  * Excel's outline (Data > Group), turned from the levels the file records into

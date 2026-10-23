@@ -2,6 +2,7 @@ import { Grid3x3, Minus, Plus, TableCellsSplit } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Separator } from "@/components/ui/separator";
+import { Hint } from "@/components/Hint";
 import type { SelectionSize } from "@/lib/selection";
 import { cn } from "@/lib/utils";
 import type { ViewMode } from "@/lib/viewMode";
@@ -131,33 +132,34 @@ export function StatusBar({
             are, with the zoom beyond them.
           */}
           {VIEWS.map(({ mode, label, Icon }) => (
-            <button
-              key={mode}
-              type="button"
-              aria-label={t(label)}
-              aria-pressed={view === mode}
-              title={t(label)}
-              onClick={() => onView(mode)}
-              className={cn(
-                "rounded-sm p-0.5 hover:bg-accent hover:text-foreground",
-                view === mode && "bg-accent text-foreground",
-              )}
-            >
-              <Icon className="size-3.5" />
-            </button>
+            <Hint key={mode} label={t(label)}>
+              <button
+                type="button"
+                aria-label={t(label)}
+                aria-pressed={view === mode}
+                onClick={() => onView(mode)}
+                className={cn(
+                  "rounded-sm p-0.5 hover:bg-accent hover:text-foreground",
+                  view === mode && "bg-accent text-foreground",
+                )}
+              >
+                <Icon className="size-3.5" />
+              </button>
+            </Hint>
           ))}
           <Separator orientation="vertical" className="h-3" />
           {/* Excel's zoom lives in the bottom-right corner of the window. */}
-          <button
-            type="button"
-            aria-label={t("status.zoomOut")}
-            title={t("status.zoomOut")}
-            disabled={zoom <= MIN_ZOOM}
-            onClick={() => onZoom(stepZoom(zoom, -1))}
-            className="rounded-sm p-0.5 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-          >
-            <Minus className="size-3" />
-          </button>
+          <Hint label={t("status.zoomOut")}>
+            <button
+              type="button"
+              aria-label={t("status.zoomOut")}
+              disabled={zoom <= MIN_ZOOM}
+              onClick={() => onZoom(stepZoom(zoom, -1))}
+              className="rounded-sm p-0.5 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <Minus className="size-3" />
+            </button>
+          </Hint>
           <input
             type="range"
             aria-label={t("status.zoom")}
@@ -168,24 +170,26 @@ export function StatusBar({
             onChange={(event) => onZoom(ZOOM_STOPS[Number(event.target.value)])}
             className="h-1 w-24 cursor-pointer accent-[#107C41]"
           />
-          <button
-            type="button"
-            aria-label={t("status.zoomIn")}
-            title={t("status.zoomIn")}
-            disabled={zoom >= MAX_ZOOM}
-            onClick={() => onZoom(stepZoom(zoom, 1))}
-            className="rounded-sm p-0.5 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-          >
-            <Plus className="size-3" />
-          </button>
-          <button
-            type="button"
-            title={t("status.resetZoom")}
-            onClick={() => onZoom(DEFAULT_ZOOM)}
-            className="w-9 text-right tabular-nums text-foreground hover:underline"
-          >
-            {zoom}%
-          </button>
+          <Hint label={t("status.zoomIn")}>
+            <button
+              type="button"
+              aria-label={t("status.zoomIn")}
+              disabled={zoom >= MAX_ZOOM}
+              onClick={() => onZoom(stepZoom(zoom, 1))}
+              className="rounded-sm p-0.5 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <Plus className="size-3" />
+            </button>
+          </Hint>
+          <Hint label={t("status.resetZoom")}>
+            <button
+              type="button"
+              onClick={() => onZoom(DEFAULT_ZOOM)}
+              className="w-9 text-right tabular-nums text-foreground hover:underline"
+            >
+              {zoom}%
+            </button>
+          </Hint>
         </div>
       )}
     </div>

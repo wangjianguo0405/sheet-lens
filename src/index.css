@@ -128,3 +128,20 @@
     @apply font-sans;
     }
 }
+/* A split draws a bar for each row and column band; the scroller's own pair
+   would be a second pair underneath them. */
+.split-no-scrollbars {
+  scrollbar-width: none;
+}
+.split-no-scrollbars::-webkit-scrollbar {
+  display: none;
+}
+
+/* A tooltip is a hint, not a surface: it must never stand between the pointer
+   and what it is hovering over. The content is `pointer-events: none` already,
+   but Radix wraps it in a positioned box of its own, and that box would still
+   catch the pointer — walking up a column of icons, the hint over the row
+   above would keep the pointer from reaching that row's button. */
+[data-radix-popper-content-wrapper]:has([data-slot="tooltip-content"]) {
+  pointer-events: none;
+}

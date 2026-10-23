@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 import { parseTarget, type Target } from "@/lib/column";
+import { Hint } from "@/components/Hint";
 
 interface FormulaBarProps {
   /** The name box: `A2`, `3:3` or `B:B`. */
@@ -58,15 +59,16 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
    * rather than shifting it into the middle of a taller row.
    */
   const toggle = value !== "" && (
-    <button
-      type="button"
-      aria-label={expanded ? t("formulaBar.collapse") : t("formulaBar.expand")}
-      title={expanded ? t("formulaBar.collapse") : t("formulaBar.expand")}
-      onClick={() => setExpanded((open) => !open)}
-      className="my-1.5 flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent"
-    >
-      {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-    </button>
+    <Hint label={expanded ? t("formulaBar.collapse") : t("formulaBar.expand")}>
+      <button
+        type="button"
+        aria-label={expanded ? t("formulaBar.collapse") : t("formulaBar.expand")}
+        onClick={() => setExpanded((open) => !open)}
+        className="my-1.5 flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent"
+      >
+        {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+      </button>
+    </Hint>
   );
 
   return (

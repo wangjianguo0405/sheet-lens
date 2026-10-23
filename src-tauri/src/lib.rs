@@ -1,6 +1,7 @@
 mod cond;
 mod drawing;
 mod excel;
+mod fonts;
 mod layout;
 mod numfmt;
 mod update;
@@ -307,6 +308,7 @@ pub fn run() {
             edge_cell,
             read_media,
             close_workbook,
+            fonts::list_fonts,
             update::update_status,
             update::update_check,
             update::update_install,

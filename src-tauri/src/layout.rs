@@ -615,6 +615,23 @@ pub(crate) fn intern(
     index
 }
 
+/// A `state="split"` pane (View > Split), as ECMA-376 §18.3.1.66 writes it.
+///
+/// Unlike a frozen pane its `xSplit`/`ySplit` are **positions**, in 1/20 pt
+/// from the sheet's top-left, not counts of frozen rows or columns. The
+/// position is converted where the column widths are known — the renderer, not
+/// here — because the digit width that turns them into pixels is a font metric
+/// the file does not carry.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitPane {
+    pub x_twips: f64,
+    pub y_twips: f64,
+    /// `topLeftCell`: the top-left visible cell of the bottom-right pane.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_left: Option<[u32; 2]>,
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SheetLayout {
@@ -648,6 +665,10 @@ pub struct SheetLayout {
     /// this viewer, since it repeats one region rather than holding rows still.
     pub frozen_rows: u32,
     pub frozen_cols: u32,
+    /// The file's own View > Split, if it was saved that way. A split and a
+    /// freeze are different states of the same `<pane>` element.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split: Option<SplitPane>,
     /// Column index -> width in characters, for columns with an explicit width.
     pub col_widths_chars: HashMap<u32, f64>,
     /// Row index -> height in pixels, for rows with an explicit height.
@@ -1025,6 +1046,7 @@ impl SheetLayout {
             view_top_left: None,
             frozen_rows: 0,
             frozen_cols: 0,
+            split: None,
             col_widths_chars: HashMap::new(),
             row_heights_px: HashMap::new(),
             merges: Vec::new(),
@@ -3157,30 +3179,51 @@ fn parse_sheet<R: BufRead>(
                     // opens at — a workbook of thirteen of them left the grid
                     // frozen and scrolled to the last one's corner.
                     b"pane" => {
-                        if borrowed_filters == 0
-                            && attr(&element, b"state").as_deref() == Some("frozen")
-                        {
-                            let split = |name: &[u8]| {
-                                attr(&element, name)
-                                    .and_then(|value| value.parse::<u32>().ok())
-                                    .unwrap_or(0)
-                            };
-                            layout.frozen_rows = split(b"ySplit");
-                            layout.frozen_cols = split(b"xSplit");
-                            if layout.frozen_rows == 0 && layout.frozen_cols == 0 {
+                        if borrowed_filters == 0 {
+                            let state = attr(&element, b"state").unwrap_or_else(|| "split".to_owned());
+                            if state == "frozen" || state == "frozenSplit" {
+                                let split = |name: &[u8]| {
+                                    attr(&element, name)
+                                        .and_then(|value| value.parse::<u32>().ok())
+                                        .unwrap_or(0)
+                                };
+                                layout.frozen_rows = split(b"ySplit");
+                                layout.frozen_cols = split(b"xSplit");
+                                if layout.frozen_rows == 0 && layout.frozen_cols == 0 {
+                                    if let Some((row, col)) =
+                                        attr(&element, b"topLeftCell").and_then(|cell| parse_cell(&cell))
+                                    {
+                                        layout.frozen_rows = row;
+                                        layout.frozen_cols = col;
+                                    }
+                                }
+                                // A frozen pane's `topLeftCell` is the scrolling
+                                // region's first cell — where the sheet is left.
                                 if let Some((row, col)) =
                                     attr(&element, b"topLeftCell").and_then(|cell| parse_cell(&cell))
                                 {
-                                    layout.frozen_rows = row;
-                                    layout.frozen_cols = col;
+                                    layout.view_top_left = Some([row, col]);
                                 }
-                            }
-                            // A frozen pane's `topLeftCell` is the scrolling
-                            // region's first cell — where the sheet is left.
-                            if let Some((row, col)) =
-                                attr(&element, b"topLeftCell").and_then(|cell| parse_cell(&cell))
-                            {
-                                layout.view_top_left = Some([row, col]);
+                            } else if state == "split" {
+                                // A split pane's `xSplit`/`ySplit` are positions
+                                // in 1/20 pt, not counts; the renderer turns
+                                // them into a column and row boundary.
+                                let twips = |name: &[u8]| {
+                                    attr(&element, name)
+                                        .and_then(|value| value.parse::<f64>().ok())
+                                        .unwrap_or(0.0)
+                                };
+                                let x = twips(b"xSplit");
+                                let y = twips(b"ySplit");
+                                if x > 0.0 || y > 0.0 {
+                                    layout.split = Some(SplitPane {
+                                        x_twips: x,
+                                        y_twips: y,
+                                        top_left: attr(&element, b"topLeftCell")
+                                            .and_then(|cell| parse_cell(&cell))
+                                            .map(|(row, col)| [row, col]),
+                                    });
+                                }
                             }
                         }
                     }
@@ -4275,10 +4318,14 @@ mod tests {
         let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
         assert_eq!((layout.frozen_rows, layout.frozen_cols), (2, 1));
 
-        // A split pane is not a frozen one: nothing is held still.
-        let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="1" ySplit="2" state="split"/></sheetView></sheetViews><sheetData/></worksheet>"#;
+        // A split pane is not a frozen one: nothing is held still, and its
+        // splits are positions in 1/20 pt rather than counts.
+        let xml = br#"<worksheet><sheetViews><sheetView><pane xSplit="2310" ySplit="2070" topLeftCell="C1" state="split"/></sheetView></sheetViews><sheetData/></worksheet>"#;
         let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
         assert_eq!((layout.frozen_rows, layout.frozen_cols), (0, 0));
+        let split = layout.split.expect("split pane");
+        assert_eq!((split.x_twips, split.y_twips), (2310.0, 2070.0));
+        assert_eq!(split.top_left, Some([0, 2]));
     }
 
     /// Custom sheet views each keep a pane of their own, and they are not where

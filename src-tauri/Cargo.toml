@@ -32,6 +32,12 @@ zip = "=8.6.0"
 # Already in the tree via calamine's `dates` feature; used to render them.
 chrono = "=0.4.45"
 
+# The installed fonts, for the ribbon's family list: the webview cannot see
+# them, and GDI can. This crate is already in the tree through Tauri; the entry
+# below only turns on the GDI half of it.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = ["Win32_Graphics_Gdi", "Win32_Foundation"] }
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1

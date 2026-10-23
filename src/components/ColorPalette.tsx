@@ -7,6 +7,7 @@ import {
   ContextMenuLabel,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
+import { Hint } from "@/components/Hint";
 import {
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -63,24 +64,24 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
   // Keys are positions, not colours: a theme tint can land on the same hex as
   // one of the standard colours, and two children may not share a key.
   const swatch = (fill: string, key: string) => (
-    <Item
-      key={key}
-      title={fill}
-      aria-label={fill}
-      // Every pick is remembered, whichever menu it was made in: the row is one
-      // row for the whole app, so a colour used on a cell is there when the next
-      // sheet tab wants one.
-      onSelect={() => {
-        rememberColor(fill);
-        onPick(fill);
-      }}
-      style={{ background: fill }}
-      className={cn(
-        "size-[22px] rounded-[2px] p-0 ring-1 ring-foreground/15 ring-inset",
-        "focus:ring-2 focus:ring-foreground/60",
-        current === fill && "ring-2 ring-foreground/70",
-      )}
-    />
+    <Hint key={key} label={fill}>
+      <Item
+        aria-label={fill}
+        // Every pick is remembered, whichever menu it was made in: the row is one
+        // row for the whole app, so a colour used on a cell is there when the next
+        // sheet tab wants one.
+        onSelect={() => {
+          rememberColor(fill);
+          onPick(fill);
+        }}
+        style={{ background: fill }}
+        className={cn(
+          "size-[22px] rounded-[2px] p-0 ring-1 ring-foreground/15 ring-inset",
+          "focus:ring-2 focus:ring-foreground/60",
+          current === fill && "ring-2 ring-foreground/70",
+        )}
+      />
+    </Hint>
   );
 
   /**
@@ -104,21 +105,21 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
    * the tints begin.
    */
   const themeSwatch = (fill: string, at: number) => (
-    <Item
-      key={`theme ${at}`}
-      title={fill}
-      aria-label={fill}
-      onSelect={() => {
-        rememberColor(fill);
-        onPick(fill);
-      }}
-      style={{ background: fill }}
-      className={cn(
-        "mb-[8px] size-[22px] rounded-[2px] p-0 ring-1 ring-foreground/15 ring-inset",
-        "focus:ring-2 focus:ring-foreground/60",
-        current === fill && "ring-2 ring-foreground/70",
-      )}
-    />
+    <Hint key={`theme ${at}`} label={fill}>
+      <Item
+        aria-label={fill}
+        onSelect={() => {
+          rememberColor(fill);
+          onPick(fill);
+        }}
+        style={{ background: fill }}
+        className={cn(
+          "mb-[8px] size-[22px] rounded-[2px] p-0 ring-1 ring-foreground/15 ring-inset",
+          "focus:ring-2 focus:ring-foreground/60",
+          current === fill && "ring-2 ring-foreground/70",
+        )}
+      />
+    </Hint>
   );
 
   /**
@@ -132,21 +133,21 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
    * the two rings this one can take are drawn inside its own square.
    */
   const tintSwatch = (fill: string, at: number) => (
-    <Item
-      key={`tint ${at}`}
-      title={fill}
-      aria-label={fill}
-      onSelect={() => {
-        rememberColor(fill);
-        onPick(fill);
-      }}
-      style={{ background: fill }}
-      className={cn(
-        "size-[22px] rounded-none p-0",
-        "focus:ring-2 focus:ring-foreground/60 focus:ring-inset",
-        current === fill && "ring-2 ring-foreground/70 ring-inset",
-      )}
-    />
+    <Hint key={`tint ${at}`} label={fill}>
+      <Item
+        aria-label={fill}
+        onSelect={() => {
+          rememberColor(fill);
+          onPick(fill);
+        }}
+        style={{ background: fill }}
+        className={cn(
+          "size-[22px] rounded-none p-0",
+          "focus:ring-2 focus:ring-foreground/60 focus:ring-inset",
+          current === fill && "ring-2 ring-foreground/70 ring-inset",
+        )}
+      />
+    </Hint>
   );
 
   /**

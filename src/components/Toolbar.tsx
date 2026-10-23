@@ -1,17 +1,13 @@
 import {
-  ChevronDown,
   Download,
   FolderOpen,
   Languages,
-  PaintBucket,
-  PanelBottom,
-  PanelLeft,
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import { ColorPalette } from "@/components/ColorPalette";
+import { Hint } from "@/components/Hint";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,15 +46,7 @@ const MENU_WIDTH = "w-max min-w-52 max-w-[25vw]";
 
 interface ToolbarProps {
   onOpen: () => void;
-  onToggleSidebar: () => void;
-  onToggleSheetTabs: () => void;
-  sidebarOpen: boolean;
-  sheetTabsOpen: boolean;
   hasWorkbook: boolean;
-  /** Shades the selection, or lifts the shading off it when `fill` is null. */
-  onMark: (fill: string | null) => void;
-  /** What the bucket fills with when it is pressed rather than its caret. */
-  markColor: string;
   /** Newest first. The File menu shows the first few and puts the rest under More. */
   recentFiles: string[];
   /** Those of them the last attempt to open failed on, which are shown greyed. */
@@ -75,13 +63,7 @@ interface ToolbarProps {
 
 export function Toolbar({
   onOpen,
-  onToggleSidebar,
-  onToggleSheetTabs,
-  sidebarOpen,
-  sheetTabsOpen,
   hasWorkbook,
-  onMark,
-  markColor,
   recentFiles,
   missingFiles,
   onOpenRecent,
@@ -112,23 +94,24 @@ export function Toolbar({
         </span>
         {/* Swallows the pointer so taking an entry out is not also opening it,
             and so the menu stays up to take out another. */}
-        <button
-          type="button"
-          aria-label={t("toolbar.forget", { name: fileName(path) })}
-          title={t("toolbar.forget", { name: fileName(path) })}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          onPointerUp={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            onForgetRecent(path);
-          }}
-          className="ml-auto shrink-0 rounded-sm p-0.5 opacity-0 transition-opacity group-hover/dropdown-menu-item:opacity-60 group-data-[highlighted]/dropdown-menu-item:opacity-60 group-focus/dropdown-menu-item:opacity-60 hover:bg-accent hover:text-foreground"
-        >
-          <X className="size-3" />
-        </button>
+        <Hint label={t("toolbar.forget", { name: fileName(path) })}>
+          <button
+            type="button"
+            aria-label={t("toolbar.forget", { name: fileName(path) })}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onForgetRecent(path);
+            }}
+            className="ml-auto shrink-0 rounded-sm p-0.5 opacity-0 transition-opacity group-hover/dropdown-menu-item:opacity-60 group-data-[highlighted]/dropdown-menu-item:opacity-60 group-focus/dropdown-menu-item:opacity-60 hover:bg-accent hover:text-foreground"
+          >
+            <X className="size-3" />
+          </button>
+        </Hint>
       </DropdownMenuItem>
     ));
 
@@ -139,37 +122,6 @@ export function Toolbar({
           native drag of the bitmap when the bar is dragged. */}
       <img src="/icon.png" alt="" draggable={false} className="mr-1.5 size-5" />
       <span className="mr-2 text-xs font-semibold tracking-wide">SheetLens</span>
-
-      {/* One button per sheet picker, and each stands on its own: either one
-          may be showing whether or not the other is, so neither appears or
-          disappears as the other is pressed. */}
-      <Button
-        size="sm"
-        variant={sidebarOpen ? "secondary" : "ghost"}
-        className="h-7 px-2"
-        disabled={!hasWorkbook}
-        onClick={onToggleSidebar}
-        aria-pressed={sidebarOpen}
-        title={
-          sidebarOpen ? t("toolbar.hideSheetList") : t("toolbar.showSheetList")
-        }
-      >
-        <PanelLeft className="size-3.5" />
-      </Button>
-
-      <Button
-        size="sm"
-        variant={sheetTabsOpen ? "secondary" : "ghost"}
-        className="h-7 px-2"
-        disabled={!hasWorkbook}
-        onClick={onToggleSheetTabs}
-        aria-pressed={sheetTabsOpen}
-        title={
-          sheetTabsOpen ? t("toolbar.hideSheetTabs") : t("toolbar.showSheetTabs")
-        }
-      >
-        <PanelBottom className="size-3.5" />
-      </Button>
 
       {/* The File menu. Everything in it is about the workbook as a whole
           rather than about where the cursor is, which is why none of it lives
@@ -227,78 +179,38 @@ export function Toolbar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* The review fill, as Excel's paint bucket: the bucket itself fills the
-          selection with the colour it is holding, and the caret beside it opens
-          the palette. Its colours are the app's own — the file is never
-          written to. */}
-      <div className="flex items-stretch">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 rounded-r-none px-1.5"
-          disabled={!hasWorkbook}
-          onClick={() => onMark(markColor)}
-          title={t("toolbar.fill")}
-        >
-          <span className="flex flex-col items-center justify-center">
-            <PaintBucket className="size-3.5" />
-            <span
-              aria-hidden
-              className="mt-px h-[3px] w-4 rounded-[1px] ring-1 ring-foreground/20 ring-inset"
-              style={{ background: markColor }}
-            />
-          </span>
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 rounded-l-none px-0.5"
-              disabled={!hasWorkbook}
-              title={t("toolbar.fill")}
-            >
-              <ChevronDown className="size-3" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-[13.5rem]">
-            <ColorPalette variant="dropdown" current={markColor} onPick={onMark} />
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
       <div className="ml-auto flex items-center gap-1">
         {canUpdate && (
-          <Button
-            size="sm"
-            variant={updateAvailable ? "secondary" : "ghost"}
-            className="relative h-7 px-2"
-            onClick={onShowUpdate}
-            title={
+          <Hint
+            label={
               updateAvailable
                 ? t("toolbar.updateAvailable")
                 : t("toolbar.checkUpdates")
             }
           >
-            <Download className="size-3.5" />
-            {updateAvailable && (
-              <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-[#107C41]" />
-            )}
-          </Button>
+            <Button
+              size="sm"
+              variant={updateAvailable ? "secondary" : "ghost"}
+              className="relative h-7 px-2"
+              onClick={onShowUpdate}
+            >
+              <Download className="size-3.5" />
+              {updateAvailable && (
+                <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-[#107C41]" />
+              )}
+            </Button>
+          </Hint>
         )}
 
         {/* Each entry is named in its own language, whatever the UI is in. */}
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2"
-              title={t("toolbar.language")}
-            >
-              <Languages className="size-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
+          <Hint label={t("toolbar.language")}>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" className="h-7 px-2">
+                <Languages className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+          </Hint>
           <DropdownMenuContent align="end" className="min-w-36">
             <DropdownMenuLabel className="text-[10px]">
               {t("toolbar.language")}

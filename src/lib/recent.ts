@@ -25,6 +25,15 @@ const MISSING_KEY = "sheetlens.missingFiles";
  */
 const PINNED_KEY = "sheetlens.pinnedFiles";
 
+/**
+ * The folders fixed to the start page's own column.
+ *
+ * Only their own paths are kept: the files in them are whatever is there when
+ * the column is looked at, and this app is a viewer, so a folder is useful
+ * exactly because it is a place to open something new from.
+ */
+const PINNED_DIRS_KEY = "sheetlens.pinnedDirs";
+
 /** How many of them the File menu shows inline, before "More". */
 export const RECENT_SHOWN = 10;
 
@@ -130,6 +139,60 @@ export function unpinFile(path: string): string[] {
   const next = readPinnedFiles().filter((other) => other !== path);
   writeList(PINNED_KEY, next);
   return next;
+}
+
+/**
+ * What makes two spellings of a folder the same folder. Windows hands back the
+ * same path with either separator and any case, so both are folded there;
+ * anywhere else the string is the folder.
+ */
+export function folderKey(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const windows =
+    typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+  return windows ? trimmed.toLowerCase() : trimmed;
+}
+
+/** The folders fixed to the start page, most recently fixed first. */
+export function readPinnedDirs(): string[] {
+  return readList(PINNED_DIRS_KEY);
+}
+
+/** Fixes `path` there, and hands back the list the page should show now. */
+export function pinDir(path: string): string[] {
+  const key = folderKey(path);
+  const next = [
+    path,
+    ...readPinnedDirs().filter((other) => folderKey(other) !== key),
+  ];
+  writeList(PINNED_DIRS_KEY, next);
+  return next;
+}
+
+/** Unfixes it, and hands back what is left. */
+export function unpinDir(path: string): string[] {
+  const key = folderKey(path);
+  const next = readPinnedDirs().filter((other) => folderKey(other) !== key);
+  writeList(PINNED_DIRS_KEY, next);
+  return next;
+}
+
+/**
+ * The folders the given workbooks are in, newest first, without repeats.
+ * A workbook with no folder in its path contributes none.
+ */
+export function foldersOf(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const folders: string[] = [];
+  for (const path of paths) {
+    const folder = folderName(path);
+    if (!folder) continue;
+    const key = folderKey(folder);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    folders.push(folder);
+  }
+  return folders;
 }
 
 /** The last segment of a path, which is all a one-line menu entry shows. */
