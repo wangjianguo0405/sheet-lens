@@ -3,6 +3,7 @@ import { ChevronDown, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/Hint";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,6 +20,11 @@ import { cn } from "@/lib/utils";
 interface SearchPanelProps {
   path: string;
   sheet: string;
+  /**
+   * Bumped by Ctrl+F. Opening the panel already focuses the box; this is for
+   * the press that finds it open and asks for the keyboard back.
+   */
+  focusSignal?: number;
   onJump: (hit: SearchHit) => void;
   onClose: () => void;
 }
@@ -44,7 +50,13 @@ function remember(query: string) {
   if (recentQueries.length > RECENT_LIMIT) recentQueries.length = RECENT_LIMIT;
 }
 
-export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) {
+export function SearchPanel({
+  path,
+  sheet,
+  focusSignal,
+  onJump,
+  onClose,
+}: SearchPanelProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -58,6 +70,13 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
   const inputRef = useRef<HTMLInputElement>(null);
   const queryRef = useRef(query);
   queryRef.current = query;
+
+  /** Ctrl+F puts the keyboard in the box, whether it had just opened it or not. */
+  useEffect(() => {
+    if (focusSignal === undefined) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusSignal]);
 
   /**
    * A search is the reader's once they have looked somewhere with it, and the
@@ -223,19 +242,20 @@ export function SearchPanel({ path, sheet, onJump, onClose }: SearchPanelProps) 
             className="h-7 pr-6 text-xs select-text"
           />
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              {/* The field's own height rather than a chip floating in it, so
-                  the list it opens hangs under the field rather than under a
-                  button that stops short of the field's bottom. */}
-              <button
-                type="button"
-                aria-label={t("search.history")}
-                title={t("search.history")}
-                className="absolute inset-y-0.5 right-0.5 flex w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <ChevronDown className="size-3.5" />
-              </button>
-            </DropdownMenuTrigger>
+            <Hint label={t("search.history")}>
+              <DropdownMenuTrigger asChild>
+                {/* The field's own height rather than a chip floating in it, so
+                    the list it opens hangs under the field rather than under a
+                    button that stops short of the field's bottom. */}
+                <button
+                  type="button"
+                  aria-label={t("search.history")}
+                  className="absolute inset-y-0.5 right-0.5 flex w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <ChevronDown className="size-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+            </Hint>
             <DropdownMenuContent
               // Hung under the field and as wide as it, off the button's own
               // right edge — that button is what opens it, and it sits at the

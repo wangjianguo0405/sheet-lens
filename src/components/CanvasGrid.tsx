@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Eye, EyeOff } from "lucide-react";
 
 import {
@@ -114,6 +115,7 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { markKey, type Marks } from "@/lib/marks";
+import { formatKey, withFormat, type ActiveCellStyle, type FilterPane, type Formats } from "@/lib/formats";
 import {
   colLevelButtonRect,
   groupButtonBox,
@@ -123,7 +125,9 @@ import {
   rowLevelButtonRect,
   colOutline as buildColOutline,
   rowOutline as buildRowOutline,
+  withSessionOutline,
   type OutlineGroup,
+  type SessionOutline,
 } from "@/lib/outline";
 
 /** A separator no path and no sheet name can hold, so a key can be split on it. */
@@ -201,6 +205,175 @@ export type SheetViews = Map<string, Map<string, SheetView>>;
 /** The heading a context menu was opened on, or none when it was a cell. */
 type MenuTarget = { kind: "row"; index: number } | { kind: "col"; index: number } | null;
 
+/** One split pane's own scroll, in sheet pixels at 100% zoom. */
+interface PaneOffset {
+  top: number;
+  left: number;
+}
+
+/** Which of the four panes a split makes. */
+type PaneId = "tl" | "tr" | "bl" | "br";
+
+/**
+ * The split's own scroll, held the way Excel draws its bars: one vertical
+ * position for the top row of panes and one for the bottom row, and one
+ * horizontal position for the left column of panes and one for the right.
+ * Two bars per axis is what Excel shows, and it means the panes in one band
+ * scroll together.
+ */
+interface SplitBands {
+  vTop: number;
+  vBottom: number;
+  hLeft: number;
+  hRight: number;
+}
+
+/**
+ * The grey bar Excel divides a split window with. Measured off its own window:
+ * three pixels of `#D3D3D3`, across the whole height and width, header bands
+ * included.
+ */
+const SPLIT_BAR = 3;
+
+/**
+ * The row the split's horizontal bars occupy when the sheet tabs are hidden,
+ * at the foot of the grid. With the tabs on screen the bars move up into the
+ * tab row itself, where Excel has them, and the sheet gets this row back.
+ */
+const SPLIT_BAR_SPACE = 16;
+
+interface SplitPane {
+  id: PaneId;
+  /** The pane's own scroll position, in sheet pixels. */
+  offset: PaneOffset;
+  /** Where its view starts on the canvas, in view units. */
+  x: number;
+  y: number;
+  /** The size of the view handed to the paint pass. */
+  width: number;
+  height: number;
+  /** The part of the canvas the pane owns. */
+  clip: { x: number; y: number; w: number; h: number };
+}
+
+/**
+ * The panes a split makes, each a full view of the sheet translated so that
+ * its cell area begins at the split. A pane's own header bands are therefore
+ * drawn where they belong — the top band for the panes along the top, the
+ * number band for those along the left — and clipped away for the others.
+ *
+ * A zero axis means only the other one is split, which leaves two panes: the
+ * native scroller drives the focused one, and the other keeps its offset.
+ */
+function splitPanes(
+  geometry: { x: number; y: number },
+  width: number,
+  height: number,
+  bands: SplitBands,
+  headerW: number,
+  headerH: number,
+): SplitPane[] {
+  const hasX = geometry.x > headerW;
+  const hasY = geometry.y > headerH;
+  /** A pane's scroll is its row band's vertical position and its column band's horizontal one. */
+  const paneOffset = (row: "top" | "bottom", col: "left" | "right"): PaneOffset => ({
+    top: hasY && row === "bottom" ? bands.vBottom : bands.vTop,
+    left: hasX && col === "right" ? bands.hRight : bands.hLeft,
+  });
+  // A split made at a cell that has since been scrolled out of the window
+  // still divides it; the line is pinned to the near edge rather than sent
+  // past the far one, which would leave a pane with no pixels to draw into.
+  const splitX = Math.max(headerW + 1, Math.min(geometry.x, width - SPLIT_BAR));
+  const splitY = Math.max(headerH + 1, Math.min(geometry.y, height - SPLIT_BAR));
+  const rightX = splitX + SPLIT_BAR;
+  const bottomY = splitY + SPLIT_BAR;
+
+  if (hasX && hasY) {
+    const rightW = width - (rightX - headerW);
+    const bottomH = height - (bottomY - headerH);
+    return [
+      {
+        id: "tl",
+        offset: paneOffset("top", "left"),
+        x: 0,
+        y: 0,
+        width: splitX,
+        height: splitY,
+        clip: { x: 0, y: 0, w: splitX, h: splitY },
+      },
+      {
+        id: "tr",
+        offset: paneOffset("top", "right"),
+        x: rightX - headerW,
+        y: 0,
+        width: rightW,
+        height: splitY,
+        clip: { x: rightX, y: 0, w: width - rightX, h: splitY },
+      },
+      {
+        id: "bl",
+        offset: paneOffset("bottom", "left"),
+        x: 0,
+        y: bottomY - headerH,
+        width: splitX,
+        height: bottomH,
+        clip: { x: 0, y: bottomY, w: splitX, h: height - bottomY },
+      },
+      {
+        id: "br",
+        offset: paneOffset("bottom", "right"),
+        x: rightX - headerW,
+        y: bottomY - headerH,
+        width: rightW,
+        height: bottomH,
+        clip: { x: rightX, y: bottomY, w: width - rightX, h: height - bottomY },
+      },
+    ];
+  }
+  if (hasX) {
+    return [
+      {
+        id: "tl",
+        offset: paneOffset("top", "left"),
+        x: 0,
+        y: 0,
+        width: splitX,
+        height,
+        clip: { x: 0, y: 0, w: splitX, h: height },
+      },
+      {
+        id: "br",
+        offset: paneOffset("bottom", "right"),
+        x: rightX - headerW,
+        y: 0,
+        width: width - (rightX - headerW),
+        height,
+        clip: { x: rightX, y: 0, w: width - rightX, h: height },
+      },
+    ];
+  }
+  return [
+    {
+      id: "tl",
+      offset: paneOffset("top", "left"),
+      x: 0,
+      y: 0,
+      width,
+      height: geometry.y,
+      clip: { x: 0, y: 0, w: width, h: splitY },
+    },
+    {
+      id: "br",
+      offset: paneOffset("bottom", "right"),
+      x: 0,
+      y: bottomY - headerH,
+      width,
+      height: height - (bottomY - headerH),
+      clip: { x: 0, y: bottomY, w: width, h: height - bottomY },
+    },
+  ];
+}
+
 /** Excel's input prompt for the active cell, from the file's validation rule. */
 interface PromptInfo {
   row: number;
@@ -253,6 +426,39 @@ interface GridProps {
    * the app's own, so closing the tab is what forgets them.
    */
   marks: Marks;
+  /**
+   * The font and alignment the reader laid over the file, by sheet and cell.
+   * They are the tab's own, so closing it is what forgets them.
+   */
+  formats?: Formats;
+  /** Reports the active cell's style, overlays included, for the ribbon. */
+  onActiveStyle?: (style: ActiveCellStyle) => void;
+  /**
+   * Where the reader froze the sheet from the ribbon, which overrules the
+   * file's own `<pane>`. Null means the file decides.
+   */
+  frozen?: { rows: number; cols: number } | null;
+  /** Reports the frozen bands actually in force, for the ribbon's toggle. */
+  onFrozenChange?: (frozen: { rows: number; cols: number }) => void;
+  /**
+   * The reader's filter decision for this sheet: an area added from the
+   * ribbon, or a clearing of the file's own. Null means the file decides.
+   */
+  filterPane?: FilterPane | null;
+  /** Reports whether a filter is in force, for the ribbon's toggle. */
+  onFilterState?: (active: boolean) => void;
+  /**
+   * The groups the reader added or took away from the ribbon, laid over the
+   * file's own outline. Null means the file's outline stands as it is.
+   */
+  sessionOutline?: SessionOutline | null;
+  /**
+   * Where the reader split the window, as a sheet row and column boundary.
+   * Null is no split; a zero row or column means only the other axis is split.
+   */
+  split?: { row: number; col: number } | null;
+  /** Moves a split line that is being dragged to a new sheet row/column. */
+  onSplitChange?: (next: { row: number; col: number }) => void;
   /** Shades the selection, or lifts the shading off it when `fill` is null. */
   onMark: (fill: string | null) => void;
   /** The colour the toolbar's bucket is holding, so the palette can ring it. */
@@ -293,6 +499,23 @@ interface GridProps {
    * The sheet gets one scrollbar either way, never two.
    */
   hideHScroll?: boolean;
+  /**
+   * Whether the sheet tab strip is on screen. A split puts its horizontal bars
+   * level with the tabs when they are, and keeps them in a row of their own at
+   * the foot of the grid when they are not.
+   */
+  tabsShown?: boolean;
+  /**
+   * The tab row's free area, to draw the split's horizontal bars in. They are
+   * portalled into it so they sit level with the tabs; without one — or with
+   * the tabs hidden — the grid draws them itself.
+   */
+  splitBarHost?: HTMLElement | null;
+  /**
+   * Where the split line lies, in screen pixels from the grid's left edge. The
+   * tab row segments its horizontal bars there, so it has to know.
+   */
+  onSplitLine?: (x: number | null) => void;
   /**
    * Excel's Page Break Preview rather than its ordinary view. True shades
    * around the print area and boxes it; false leaves the sheet drawn with no
@@ -437,6 +660,83 @@ function percentile(samples: number[], fraction: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))];
 }
 
+interface TabSplitBarProps {
+  band: "hLeft" | "hRight";
+  style: React.CSSProperties;
+  /** The band's offset, in sheet units. */
+  value: number;
+  zoom: number;
+  /** The sheet's whole width, and the pane's visible width, in screen pixels. */
+  reach: number;
+  pane: number;
+  onScroll: (band: "hLeft" | "hRight", value: number) => void;
+}
+
+/**
+ * One of a split's horizontal bars, drawn level with the sheet tabs.
+ *
+ * The tab row is narrower than the pane such a bar drives — the tabs take the
+ * rest of it — so this cannot be a 1:1 view of the band the way the bars inside
+ * the grid are. Its content is scaled instead, which keeps the thumb the same
+ * share of the sheet that the engine's own bar draws: what is on screen, in the
+ * shorter strip.
+ */
+function TabSplitBar({ band, style, value, zoom, reach, pane, onScroll }: TabSplitBarProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  /** The position this bar was last put at from its band: its event is an echo. */
+  const echoed = useRef(-1);
+  /** The empty content's width, and the bar's own, in pixels. */
+  const [metrics, setMetrics] = useState({ content: 0, client: 0 });
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const client = el.clientWidth;
+      const content = Math.max(client, Math.round((client * reach) / Math.max(1, pane)));
+      setMetrics((prev) =>
+        prev.content === content && prev.client === client ? prev : { content, client },
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [reach, pane]);
+
+  const barRange = Math.max(0, metrics.content - metrics.client);
+  const bandRange = Math.max(0, reach - pane);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const want = bandRange > 0 ? ((value * zoom) / 100 / bandRange) * barRange : 0;
+    if (Math.abs(el.scrollLeft - want) > 1) {
+      el.scrollLeft = want;
+      // What the engine took, not what was asked for, so a clamp is still
+      // recognised as our own write.
+      echoed.current = el.scrollLeft;
+    }
+  }, [value, zoom, barRange, bandRange]);
+
+  return (
+    <div
+      ref={ref}
+      onScroll={() => {
+        const el = ref.current;
+        if (!el) return;
+        if (Math.abs(el.scrollLeft - echoed.current) <= 1) return;
+        if (barRange <= 0 || bandRange <= 0) return;
+        onScroll(band, (el.scrollLeft / barRange) * bandRange / (zoom / 100));
+      }}
+      className="absolute overflow-x-auto overflow-y-hidden"
+      style={style}
+    >
+      <div style={{ width: metrics.content, height: 1 }} />
+    </div>
+  );
+}
+
 function describePaint(timing: PaintTimings): string {
   if (timing.layers === 0) return "nothing painted yet";
 
@@ -491,6 +791,15 @@ export function CanvasGrid({
   views,
   onSelect,
   marks,
+  formats,
+  onActiveStyle,
+  frozen,
+  onFrozenChange,
+  filterPane,
+  onFilterState,
+  sessionOutline,
+  split,
+  onSplitChange,
   onMark,
   markColor,
   onDetail,
@@ -503,10 +812,15 @@ export function CanvasGrid({
   onZoom,
   bar,
   hideHScroll,
+  tabsShown = false,
+  splitBarHost = null,
+  onSplitLine,
   pageBreak,
   onViewport,
 }: GridProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  /** The pane a pointer is over, for the native wheel listener defined early. */
+  const paneAtRef = useRef<(x: number, y: number) => PaneId>(() => "br");
   /**
    * How tall the scroller's own horizontal scrollbar is, and 0 when that bar is
    * wanted. A bar cannot be hidden one axis at a time — `overflow-x: hidden`
@@ -651,6 +965,16 @@ export function CanvasGrid({
   /** The last jump token the pass acted on, so only a new one may drag the view. */
   const revealRef = useRef(reveal ?? 0);
   const sizeRef = useRef({ width: 0, height: 0 });
+  /** The same box as state, for the split's scrollbars to lay themselves out. */
+  const [box, setBox] = useState({ width: 0, height: 0 });
+  /** The four bars a split shows: left/right horizontal, top/bottom vertical. */
+  const splitBarRefs = useRef(
+    new Map<"hLeft" | "hRight" | "vTop" | "vBottom", HTMLDivElement>(),
+  );
+  /** The pixel each bar was last put at, clamped by the browser if need be. */
+  const splitBarEcho = useRef(
+    new Map<"hLeft" | "hRight" | "vTop" | "vBottom", number>(),
+  );
   const dprRef = useRef(1);
 
   const [baseColW, setBaseColW] = useState(96);
@@ -658,6 +982,24 @@ export function CanvasGrid({
   const [colOverrides, setColOverrides] = useState<Map<number, number>>(() => new Map());
   const [rowOverrides, setRowOverrides] = useState<Map<number, number>>(() => new Map());
   const [layout, setLayout] = useState<SheetLayout | null>(null);
+  /** The split's row and column band positions. */
+  const [splitBands, setSplitBands] = useState<SplitBands | null>(null);
+  /** The bands as they are now, for the effect that puts the view back unsplit. */
+  const splitBandsRef = useRef<SplitBands | null>(null);
+  splitBandsRef.current = splitBands;
+  /** The pane the keyboard and the next reveal act on. */
+  const [splitFocus, setSplitFocus] = useState<PaneId>("br");
+  /** Which split line a pointer is dragging, if any. */
+  const [splitDrag, setSplitDrag] = useState<"x" | "y" | null>(null);
+  /** Where the tab row's share of the split's horizontal bars lies, in its pixels. */
+  const [tabBarLayout, setTabBarLayout] = useState<{ width: number; left: number } | null>(null);
+  /** The sheet whose split bands have been seeded; geometry changes do not reseed. */
+  const splitBandsFor = useRef<string | null>(null);
+  /** The sheet whose saved file split has been restored, and its first view. */
+  const fileSplitApplied = useRef<string | null>(null);
+  const fileSplitSeed = useRef<{ topLeft: [number, number] | null } | null>(null);
+  /** Whether the split on screen is the file's own, whose bands start at zero. */
+  const fileSplitActive = useRef(false);
   /** Which workbook's sheet the layout in state belongs to — see `sheetIdentity`. */
   const [layoutSheet, setLayoutSheet] = useState<string | null>(null);
   const [fontFamily, setFontFamily] = useState<string | null>(null);
@@ -878,7 +1220,19 @@ export function CanvasGrid({
     return out;
   }, [layout, sheetRowsGuess, sheetColsGuess]);
 
-  const autoFilter = layout?.autoFilter ?? null;
+  /**
+   * The filter actually in force. The reader's own decision, when there is
+   * one, beats the workbook's: the ribbon can both add a filter the file does
+   * not carry and take away one it does.
+   */
+  const autoFilter = filterPane?.off
+    ? null
+    : (filterPane?.area ?? layout?.autoFilter ?? null);
+
+  /** The frozen bands in force: what the reader set, or what the file says. */
+  const frozenRowCount = frozen ? frozen.rows : (layout?.frozenRows ?? 0);
+  const frozenColCount = frozen ? frozen.cols : (layout?.frozenCols ?? 0);
+
   /**
    * Columns the file filters with a condition rather than a value list. Their
    * hidden rows are already the file's own, so only the button's funnel and the
@@ -1080,13 +1434,17 @@ export function CanvasGrid({
    * strip per level (plus one for "outside any group"), and the column header
    * the same way, so the grouping chrome has its own room beside the numbers.
    */
+  const outlineData = useMemo(
+    () => withSessionOutline(layout?.outline, sessionOutline),
+    [layout, sessionOutline],
+  );
   const outlineRows = useMemo(
-    () => (layout?.outline ? buildRowOutline(layout.outline) : null),
-    [layout],
+    () => (outlineData ? buildRowOutline(outlineData) : null),
+    [outlineData],
   );
   const outlineCols = useMemo(
-    () => (layout?.outline ? buildColOutline(layout.outline) : null),
-    [layout],
+    () => (outlineData ? buildColOutline(outlineData) : null),
+    [outlineData],
   );
   const rowGutter = outlineGutter(outlineRows?.strips ?? 0);
   const colGutter = outlineGutter(outlineCols?.strips ?? 0);
@@ -1165,6 +1523,473 @@ export function CanvasGrid({
   );
 
   /**
+   * Where the split bars sit, in canvas units, and zero for an axis that is
+   * not split. A line at the very top or left is no split at all — there is
+   * nothing above or left of it to put in a pane.
+   */
+  const splitGeometry = useMemo(() => {
+    if (!split) return null;
+    const displayRow = split.row > 0 ? displayOfRow(split.row) : -1;
+    // The line is a place on screen, not a place in the sheet: the active
+    // cell's offset is measured from the sheet's top, so the view's scroll
+    // comes off it. Without this a split made far down the sheet landed below
+    // the window and was clamped to its bottom edge.
+    const subtractX = fileSplitActive.current ? 0 : scrollRef.current.left;
+    const subtractY = fileSplitActive.current ? 0 : scrollRef.current.top;
+    const x =
+      split.col > 0 && split.col < colCount
+        ? headerW + (cols.offsets[split.col] ?? 0) - subtractX
+        : 0;
+    const y =
+      split.row > 0 && displayRow > 0
+        ? headerH + (rows.offsets[displayRow] ?? 0) - subtractY
+        : 0;
+    if (x <= headerW && y <= headerH) return null;
+    return { x, y };
+  }, [split, displayOfRow, rows, cols, headerW, headerH, colCount]);
+
+  /**
+   * Every band starts where the sheet was left, which is what Excel does when
+   * the split is made: all four panes show the same cells until one is scrolled.
+   */
+  useEffect(() => {
+    if (!split) {
+      /**
+       * Leaving the split keeps the view where the reader was looking: the
+       * scroller was not the one the panes moved, so it takes the focused
+       * pane's position instead of jumping back to where the split began.
+       */
+      const bands = splitBandsRef.current;
+      if (bands) {
+        // Excel keeps the top-left pane's view when the split goes (measured:
+        // ScrollRow/ScrollColumn are the same before the split and after it is
+        // removed), not the focused pane's — which would jump to the cell the
+        // split was made at.
+        scrollRef.current = { top: bands.vTop, left: bands.hLeft };
+        const el = viewportRef.current;
+        if (el) {
+          el.scrollTop = bands.vTop * zoomRef.current;
+          el.scrollLeft = bands.hLeft * zoomRef.current;
+        }
+      }
+      splitBandsFor.current = null;
+      fileSplitActive.current = false;
+      setSplitBands(null);
+      setSplitFocus("br");
+      return;
+    }
+    // Seeded once per sheet. The geometry changes as the blank area grows
+    // under a scroll, and reseeding from that reset the panes mid-scroll —
+    // which read as the sheet jumping up and down.
+    const identity = sheetIdentity(path, sheet.name);
+    if (splitBandsFor.current === identity) return;
+    splitBandsFor.current = identity;
+    // Read the scroller itself, not the remembered position: the bands have to
+    // start at the pixels that are on screen or the new bars sit at the far
+    // left while the sheet is scrolled somewhere else.
+    /**
+     * Splitting only adds lines and bars: the scroll is left exactly where it
+     * was, so the cells under the reader do not move.
+     */
+    const el = viewportRef.current;
+    const z = zoomRef.current;
+    const top = el ? el.scrollTop / z : scrollRef.current.top;
+    const left = el ? el.scrollLeft / z : scrollRef.current.left;
+    const seed = fileSplitSeed.current;
+    if (seed) {
+      fileSplitSeed.current = null;
+      // The bottom-right pane's first cell is turned into pixels here, against
+      // the metrics that are actually in force — precomputing it while the
+      // split was being restored could catch a previous layout's row heights.
+      let firstTop = 0;
+      let firstLeft = 0;
+      if (seed.topLeft) {
+        const display = displayOfRow(seed.topLeft[0]);
+        if (display >= 0) firstTop = rows.offsets[display] ?? 0;
+        firstLeft = cols.offsets[seed.topLeft[1]] ?? 0;
+      }
+      scrollRef.current = { top: firstTop, left: firstLeft };
+      setSplitBands({ vTop: 0, vBottom: firstTop, hLeft: 0, hRight: firstLeft });
+      const at = selectionAnchor(selection);
+      const hasX = split.col > 0;
+      const hasY = split.row > 0;
+      const bottom = hasY && at.row >= split.row;
+      const right = hasX && at.col >= split.col;
+      setSplitFocus(
+        !hasY
+          ? right
+            ? "br"
+            : "tl"
+          : !hasX
+            ? bottom
+              ? "br"
+              : "tl"
+            : bottom
+              ? right
+                ? "br"
+                : "bl"
+              : right
+                ? "tr"
+                : "tl",
+      );
+      return;
+    }
+    scrollRef.current = { top, left };
+    /**
+     * The four panes cover the four quadrants around the split, not four copies
+     * of the same view: the top-left keeps the scroll it had, the top-right
+     * starts at the split column, the bottom-left at the split row, and the
+     * bottom-right at both. The cells under the reader therefore do not move —
+     * only the two lines appear across them.
+     */
+    const splitRowDisplay = split.row > 0 ? displayOfRow(split.row) : -1;
+    const bottomTop =
+      splitRowDisplay >= 0 ? (rows.offsets[splitRowDisplay] ?? top) : top;
+    const rightLeft = split.col > 0 ? (cols.offsets[split.col] ?? left) : left;
+    setSplitBands({
+      vTop: top,
+      vBottom: bottomTop,
+      hLeft: left,
+      hRight: rightLeft,
+    });
+    // Excel's active pane after a split is the top-left one (measured), and it
+    // is also the view unsplitting returns to.
+    setSplitFocus("tl");
+  }, [split, path, sheet.name]);
+
+  /**
+   * Restores the file's own View > Split (ECMA-376 §18.3.1.66). The twips are
+   * positions in 1/20 pt; only here, where the column widths and font have been
+   * measured, can they be turned into a column and row boundary. It is a
+   * session view: nothing is ever written back.
+   */
+  useEffect(() => {
+    const saved = layout?.split;
+    if (!saved || !layoutSheet) return;
+    if (fileSplitApplied.current === layoutSheet) return;
+    if (layoutSheet !== sheetIdentity(path, sheet.name)) return;
+    fileSplitApplied.current = layoutSheet;
+
+    // 1 point = 4/3 CSS px, and a twip is 1/20 point.
+    const toPx = (twips: number) => twips / 15;
+    let col = 0;
+    let row = 0;
+    if (saved.xTwips > 0) {
+      col = Math.max(
+        1,
+        Math.min(colCount - 1, indexAt(cols.offsets, toPx(saved.xTwips))),
+      );
+    }
+    if (saved.yTwips > 0) {
+      const display = Math.max(
+        1,
+        Math.min(displayRowCount - 1, indexAt(rows.offsets, toPx(saved.yTwips))),
+      );
+      row = Math.max(1, sheetRowOf(display));
+    }
+    if (row === 0 && col === 0) return;
+
+    fileSplitSeed.current = { topLeft: saved.topLeft ?? null };
+    fileSplitActive.current = true;
+    onSplitChange?.({ row, col });
+  }, [
+    layout,
+    layoutSheet,
+    path,
+    sheet.name,
+    cols,
+    rows,
+    colCount,
+    displayRowCount,
+    sheetRowOf,
+    displayOfRow,
+    onSplitChange,
+  ]);
+
+  /**
+   * A split at A1 — the view's own top-left corner — has nothing above or to
+   * the left of it to put in a pane, and Excel does not make one: it halves the
+   * window instead (measured: with A1 selected, `$w.Split = $true` gave
+   * SplitRow=15/SplitColumn=13, the middle of what was on screen). The caller
+   * reports that case as a split at zero and zero; the row and column under the
+   * middle of the view are worked out here, where the metrics are, and handed
+   * back once so the split is a real one from then on.
+   */
+  useEffect(() => {
+    if (!split || split.row !== 0 || split.col !== 0) return;
+    if (!onSplitChange) return;
+    const size = sizeRef.current;
+    if (size.width <= 0 || size.height <= 0) return;
+    const z = zoomRef.current;
+    const y = scrollRef.current.top + size.height / 2 / z - headerH;
+    const x = scrollRef.current.left + size.width / 2 / z - headerW;
+    const row = Math.max(0, sheetRowOf(Math.max(0, indexAt(rows.offsets, y))));
+    const col = Math.max(0, indexAt(cols.offsets, x));
+    if (row === 0 && col === 0) return;
+    onSplitChange({ row, col });
+  }, [split, onSplitChange, rows, cols, headerW, headerH, sheetRowOf]);
+
+  /** A pane's scroll, from the row band and column band it sits in. */
+  const bandOffset = useCallback(
+    (pane: PaneId): PaneOffset => {
+      if (!splitBands) {
+        return { top: scrollRef.current.top, left: scrollRef.current.left };
+      }
+      const bottom = pane === "bl" || pane === "br";
+      const right = pane === "tr" || pane === "br";
+      return {
+        top: bottom ? splitBands.vBottom : splitBands.vTop,
+        left: right ? splitBands.hRight : splitBands.hLeft,
+      };
+    },
+    [splitBands],
+  );
+
+  /**
+   * The bars Excel draws for a split: one under the left panes and one under
+   * the right, one at the right of the top panes and one of the bottom. Each is
+   * a native scrollbar in its own strip, over the sheet, because the scroller
+   * has only one pair and a split needs two.
+   *
+   * With the sheet tabs on screen the horizontal pair is drawn in the tab row
+   * instead — level with the tabs, where Excel has it — so only the vertical
+   * bars belong to the grid then, and they may run all the way down.
+   */
+  const splitBars = useMemo(() => {
+    if (!splitGeometry || !splitBands || box.width <= 0) return [];
+    const z = zoom / 100;
+    const hasX = splitGeometry.x > headerW;
+    const hasY = splitGeometry.y > headerH;
+    const contentW = (headerW + cols.total) * z;
+    const contentH = (headerH + rows.total) * z;
+    const splitX = splitGeometry.x + SPLIT_BAR;
+    const splitY = splitGeometry.y + SPLIT_BAR;
+    const bar = 16;
+    const bottom = box.height - (tabsShown ? 0 : SPLIT_BAR_SPACE);
+    const bars: {
+      key: "hLeft" | "hRight" | "vTop" | "vBottom";
+      axis: "x" | "y";
+      style: React.CSSProperties;
+      content: number;
+    }[] = [
+      {
+        key: "vTop",
+        axis: "y",
+        style: {
+          top: 0,
+          right: 0,
+          height: Math.max(0, hasY ? splitGeometry.y : bottom),
+          width: bar,
+        },
+        content: contentH,
+      },
+    ];
+    if (!tabsShown) {
+      bars.push(
+        {
+          key: "hLeft",
+          axis: "x",
+          style: {
+            left: 0,
+            bottom: 0,
+            width: Math.max(0, hasX ? splitGeometry.x : box.width),
+            height: bar,
+          },
+          content: contentW,
+        },
+      );
+    }
+    if (hasX && !tabsShown) {
+      bars.push({
+        key: "hRight",
+        axis: "x",
+        style: {
+          left: splitX * z,
+          bottom: 0,
+          width: Math.max(0, box.width - splitX * z),
+          height: bar,
+        },
+        content: contentW,
+      });
+    }
+    if (hasY) {
+      bars.push({
+        key: "vBottom",
+        axis: "y",
+        style: {
+          top: splitY * z,
+          right: 0,
+          height: Math.max(0, bottom - splitY * z),
+          width: bar,
+        },
+        content: contentH,
+      });
+    }
+    return bars;
+  }, [splitGeometry, splitBands, box, zoom, headerW, headerH, cols.total, rows.total, tabsShown]);
+
+  /** Puts each bar back on its band's position; an echo of our own write is ignored. */
+  useEffect(() => {
+    if (!splitBands) return;
+    const z = zoom / 100;
+    for (const [key, el] of splitBarRefs.current) {
+      if (key === "hLeft" || key === "hRight") {
+        const want = (key === "hLeft" ? splitBands.hLeft : splitBands.hRight) * z;
+        if (Math.abs(el.scrollLeft - want) > 1) el.scrollLeft = want;
+        // The engine may clamp to the bar's own reach; record what it took,
+        // not what was asked for, so that echo is recognised as ours. Reading
+        // back the *asked* value here made a band past the reach bounce: the
+        // clamp wrote the band back, the next wheel moved it again, and the
+        // content jittered up and down.
+        splitBarEcho.current.set(key, el.scrollLeft);
+      } else {
+        const want = (key === "vTop" ? splitBands.vTop : splitBands.vBottom) * z;
+        if (Math.abs(el.scrollTop - want) > 1) el.scrollTop = want;
+        splitBarEcho.current.set(key, el.scrollTop);
+      }
+    }
+  }, [splitBands, zoom]);
+
+  const scrollSplitBar =
+    (key: "hLeft" | "hRight" | "vTop" | "vBottom") =>
+    (event: React.UIEvent<HTMLDivElement>) => {
+      const z = zoom / 100;
+      const el = event.currentTarget;
+      const horizontal = key === "hLeft" || key === "hRight";
+      const pixel = horizontal ? el.scrollLeft : el.scrollTop;
+      const echo = splitBarEcho.current.get(key);
+      if (echo !== undefined && Math.abs(pixel - echo) <= 1) return;
+      const value = pixel / z;
+      setSplitBands((prev) => {
+        if (!prev) return prev;
+        const current = prev[key];
+        if (Math.abs(current - value) < 0.5) return prev;
+        return { ...prev, [key]: value };
+      });
+    };
+
+  /** A tab-row bar, sent back to the band it drives. */
+  const scrollTabBand = useCallback((band: "hLeft" | "hRight", value: number) => {
+    setSplitBands((prev) => {
+      if (!prev) return prev;
+      if (Math.abs(prev[band] - value) < 0.5) return prev;
+      return { ...prev, [band]: Math.max(0, value) };
+    });
+  }, []);
+
+  /**
+   * Where the vertical split line sits, for the tab row to break its bars at;
+   * null when there is no line to speak of — a split across rows only, or one
+   * whose line has been pinned to the header. Read in a layout effect, so the
+   * tab row is laid out for it in the same frame.
+   */
+  useLayoutEffect(() => {
+    onSplitLine?.(
+      splitGeometry && splitGeometry.x > headerW ? splitGeometry.x * (zoom / 100) : null,
+    );
+  }, [splitGeometry, zoom, onSplitLine, headerW]);
+
+  /**
+   * Where the tab row's two horizontal bars go. It is measured off the row
+   * rather than worked out here, because the tabs take a share of it that
+   * nothing on this side knows: `left` is the part of that free area which
+   * lies left of the split, so the left bar can end where the line is.
+   *
+   * Read after every render and on the host's own resize: the tabs moving the
+   * bars' start is a change of position, not of size, which no observer of the
+   * host would see.
+   */
+  const measureTabBars = useCallback(() => {
+    const host = splitBarHost;
+    if (!host || !splitGeometry) {
+      setTabBarLayout(null);
+      return;
+    }
+    const hostRect = host.getBoundingClientRect();
+    // The fractional width, so the right bar's lane lands on the vertical
+    // bar's own: a rounded clientWidth left it two pixels too wide.
+    const width = hostRect.width;
+    const gridRect = viewportRef.current?.getBoundingClientRect();
+    const line =
+      splitGeometry.x * zoomRef.current - (hostRect.left - (gridRect?.left ?? hostRect.left));
+    const lane = SPLIT_BAR_SPACE + SPLIT_BAR;
+    const left =
+      splitGeometry.x > headerW
+        ? Math.max(0, Math.min(width - lane, line))
+        : // One column band only: one bar, from the tabs to the bar lane.
+          Math.max(0, width - SPLIT_BAR_SPACE);
+    setTabBarLayout((prev) =>
+      prev && prev.width === width && Math.abs(prev.left - left) < 0.5 ? prev : { width, left },
+    );
+  }, [splitBarHost, splitGeometry, headerW]);
+
+  useLayoutEffect(() => {
+    measureTabBars();
+  });
+
+  useEffect(() => {
+    const host = splitBarHost;
+    if (!host) return;
+    const observer = new ResizeObserver(measureTabBars);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [splitBarHost, measureTabBars]);
+
+  /**
+   * Dragging a split line moves it to the column or row boundary under the
+   * pointer. The line is drawn in the top-left pane's coordinate space, so
+   * that is the scroll its pixels address.
+   */
+  useEffect(() => {
+    if (!splitDrag || !splitGeometry || !split) return;
+    const onMove = (event: PointerEvent) => {
+      const el = viewportRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const z = zoomRef.current;
+      const anchor = bandOffset("tl");
+      if (splitDrag === "x") {
+        const left = anchor.left;
+        const x = (event.clientX - rect.left) / z + left - headerW;
+        const col = Math.max(1, Math.min(colCount - 1, indexAt(cols.offsets, x)));
+        if (col !== split.col) onSplitChange?.({ row: split.row, col });
+        return;
+      }
+      const top = anchor.top;
+      const y = (event.clientY - rect.top) / z + top - headerH;
+      const display = Math.max(
+        1,
+        Math.min(displayRowCount - 1, indexAt(rows.offsets, y)),
+      );
+      const row = sheetRowOf(display);
+      if (row > 0 && row !== split.row) {
+        onSplitChange?.({ row, col: split.col });
+      }
+    };
+    const onUp = () => setSplitDrag(null);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [
+    splitDrag,
+    splitGeometry,
+    split,
+    splitBands,
+    bandOffset,
+    onSplitChange,
+    cols,
+    rows,
+    colCount,
+    displayRowCount,
+    sheetRowOf,
+    headerW,
+    headerH,
+  ]);
+
+  /**
    * Keeps the row-number band as wide as the largest row it is showing, which
    * is what Excel does: 28px until row 999, 36 at 1000, 44 at 10000, and so on.
    * Only the digit count matters, so this changes at each power of ten rather
@@ -1225,8 +2050,14 @@ export function CanvasGrid({
    * the rows under it from drifting apart.
    */
   const freeze = useMemo(() => {
-    const frozenSheetRows = Math.max(0, Math.min(layout?.frozenRows ?? 0, rowCount));
-    const frozenSheetCols = Math.max(0, Math.min(layout?.frozenCols ?? 0, colCount));
+    // A split and a frozen band are two answers to the same question; the
+    // split wins for as long as it is on, as it does in Excel.
+    const frozenSheetRows = splitGeometry
+      ? 0
+      : Math.max(0, Math.min(frozenRowCount, rowCount));
+    const frozenSheetCols = splitGeometry
+      ? 0
+      : Math.max(0, Math.min(frozenColCount, colCount));
     let frozenDisplayRows = 0;
     if (frozenSheetRows > 0) {
       if (!rowView) {
@@ -1248,7 +2079,7 @@ export function CanvasGrid({
       height: frozenDisplayRows > 0 ? (rows.offsets[frozenDisplayRows] ?? 0) : 0,
       width: frozenSheetCols > 0 ? (cols.offsets[frozenSheetCols] ?? 0) : 0,
     };
-  }, [layout, rowView, rowCount, colCount, displayRowCount, sheetRowOf, rows, cols]);
+  }, [frozenRowCount, frozenColCount, splitGeometry, rowView, rowCount, colCount, displayRowCount, sheetRowOf, rows, cols]);
 
   /**
    * Excel's input prompt: a small yellow note beside the cell the cursor is on,
@@ -1482,10 +2313,25 @@ export function CanvasGrid({
         styleOfRow(layout.cellRuns, row, col) ??
         layout.rowStyles[row] ??
         styleOfColumn(layout.colStyles, col);
-      return index === undefined ? null : (layout.styles[index] ?? null);
+      const base = index === undefined ? null : (layout.styles[index] ?? null);
+      return withFormat(base, formats?.get(formatKey(sheet.name, row, col)));
     },
-    [layout, sheetRowsGuess, sheetColsGuess],
+    [layout, sheetRowsGuess, sheetColsGuess, formats, sheet.name],
   );
+
+  /**
+   * The ribbon reads the active cell the way Excel's does: what font and
+   * alignment that cell is actually drawn with, overlays included.
+   */
+  useEffect(() => {
+    const at = selectionAnchor(selection);
+    const style = styleAt(at.row, at.col);
+    onActiveStyle?.({
+      style,
+      family: style?.family ?? fontFamily,
+      sizePx: style?.sizePx ?? fontSize,
+    });
+  }, [selection, styleAt, onActiveStyle, fontFamily, fontSize]);
 
   const mergeAt = useCallback(
     (row: number, col: number): MergeRect | null =>
@@ -1641,6 +2487,18 @@ export function CanvasGrid({
   );
 
   /**
+   * The ribbon's filter decision changes where the filter is, so nothing it
+   * held before survives: an added area starts unfiltered, and clearing the
+   * file's filter takes its criteria with it. The layout fetch below seeds a
+   * fresh sheet; this is the same rule for a sheet already on screen.
+   */
+  useEffect(() => {
+    if (!filterPane) return;
+    setFilters(new Map());
+    setVisibleRows(null);
+  }, [filterPane]);
+
+  /**
    * The status bar is told how many rows the filter is hiding, which is where
    * Excel says it. It used to be a band wedged above the grid, which cost a row
    * of the sheet to say something the sheet is already showing.
@@ -1652,6 +2510,15 @@ export function CanvasGrid({
         : null,
     );
   }, [visibleRows, autoFilter, onFiltered]);
+
+  /** Both of the ribbon's toggles read what is in force, not what was asked. */
+  useEffect(() => {
+    onFrozenChange?.({ rows: frozenRowCount, cols: frozenColCount });
+  }, [frozenRowCount, frozenColCount, onFrozenChange]);
+
+  useEffect(() => {
+    onFilterState?.(autoFilter !== null);
+  }, [autoFilter, onFilterState]);
 
   // --- the sheet's layout, once per switch ---
   useEffect(() => {
@@ -1713,9 +2580,12 @@ export function CanvasGrid({
 
         // What this sheet was left holding beats what the workbook stores: a
         // filter applied here is in no file, and an empty Map is a filter the
-        // user cleared rather than one that was never set.
-        const filters =
-          saved?.filters ?? toFilters(parsed.autoFilter?.applied);
+        // user cleared rather than one that was never set. The ribbon's own
+        // decision comes first: an area it added starts with no criteria, and
+        // clearing the file's takes them all away.
+        const filters = filterPane?.off || filterPane?.area
+          ? new Map<number, string[]>()
+          : (saved?.filters ?? toFilters(parsed.autoFilter?.applied));
         if (filters.size > 0) {
           setFilters(filters);
           computeVisibleRows(path, sheet.name, parsed.autoFilter, filters)
@@ -1774,6 +2644,11 @@ export function CanvasGrid({
     if (!el) return;
     const measure = () => {
       sizeRef.current = { width: el.clientWidth, height: el.clientHeight };
+      setBox((prev) =>
+        prev.width === el.clientWidth && prev.height === el.clientHeight
+          ? prev
+          : { width: el.clientWidth, height: el.clientHeight },
+      );
       // The bar still occupies its height whatever the clipping above it does,
       // so this reads the same before and after the scroller is grown.
       setHBarHeight(hideHScroll ? el.offsetHeight - el.clientHeight : 0);
@@ -1829,14 +2704,42 @@ export function CanvasGrid({
     const el = viewportRef.current;
     if (!el) return;
     const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const percent = Math.round(zoomRef.current * 100);
+        onZoom(stepZoom(percent, event.deltaY < 0 ? 1 : -1));
+        return;
+      }
+      // In a split the wheel is answered here for every pane: the scroller's
+      // own bars are hidden and its position no longer stands for a pane.
+      if (!splitGeometry) return;
+      const pane = paneAtRef.current(event.clientX, event.clientY);
       event.preventDefault();
-      const percent = Math.round(zoomRef.current * 100);
-      onZoom(stepZoom(percent, event.deltaY < 0 ? 1 : -1));
+      const z = zoomRef.current;
+      // Shift makes the wheel horizontal, and the webview may or may not have
+      // already swapped the axes by the time the event arrives. If it has not,
+      // the vertical amount is the horizontal one.
+      const swap = event.shiftKey && event.deltaX === 0;
+      const dx = (swap ? event.deltaY : event.deltaX) / z;
+      const dy = (swap ? 0 : event.deltaY) / z;
+      const hasX = splitGeometry.x > headerW;
+      const hasY = splitGeometry.y > headerH;
+      setSplitBands((prev) => {
+        if (!prev) return prev;
+        const bottom = pane === "bl" || pane === "br";
+        const right = pane === "tr" || pane === "br";
+        const vKey = hasY && bottom ? "vBottom" : "vTop";
+        const hKey = hasX && right ? "hRight" : "hLeft";
+        return {
+          ...prev,
+          [vKey]: Math.max(0, Math.min(rows.total, prev[vKey] + dy)),
+          [hKey]: Math.max(0, Math.min(cols.total, prev[hKey] + dx)),
+        };
+      });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [onZoom]);
+  }, [onZoom, splitGeometry, headerW, headerH, rows, cols]);
 
   /**
    * A shape takes the pointer so it can be dragged, which would otherwise
@@ -2100,6 +3003,9 @@ export function CanvasGrid({
     path,
     sheet.name,
     marks,
+    formats,
+    splitGeometry,
+    splitBands,
   ]);
 
   /**
@@ -2136,6 +3042,73 @@ export function CanvasGrid({
     if (!follow) return;
     const factor = zoom / 100;
 
+    /**
+     * A split pane has its own band position, so the cursor is carried into
+     * view in the focused pane by moving that pane's row or column band —
+     * the scroller's own position is not a pane's in a split.
+     */
+    if (splitGeometry && splitBands) {
+      const pane = splitPanes(
+        splitGeometry,
+        el.clientWidth / factor,
+        el.clientHeight / factor,
+        splitBands,
+        headerW,
+        headerH,
+      ).find((one) => one.id === splitFocus);
+      if (pane) {
+        const at = activeArea(selection);
+        const moving =
+          at.kind === "range"
+            ? at.edge
+            : at.kind === "cell"
+              ? { row: at.row, col: at.col }
+              : null;
+        const atRow =
+          at.kind === "column" ? -1 : moving ? moving.row : at.kind === "row" ? at.edge : -1;
+        const atCol =
+          at.kind === "row" ? -1 : moving ? moving.col : at.kind === "column" ? at.edge : -1;
+        const bodyH = Math.max(0, pane.height - headerH);
+        const bodyW = Math.max(0, pane.width - headerW);
+        let top = pane.offset.top;
+        let left = pane.offset.left;
+        if (atRow >= 0) {
+          const display = displayOfRow(atRow);
+          if (display >= 0) {
+            const cellTop = rows.offsets[display] ?? 0;
+            const cellBottom = cellTop + spanAt(rows.offsets, display);
+            if (cellTop < top) top = cellTop;
+            else if (cellBottom > top + bodyH) top = cellBottom - bodyH;
+          }
+        }
+        if (atCol >= 0) {
+          const cellLeft = cols.offsets[atCol] ?? 0;
+          const cellRight = cellLeft + spanAt(cols.offsets, atCol);
+          if (cellLeft < left) left = cellLeft;
+          else if (cellRight > left + bodyW) left = cellRight - bodyW;
+        }
+        const hasX = splitGeometry.x > headerW;
+        const hasY = splitGeometry.y > headerH;
+        const bottom = splitFocus === "bl" || splitFocus === "br";
+        const right = splitFocus === "tr" || splitFocus === "br";
+        const v = Math.max(0, Math.min(rows.total, top));
+        const h = Math.max(0, Math.min(cols.total, left));
+        setSplitBands((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...(hasY && bottom ? { vBottom: v } : { vTop: v }),
+                ...(hasX && right ? { hRight: h } : { hLeft: h }),
+              }
+            : prev,
+        );
+      }
+      return;
+    }
+
+    let viewH = el.clientHeight;
+    let viewW = el.clientWidth;
+
     // A block follows its edge rather than its rectangle, which for one growing
     // leftward is the wrong corner: the edge is the end the pointer and the
     // keyboard walk, so an extension carries it into view as it goes. A
@@ -2167,7 +3140,7 @@ export function CanvasGrid({
           const bottom =
             (headerH + (rows.offsets[Math.min(display + 1, displayRowCount)] ?? 0)) * factor;
           if (top < el.scrollTop + frozen) el.scrollTop = top - frozen;
-          else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
+          else if (bottom > el.scrollTop + viewH) el.scrollTop = bottom - viewH;
         }
       }
     }
@@ -2177,7 +3150,7 @@ export function CanvasGrid({
       const right =
         (headerW + (cols.offsets[Math.min(atCol + 1, sheetColsGuess)] ?? 0)) * factor;
       if (left < el.scrollLeft + frozen) el.scrollLeft = left - frozen;
-      else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth;
+      else if (right > el.scrollLeft + viewW) el.scrollLeft = right - viewW;
     }
   }, [
     selection,
@@ -2192,6 +3165,9 @@ export function CanvasGrid({
     freeze,
     headerW,
     headerH,
+    splitGeometry,
+    splitBands,
+    splitFocus,
   ]);
 
   // --- fetching the cells the viewport needs ---
@@ -2270,7 +3246,45 @@ export function CanvasGrid({
     const top = Math.max(0, scroll.top - headerH);
     const left = Math.max(0, scroll.left - headerW);
     const width = size.width / z;
-    const height = size.height / z;
+    // A split keeps a row free at the foot of the sheet for its two horizontal
+    // bars — unless the tabs are on screen, where those bars live in the tab
+    // row and the sheet runs to the bottom of the grid.
+    const height =
+      size.height / z - (splitGeometry && !tabsShown ? SPLIT_BAR_SPACE : 0);
+
+    /**
+     * The split panes, when there are any. Their ranges are added to the
+     * merges and Center-Across runs below, and their views handed to the paint
+     * pass: four panes can show four different parts of the sheet, and a merge
+     * that is only in one of them still has to be drawable.
+     */
+    const splitLayout = splitGeometry
+      ? splitPanes(
+          splitGeometry,
+          width,
+          height,
+          splitBands ?? {
+            vTop: scroll.top,
+            vBottom: scroll.top,
+            hLeft: scroll.left,
+            hRight: scroll.left,
+          },
+          headerW,
+          headerH,
+        )
+      : null;
+    const paneRange = (pane: SplitPane) => {
+      const paneTop = Math.max(0, pane.offset.top - headerH);
+      const paneLeft = Math.max(0, pane.offset.left - headerW);
+      const bodyW = Math.max(0, pane.width - headerW);
+      const bodyH = Math.max(0, pane.height - headerH);
+      return {
+        rowStart: Math.max(0, indexAt(rows.offsets, paneTop) - OVERSCAN_ROWS),
+        rowEnd: Math.min(rowCount, indexAt(rows.offsets, paneTop + bodyH) + 1 + OVERSCAN_ROWS),
+        colStart: Math.max(0, indexAt(cols.offsets, paneLeft) - OVERSCAN_COLS),
+        colEnd: Math.min(colCount, indexAt(cols.offsets, paneLeft + bodyW) + 1 + OVERSCAN_COLS),
+      };
+    };
 
     const range = {
       rowStart: Math.max(0, indexAt(rows.offsets, top) - OVERSCAN_ROWS),
@@ -2353,11 +3367,22 @@ export function CanvasGrid({
         }
       }
     };
-    const frozenSheetRows = Math.min(layout.frozenRows ?? 0, sheetRows);
-    const frozenSheetCols = Math.min(layout.frozenCols ?? 0, sheetCols);
+    const frozenSheetRows = splitGeometry ? 0 : Math.min(frozenRowCount, sheetRows);
+    const frozenSheetCols = splitGeometry ? 0 : Math.min(frozenColCount, sheetCols);
     addMerges(lo, hi, range.colStart, range.colEnd);
     if (frozenSheetRows > 0) addMerges(0, frozenSheetRows - 1, range.colStart, range.colEnd);
     if (frozenSheetCols > 0) addMerges(lo, hi, 0, frozenSheetCols - 1);
+    for (const pane of splitLayout ?? []) {
+      const paneWindow = paneRange(pane);
+      const paneFirst = sheetRowOf(paneWindow.rowStart);
+      const paneLast = sheetRowOf(Math.max(paneWindow.rowStart, paneWindow.rowEnd - 1));
+      addMerges(
+        Math.min(paneFirst, paneLast),
+        Math.max(paneFirst, paneLast),
+        paneWindow.colStart,
+        paneWindow.colEnd,
+      );
+    }
     const mergeAtFast = (row: number, col: number): MergeRect | null =>
       mergeIndex.get(cellKey(sheetCols, row, col)) ?? null;
 
@@ -2445,6 +3470,17 @@ export function CanvasGrid({
     addRuns(lo, hi, range.colStart, range.colEnd);
     if (frozenSheetRows > 0) addRuns(0, frozenSheetRows - 1, range.colStart, range.colEnd);
     if (frozenSheetCols > 0) addRuns(lo, hi, 0, frozenSheetCols - 1);
+    for (const pane of splitLayout ?? []) {
+      const paneWindow = paneRange(pane);
+      const paneFirst = sheetRowOf(paneWindow.rowStart);
+      const paneLast = sheetRowOf(Math.max(paneWindow.rowStart, paneWindow.rowEnd - 1));
+      addRuns(
+        Math.min(paneFirst, paneLast),
+        Math.max(paneFirst, paneLast),
+        paneWindow.colStart,
+        paneWindow.colEnd,
+      );
+    }
 
     /**
      * Each run's cells back to the run, so the painter can drop the borders
@@ -2485,7 +3521,7 @@ export function CanvasGrid({
       noteIndex.add(cellKey(sheetCols, note.row, note.col));
     }
 
-    return {
+    const view: GridView = {
       cols,
       rows,
       sheetRows,
@@ -2537,9 +3573,16 @@ export function CanvasGrid({
       notes: noteIndex,
       theme: canvasTheme(),
     };
+
+    return view;
   }, [
     layout,
     layoutSheet,
+    frozenRowCount,
+    frozenColCount,
+    splitGeometry,
+    splitBands,
+    tabsShown,
     path,
     sheet.name,
     sheet.rows,
@@ -2599,9 +3642,64 @@ export function CanvasGrid({
       const bodyH = Math.max(0, view.height - gy - fh);
       const frozenRowEnd = Math.min(rowCount, fr + 1 + OVERSCAN_ROWS);
       const frozenColEnd = Math.min(colCount, fc + 1 + OVERSCAN_COLS);
-      const panes: { view: GridView; clips: { x: number; y: number; w: number; h: number }[] }[] = [];
-      if (fr === 0 && fc === 0) {
-        panes.push({ view, clips: [] });
+      const panes: {
+        view: GridView;
+        clips: { x: number; y: number; w: number; h: number }[];
+        /** Where the pane's own origin sits on the canvas. */
+        x: number;
+        y: number;
+      }[] = [];
+      /**
+       * A split is drawn as four views of the same sheet, each with its own
+       * scroll. A pane view's header bands fall outside its clip for every
+       * pane but the ones along the top and left, which is exactly where Excel
+       * draws them.
+       */
+      const splitLayout = splitGeometry
+        ? splitPanes(
+            splitGeometry,
+            view.width,
+            view.height,
+            splitBands ?? {
+              vTop: view.scrollTop,
+              vBottom: view.scrollTop,
+              hLeft: view.scrollLeft,
+              hRight: view.scrollLeft,
+            },
+            headerW,
+            headerH,
+          )
+        : null;
+      const paneView = (pane: SplitPane): GridView => {
+        const paneTop = Math.max(0, pane.offset.top - headerH);
+        const paneLeft = Math.max(0, pane.offset.left - headerW);
+        const paneBodyW = Math.max(0, pane.width - headerW);
+        const paneBodyH = Math.max(0, pane.height - headerH);
+        return {
+          ...view,
+          width: pane.width,
+          height: pane.height,
+          scrollTop: pane.offset.top,
+          scrollLeft: pane.offset.left,
+          canvasPrintArea: true,
+          rowStart: Math.max(0, indexAt(rows.offsets, paneTop) - OVERSCAN_ROWS),
+          rowEnd: Math.min(
+            rowCount,
+            indexAt(rows.offsets, paneTop + paneBodyH) + 1 + OVERSCAN_ROWS,
+          ),
+          colStart: Math.max(0, indexAt(cols.offsets, paneLeft) - OVERSCAN_COLS),
+          colEnd: Math.min(
+            colCount,
+            indexAt(cols.offsets, paneLeft + paneBodyW) + 1 + OVERSCAN_COLS,
+          ),
+        };
+      };
+      if (splitLayout) {
+        for (const pane of splitLayout) {
+          panes.push({ view: paneView(pane), clips: [pane.clip], x: pane.x, y: pane.y });
+        }
+      } else if (fr === 0 && fc === 0) {
+        panes.push({ view, clips: [], x: 0, y: 0 });
       } else {
         if (bodyW > 0 || bodyH > 0) {
           panes.push({
@@ -2612,6 +3710,8 @@ export function CanvasGrid({
               { x: gx + fw, y: 0, w: bodyW, h: gy },
               { x: 0, y: 0, w: gx, h: gy },
             ],
+            x: 0,
+            y: 0,
           });
         }
         if (fr > 0 && fh > 0) {
@@ -2622,6 +3722,8 @@ export function CanvasGrid({
               { x: gx + fw, y: 0, w: bodyW, h: gy },
               ...(fc === 0 ? [{ x: 0, y: gy, w: gx, h: fh }] : []),
             ],
+            x: 0,
+            y: 0,
           });
         }
         if (fc > 0 && fw > 0) {
@@ -2632,6 +3734,8 @@ export function CanvasGrid({
               { x: 0, y: gy + fh, w: gx, h: bodyH },
               ...(fr === 0 ? [{ x: gx, y: 0, w: fw, h: gy }] : []),
             ],
+            x: 0,
+            y: 0,
           });
         }
         if (fr > 0 && fc > 0 && fh > 0 && fw > 0) {
@@ -2650,6 +3754,8 @@ export function CanvasGrid({
               { x: 0, y: gy, w: gx, h: fh },
               { x: gx, y: 0, w: fw, h: gy },
             ],
+            x: 0,
+            y: 0,
           });
         }
       }
@@ -2698,6 +3804,7 @@ export function CanvasGrid({
           for (const pane of panes) {
             ctx.save();
             clipTo(ctx, pane.clips);
+            ctx.translate(pane.x, pane.y);
             const part = paintBase(ctx, pane.view);
             ctx.restore();
             stats.rows += part.rows;
@@ -2716,6 +3823,17 @@ export function CanvasGrid({
           ctx.fillStyle = view.theme.freezeLine;
           if (fr > 0 && fh > 0) ctx.fillRect(0, gy + fh, view.width, 1);
           if (fc > 0 && fw > 0) ctx.fillRect(gx + fw, 0, 1, view.height);
+          // A split is divided by a grey bar rather than a rule, across the
+          // header bands as well. Measured off Excel's own window.
+          if (splitGeometry) {
+            ctx.fillStyle = "#D3D3D3";
+            if (splitGeometry.x > headerW) {
+              ctx.fillRect(splitGeometry.x, 0, SPLIT_BAR, view.height);
+            }
+            if (splitGeometry.y > headerH) {
+              ctx.fillRect(0, splitGeometry.y, view.width, SPLIT_BAR);
+            }
+          }
           perf.current.stats = stats;
           // Only real base passes enter the window: an overlay-only frame runs
           // no base pass, and folding a zero in would drag the median down to a
@@ -2741,6 +3859,7 @@ export function CanvasGrid({
         for (const pane of panes) {
           ctx.save();
           clipTo(ctx, pane.clips);
+          ctx.translate(pane.x, pane.y);
           paintOverlay(ctx, pane.view);
           ctx.restore();
         }
@@ -2764,7 +3883,9 @@ export function CanvasGrid({
         const headerDisplay = view.autoFilter ? view.displayOfRow(view.autoFilter.row) : -1;
         const filterHeaderH = headerDisplay >= 0 ? spanAt(view.rows.offsets, headerDisplay) : 0;
         for (const [col, slot] of filterSlots.current) {
-          if (headerDisplay < 0) {
+          // A split gives every pane its own button; this layer knows only
+          // where the scroller's pane has put them, so it keeps out of the way.
+          if (splitLayout || headerDisplay < 0) {
             slot.style.display = "none";
             continue;
           }
@@ -2793,7 +3914,7 @@ export function CanvasGrid({
         if (prompt) {
           const info = promptInfoRef.current;
           const display = info ? view.displayOfRow(info.row) : -1;
-          if (!info || display < 0) {
+          if (!info || display < 0 || splitLayout) {
             prompt.style.display = "none";
           } else {
             const x = (view.cols.offsets[info.col] - (info.col < fc ? 0 : view.scrollLeft)) * view.zoom;
@@ -2917,12 +4038,27 @@ export function CanvasGrid({
       // shape near row 0 cannot paint over the gutters.
       const page = pageLayerRef.current;
       if (page) {
-        const gutterX = headerW * view.zoom;
-        const gutterY = headerH * view.zoom;
+        /**
+         * Shapes are drawn in the scroller's own pane. Under a split the other
+         * panes have their own offsets, and one layer cannot be in four places
+         * at once — so it is clipped to the bottom-right pane rather than left
+         * floating over content it does not belong to.
+         */
+        const shapePane = splitLayout?.find((pane) => pane.id === splitFocus);
+        const gutterX = shapePane ? shapePane.clip.x * view.zoom : headerW * view.zoom;
+        const gutterY = shapePane ? shapePane.clip.y * view.zoom : headerH * view.zoom;
         page.style.left = `${gutterX}px`;
         page.style.top = `${gutterY}px`;
-        page.style.width = `${Math.max(0, view.width * view.zoom - gutterX)}px`;
-        page.style.height = `${Math.max(0, view.height * view.zoom - gutterY)}px`;
+        page.style.width = `${
+          shapePane
+            ? Math.max(0, shapePane.clip.w * view.zoom)
+            : Math.max(0, view.width * view.zoom - gutterX)
+        }px`;
+        page.style.height = `${
+          shapePane
+            ? Math.max(0, shapePane.clip.h * view.zoom)
+            : Math.max(0, view.height * view.zoom - gutterY)
+        }px`;
 
         const inner = shapesInnerRef.current;
         if (inner) {
@@ -2947,7 +4083,7 @@ export function CanvasGrid({
         const mark = markRef.current;
         if (mark) {
           const area = view.printArea;
-          if (area) {
+          if (area && !splitGeometry) {
             const x0 = printColX(area.col);
             const y0 = printRowY(area.row);
             mark.style.display = "";
@@ -2968,7 +4104,8 @@ export function CanvasGrid({
         }
       }
     },
-    [buildView, ensureBlocks, printColX, printRowY, freeze, rowCount, colCount],
+    [buildView, ensureBlocks, printColX, printRowY, freeze, rowCount, colCount,
+     splitGeometry, splitBands, headerW, headerH, rows, cols],
   );
   const paintRef = useRef(paint);
   paintRef.current = paint;
@@ -3003,11 +4140,65 @@ export function CanvasGrid({
       const gutterH = headerH * z;
       const frozenW = freeze.width * z;
       const frozenH = freeze.height * z;
+      /**
+       * Which split pane the point is over. The native scroller answers the
+       * focused one; each of the others answers its own stored offset.
+       */
+      const hasX = splitGeometry !== null && splitGeometry.x > headerW;
+      const hasY = splitGeometry !== null && splitGeometry.y > headerH;
+      const right = hasX && px >= (splitGeometry!.x + SPLIT_BAR) * z;
+      const bottom = hasY && py >= (splitGeometry!.y + SPLIT_BAR) * z;
+      const pane: PaneId =
+        hasX && hasY
+          ? right
+            ? bottom
+              ? "br"
+              : "tr"
+            : bottom
+              ? "bl"
+              : "tl"
+          : hasX
+            ? right
+              ? "br"
+              : "tl"
+            : hasY
+              ? bottom
+                ? "br"
+                : "tl"
+              : "br";
+      const paneScroll = splitBands ? bandOffset(pane) : null;
+      /**
+       * A split pane is a whole view translated to its own corner, so the
+       * origin it was drawn at comes off the pointer before the pane's own
+       * scroll is added. Without it a click in the bottom-right pane landed a
+       * pane's width and height away — the origin plus its band.
+       */
+      const paneLayout =
+        splitGeometry && splitBands
+          ? splitPanes(
+              splitGeometry,
+              sizeRef.current.width / z,
+              sizeRef.current.height / z,
+              splitBands,
+              headerW,
+              headerH,
+            ).find((one) => one.id === pane) ?? null
+          : null;
+      const paneLeft = paneScroll ? paneScroll.left * z : el.scrollLeft;
+      const paneTop = paneScroll ? paneScroll.top * z : el.scrollTop;
+      const originX = paneLayout ? paneLayout.x * z : 0;
+      const originY = paneLayout ? paneLayout.y * z : 0;
       /** A point inside a frozen band is the viewport's own; the rest scrolls. */
       const sheetX = (viewportX: number) =>
-        (viewportX + (viewportX < gutterW + frozenW ? 0 : el.scrollLeft)) / z - headerW;
+        splitGeometry
+          ? (viewportX - originX + paneLeft) / z - headerW
+          : (viewportX + (viewportX < gutterW + frozenW ? 0 : el.scrollLeft)) / z -
+            headerW;
       const sheetY = (viewportY: number) =>
-        (viewportY + (viewportY < gutterH + frozenH ? 0 : el.scrollTop)) / z - headerH;
+        splitGeometry
+          ? (viewportY - originY + paneTop) / z - headerH
+          : (viewportY + (viewportY < gutterH + frozenH ? 0 : el.scrollTop)) / z -
+            headerH;
 
       // The scroller's scrollbars are inside its border box but are not the
       // sheet. Hit-testing one as a cell started a block selection on the
@@ -3038,7 +4229,8 @@ export function CanvasGrid({
       if (row < 0) return null;
       return { kind: "cell", row, col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
     },
-    [cols, rows, colCount, rowCount, sheetRowOf, freeze, headerW, headerH],
+    [cols, rows, colCount, rowCount, sheetRowOf, freeze, headerW, headerH,
+     splitGeometry, splitBands, splitFocus, bandOffset],
   );
 
   /**
@@ -3260,7 +4452,34 @@ export function CanvasGrid({
     autoScroll.current = requestAnimationFrame(runAutoScroll);
   }, [dragTo, hitAt, onSelect, schedule, headerW, headerH]);
 
+  /**
+   * Which pane a point is over, for the pointer's own purposes: the pane it
+   * scrolls and the one the keyboard follows.
+   */
+  const paneAt = useCallback(
+    (clientX: number, clientY: number): PaneId => {
+      if (!splitGeometry) return "br";
+      const el = viewportRef.current;
+      if (!el) return "br";
+      const rect = el.getBoundingClientRect();
+      const z = zoomRef.current;
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      const hasX = splitGeometry.x > headerW;
+      const hasY = splitGeometry.y > headerH;
+      const right = hasX && px >= (splitGeometry.x + SPLIT_BAR) * z;
+      const bottom = hasY && py >= (splitGeometry.y + SPLIT_BAR) * z;
+      if (hasX && hasY) return right ? (bottom ? "br" : "tr") : bottom ? "bl" : "tl";
+      if (hasX) return right ? "br" : "tl";
+      if (hasY) return bottom ? "br" : "tl";
+      return "br";
+    },
+    [splitGeometry, headerW, headerH],
+  );
+  paneAtRef.current = paneAt;
+
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    setSplitFocus(paneAt(event.clientX, event.clientY));
     if (outlinePress.current) {
       outlinePress.current = false;
       return;
@@ -3548,6 +4767,7 @@ export function CanvasGrid({
     // already, but a press that landed elsewhere — the search box, a toolbar
     // button — left Ctrl+A selecting the page's DOM instead of the sheet.
     viewportRef.current?.focus({ preventScroll: true });
+    setSplitFocus(paneAt(event.clientX, event.clientY));
     // And the page's own select-all leaves its highlight behind; nothing on the
     // sheet is a text selection, so a press clears it.
     window.getSelection()?.removeAllRanges();
@@ -3813,10 +5033,22 @@ export function CanvasGrid({
       // happens to be, so it lives on `window` below.
       switch (event.key) {
         case "Home":
-          select(0, 0);
+          // Shift turns the jump into an extension, as it does for the arrows:
+          // Excel's Ctrl+Shift+Home takes the block back to A1 rather than
+          // dropping the block and landing on it.
+          if (event.shiftKey) onSelect(rangeBetween(anchor, { row: 0, col: 0 }));
+          else select(0, 0);
           break;
         case "End":
-          select(lastRow, lastCol);
+          if (event.shiftKey) onSelect(rangeBetween(anchor, { row: lastRow, col: lastCol }));
+          else select(lastRow, lastCol);
+          break;
+        case " ":
+          // Ctrl+Space takes the whole columns the selection spans.
+          {
+            const span = spanOfArea(activeArea(selection), false);
+            if (span) onSelect(colsBetween(span[0], span[1]));
+          }
           break;
         case "PageUp":
           onSheetStep?.(-1);
@@ -3845,6 +5077,33 @@ export function CanvasGrid({
         default:
           return;
       }
+      event.preventDefault();
+      return;
+    }
+
+    // Shift+Space takes the whole rows the selection spans, the way Excel's
+    // does. A plain Space is no key of the sheet's — and must not scroll the
+    // grid away under the cursor, which is what a focused scroller would
+    // otherwise do with it.
+    if (event.key === " ") {
+      if (event.shiftKey) {
+        const span = spanOfArea(activeArea(selection), true);
+        if (span) onSelect(rowsBetween(span[0], span[1]));
+      }
+      event.preventDefault();
+      return;
+    }
+
+    // Alt+PageUp / PageDown: a screen left or right. The cursor lands on the
+    // same row one page over, and the view follows it there — which is the only
+    // sideways page there is, the wheel's Shift being a scroll rather than a
+    // move.
+    if (event.altKey && (event.key === "PageUp" || event.key === "PageDown")) {
+      const across = el ? Math.max(1, el.clientWidth / z - headerW) : 0;
+      const dir = event.key === "PageDown" ? 1 : -1;
+      const from = selectionAnchor(selection);
+      const x = (cols.offsets[from.col] ?? 0) + dir * across;
+      select(from.row, clampCol(indexAt(cols.offsets, x)));
       event.preventDefault();
       return;
     }
@@ -3888,6 +5147,11 @@ export function CanvasGrid({
         case "End":
           select(shown.anchor, lastCol);
           break;
+        case "Enter":
+          // Enter walks a run of rows down one, as it walks a cell down one.
+          if (event.shiftKey) grow(shown.edge - 1);
+          else slide(shown.row + 1);
+          break;
         default:
           return;
       }
@@ -3920,6 +5184,11 @@ export function CanvasGrid({
           break;
         case "End":
           select(lastRow, shown.anchor);
+          break;
+        case "Tab":
+          // Tab walks a run of columns right one, as it walks a cell right one.
+          if (event.shiftKey) grow(shown.edge - 1);
+          else slide(shown.col + 1);
           break;
         default:
           return;
@@ -3967,6 +5236,15 @@ export function CanvasGrid({
         break;
       case "End":
         moveTo(step.row, lastCol);
+        break;
+      // Excel's own walk keys. They leave from the active cell whatever Shift
+      // is doing — Shift here reverses the direction rather than growing the
+      // block, which is what it means everywhere else on the sheet.
+      case "Enter":
+        select(clampRow(anchor.row + (event.shiftKey ? -1 : 1)), anchor.col);
+        break;
+      case "Tab":
+        select(anchor.row, clampCol(anchor.col + (event.shiftKey ? -1 : 1)));
         break;
       default:
         return;
@@ -4362,6 +5640,23 @@ export function CanvasGrid({
       )?.runs ?? null)
     : null;
 
+  /**
+   * The tab row's right bar starts at the split line, or at the tabs when the
+   * line is behind them and there is no left bar to draw.
+   */
+  const tabBarRightLeft =
+    tabBarLayout && tabBarLayout.left > 0 ? tabBarLayout.left + SPLIT_BAR : 0;
+
+  /**
+   * The left column band's visible width. Without a column split there is no
+   * line, and the band is the whole sheet — which is also the width its bar has
+   * to be measured against, or the bar's own share of the sheet comes out at
+   * nothing.
+   */
+  const tabBarLeftPane =
+    (splitGeometry && splitGeometry.x > headerW ? splitGeometry.x : box.width) *
+    (zoom / 100);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {bar}
@@ -4393,7 +5688,9 @@ export function CanvasGrid({
               onPointerLeave={handlePointerLeave}
               onKeyDown={handleKeyDown}
               style={hBarHeight ? { marginBottom: -hBarHeight } : undefined}
-              className="absolute inset-0 overflow-auto outline-none [scrollbar-gutter:stable]"
+              className={`absolute inset-0 overflow-auto outline-none [scrollbar-gutter:stable] ${
+                splitGeometry ? "split-no-scrollbars" : ""
+              }`}
             >
               <div style={{ width: contentW, height: contentH }} />
             </div>
@@ -4431,6 +5728,117 @@ export function CanvasGrid({
         <canvas ref={baseRef} className="pointer-events-none absolute top-0 left-0" />
         {/* The selection layer, stacked over it. */}
         <canvas ref={overlayRef} className="pointer-events-none absolute top-0 left-0" />
+
+        {/* Excel's two bars per axis: one per column band and one per row band. */}
+        {splitBars.map((bar) => (
+          <div
+            key={bar.key}
+            ref={(element) => {
+              if (element) splitBarRefs.current.set(bar.key, element);
+              else splitBarRefs.current.delete(bar.key);
+            }}
+            onScroll={scrollSplitBar(bar.key)}
+            className={`absolute ${
+              bar.axis === "x"
+                ? "overflow-x-auto overflow-y-hidden"
+                : "overflow-y-auto overflow-x-hidden"
+            }`}
+            style={bar.style}
+          >
+            <div
+              style={
+                bar.axis === "x"
+                  ? { width: bar.content, height: 1 }
+                  : { height: bar.content, width: 1 }
+              }
+            />
+          </div>
+        ))}
+
+        {/* With the tabs on screen the horizontal pair leaves the grid for the
+            tab row, where Excel draws it: level with the tabs, the left bar
+            ending at the split line and the right one carrying on from there.
+            It stops short of the vertical bar's lane, as Excel's does. */}
+        {splitBarHost && tabBarLayout && splitBands && splitGeometry
+          ? createPortal(
+              <>
+                {tabBarLayout.left > 0 && (
+                  <TabSplitBar
+                    band="hLeft"
+                    style={{
+                      left: 0,
+                      width: tabBarLayout.left,
+                      top: "50%",
+                      height: SPLIT_BAR_SPACE,
+                      transform: "translateY(-50%)",
+                    }}
+                    value={splitBands.hLeft}
+                    zoom={zoom}
+                    reach={(headerW + cols.total) * (zoom / 100)}
+                    pane={tabBarLeftPane}
+                    onScroll={scrollTabBand}
+                  />
+                )}
+                {tabBarLayout.width - tabBarRightLeft - SPLIT_BAR_SPACE > 0 && (
+                  <TabSplitBar
+                    band="hRight"
+                    style={{
+                      left: tabBarRightLeft,
+                      width: tabBarLayout.width - tabBarRightLeft - SPLIT_BAR_SPACE,
+                      top: "50%",
+                      height: SPLIT_BAR_SPACE,
+                      transform: "translateY(-50%)",
+                    }}
+                    value={splitBands.hRight}
+                    zoom={zoom}
+                    reach={(headerW + cols.total) * (zoom / 100)}
+                    pane={box.width - splitGeometry.x * (zoom / 100)}
+                    onScroll={scrollTabBand}
+                  />
+                )}
+              </>,
+              splitBarHost,
+            )
+          : null}
+
+        {/* The split lines themselves: a thin grip on each, which is how Excel
+            lets a split be moved after it is made. */}
+        {splitGeometry && split && (
+          <>
+            {splitGeometry.x > headerW && (
+              <div
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setSplitDrag("x");
+                }}
+                className="absolute top-0 z-10"
+                style={{
+                  left: (splitGeometry.x + SPLIT_BAR / 2) * (zoom / 100) - 5,
+                  width: 10,
+                  height: "100%",
+                  cursor: "col-resize",
+                }}
+              />
+            )}
+            {splitGeometry.y > headerH && (
+              <div
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setSplitDrag("y");
+                }}
+                className="absolute left-0 z-10"
+                style={{
+                  top: (splitGeometry.y + SPLIT_BAR / 2) * (zoom / 100) - 5,
+                  height: 10,
+                  width: "100%",
+                  cursor: "row-resize",
+                }}
+              />
+            )}
+          </>
+        )}
 
         {/*
           The filter buttons. They are React, so they cannot be painted; they

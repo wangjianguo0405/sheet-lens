@@ -19,6 +19,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Hint } from "@/components/Hint";
 import { copyText } from "@/lib/clipboard";
 import { toast } from "sonner";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -226,6 +227,12 @@ export function FileTabs({
         onMouseDown={(event) => {
           if (event.button === 1) event.preventDefault();
         }}
+        // A double press on the strip's own empty tail opens another workbook,
+        // the same as the "+" beside it. Only the strip itself counts: a tab
+        // under the pointer is a tab, and its double press is its own gesture.
+        onDoubleClick={(event) => {
+          if (event.target === strip.current) onNew();
+        }}
         className="flex min-w-0 flex-1 items-stretch overflow-x-auto"
       >
         {tabs.map((tab, index) => {
@@ -245,14 +252,15 @@ export function FileTabs({
                   )}
                   onAuxClick={middleClose(() => onClose(tab.path))}
                 >
-                  <button
-                    type="button"
-                    className="truncate"
-                    title={tab.path}
-                    onClick={() => onSelect(tab.path)}
-                  >
-                    {tab.fileName}
-                  </button>
+                  <Hint label={tab.path}>
+                    <button
+                      type="button"
+                      className="truncate"
+                      onClick={() => onSelect(tab.path)}
+                    >
+                      {tab.fileName}
+                    </button>
+                  </Hint>
                   <button
                     type="button"
                     data-tab-close
@@ -386,17 +394,18 @@ export function FileTabs({
       */}
       {overflowing && (
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              ref={more}
-              type="button"
-              aria-label={t("tabs.list")}
-              title={t("tabs.list")}
-              className="flex shrink-0 items-center border-l border-border px-2 text-muted-foreground hover:bg-accent/40 hover:text-foreground"
-            >
-              <ChevronDown className="size-3.5" />
-            </button>
-          </DropdownMenuTrigger>
+          <Hint label={t("tabs.list")}>
+            <DropdownMenuTrigger asChild>
+              <button
+                ref={more}
+                type="button"
+                aria-label={t("tabs.list")}
+                className="flex shrink-0 items-center border-l border-border px-2 text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+              >
+                <ChevronDown className="size-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+          </Hint>
           <DropdownMenuContent align="end" className="min-w-56">
             <DropdownMenuLabel className="text-[10px]">
               {t("tabs.list")}
@@ -425,15 +434,16 @@ export function FileTabs({
         </DropdownMenu>
       )}
 
-      <button
-        type="button"
-        aria-label={t("tabs.openAnother")}
-        title={t("tabs.openAnother")}
-        onClick={onNew}
-        className="flex shrink-0 items-center border-l border-border px-2 text-muted-foreground hover:bg-accent/40 hover:text-foreground"
-      >
-        <Plus className="size-3.5" />
-      </button>
+      <Hint label={t("tabs.openAnother")}>
+        <button
+          type="button"
+          aria-label={t("tabs.openAnother")}
+          onClick={onNew}
+          className="flex shrink-0 items-center border-l border-border px-2 text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+        >
+          <Plus className="size-3.5" />
+        </button>
+      </Hint>
     </div>
   );
 }
@@ -473,20 +483,21 @@ function Row({
       <span className="min-w-0 flex-1 truncate" title={title ?? label}>
         {label}
       </span>
-      <button
-        type="button"
-        aria-label={closeLabel}
-        title={closeLabel}
-        onPointerDown={keep}
-        onPointerUp={keep}
-        onClick={(event) => {
-          keep(event);
-          onClose();
-        }}
-        className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
-        <X className="size-3" />
-      </button>
+      <Hint label={closeLabel}>
+        <button
+          type="button"
+          aria-label={closeLabel}
+          onPointerDown={keep}
+          onPointerUp={keep}
+          onClick={(event) => {
+            keep(event);
+            onClose();
+          }}
+          className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <X className="size-3" />
+        </button>
+      </Hint>
     </DropdownMenuItem>
   );
 }

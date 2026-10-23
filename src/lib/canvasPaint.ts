@@ -71,6 +71,9 @@ import {
   FILTERED_INK,
   GUTTER_TINT,
   OUTSIDE_PRINT,
+  PRINT_AREA_INSIDE,
+  PRINT_AREA_INK,
+  PRINT_AREA_LINE,
   RING_W,
   SELECTION_WASH,
   indentPadding,
@@ -203,6 +206,12 @@ export interface GridView {
    */
   filtering: boolean;
   printArea: MergeRect | null;
+  /**
+   * Set for a split pane, whose print-area box is drawn here instead of by the
+   * single DOM overlay the ordinary view uses — that overlay knows only the
+   * scroller's offset, not each pane's.
+   */
+  canvasPrintArea?: boolean;
   /**
    * Where Page Break Preview's pages fall, and their numbers. Null in the
    * ordinary view and on a sheet with no page to break.
@@ -1606,6 +1615,51 @@ function paintPageBreaks(
 }
 
 /**
+ * The print area's box, drawn into the pane rather than by the one DOM overlay
+ * the ordinary view uses. That overlay is positioned from the scroller's own
+ * offset, and in a split each pane has a scroll of its own — left where it was,
+ * the box stayed put while the cells under it moved.
+ */
+function paintPrintArea(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  ox: number,
+  oy: number,
+): void {
+  const area = view.printArea;
+  if (!area) return;
+  const left = view.headerW;
+  const top = view.headerH;
+  const width = view.width - view.headerW;
+  const height = view.height - view.headerH;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, width, height);
+  ctx.clip();
+
+  const x0 = ox + (view.cols.offsets[area.col] ?? 0);
+  const x1 = ox + (view.cols.offsets[area.col + area.cols] ?? view.cols.total);
+  const firstRow = view.displayOfRow(area.row);
+  const lastRow = view.displayOfRow(area.row + area.rows);
+  const y0 = oy + (firstRow >= 0 ? (view.rows.offsets[firstRow] ?? 0) : 0);
+  const y1 =
+    oy +
+    (lastRow >= 0 ? (view.rows.offsets[lastRow] ?? view.rows.total) : view.rows.total);
+
+  ctx.strokeStyle = PRINT_AREA_INK;
+  ctx.lineWidth = PRINT_AREA_LINE;
+  ctx.setLineDash([]);
+  ctx.strokeRect(
+    x0 - PRINT_AREA_INSIDE,
+    y0 - PRINT_AREA_INSIDE,
+    Math.max(0, x1 - x0),
+    Math.max(0, y1 - y0),
+  );
+  ctx.restore();
+}
+
+/**
  * Paints a block's background inside the print area, leaving whatever part of it
  * lies outside under `paintBase`'s flood. The split matters for a block that
  * straddles the boundary — a Center-Across run of sixty cells starts inside the
@@ -1843,6 +1897,11 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
   // Over the cells: a break falls on a cell boundary, and Excel draws its line
   // across whatever the page holds rather than only where it is empty.
   if (page) paintPageBreaks(ctx, view, ox, oy, page);
+  // The box moves with its pane; in the ordinary view the DOM overlay draws
+  // it instead, at the scroller's own offset.
+  if (view.printArea && view.canvasPrintArea) {
+    paintPrintArea(ctx, view, ox, oy);
+  }
 
   paintGutterBands(ctx, view, ox, oy, rows);
   stats.styleResolved = view.styleCalls.resolved;

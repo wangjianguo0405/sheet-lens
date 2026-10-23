@@ -523,8 +523,15 @@ export interface Shape {
   custom?: ShapeCustom | null;
 }
 
-export interface SheetLayout {
-  /**
+/** A `state="split"` pane saved in the file; positions in 1/20 pt. */
+export interface SplitPane {
+  xTwips: number;
+  yTwips: number;
+  /** `topLeftCell`: the bottom-right pane's first visible cell. */
+  topLeft?: [number, number];
+}
+
+export interface SheetLayout {  /**
    * The sheet's real extent. calamine's range covers only cells that hold a
    * value, so it drops columns kept alive by styling or a merge.
    */
@@ -549,6 +556,12 @@ export interface SheetLayout {
   /** Rows and columns the sheet view freezes at the top and left. */
   frozenRows: number;
   frozenCols: number;
+  /**
+   * The file's own View > Split (ECMA-376 §18.3.1.66, `state="split"`). Its
+   * offsets are in 1/20 pt — positions, not frozen counts — so the renderer
+   * converts them once it has measured the columns.
+   */
+  split?: SplitPane | null;
   /** Column index -> width in characters, for columns the file sized explicitly. */
   colWidthsChars: Record<string, number>;
   /** Row index -> height in pixels, for rows the file sized explicitly. */

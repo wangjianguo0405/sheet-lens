@@ -6,8 +6,10 @@ import { useTranslation } from "react-i18next";
 
 import { CanvasGrid, type SheetViews } from "@/components/CanvasGrid";
 import { FileTabs } from "@/components/FileTabs";
+import { Hint } from "@/components/Hint";
 import { FormulaBar } from "@/components/FormulaBar";
 import { GoToDialog } from "@/components/GoToDialog";
+import { Ribbon } from "@/components/Ribbon";
 import { SearchPanel } from "@/components/SearchPanel";
 import { SheetList } from "@/components/SheetList";
 import { NoteList } from "@/components/NoteList";
@@ -22,7 +24,10 @@ import { Welcome } from "@/components/Welcome";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   ORIGIN,
+  activeArea,
+  areasOf,
   savedCursor,
+  selectionAnchor,
   selectionRef,
   selectionSize,
   type Selection,
@@ -36,24 +41,40 @@ import {
   type SheetPanels,
 } from "@/lib/sheetPanels";
 import {
+  folderKey,
+  folderName,
   forgetAllFiles,
   forgetFile,
   markFileMissing,
   readMissingFiles,
+  readPinnedFiles,
   readRecentFiles,
   rememberFile,
+  unpinDir,
+  unpinFile,
 } from "@/lib/recent";
 import { checkForUpdate, updateStatus, type UpdateStatus } from "@/lib/update";
 import { DEFAULT_ZOOM } from "@/lib/zoom";
 import { initialView, type ViewMode } from "@/lib/viewMode";
 import {
   closeWorkbook,
+  currentRegion,
   openWorkbook,
+  type AutoFilter,
   type Cell,
   type SearchHit,
   type SheetInfo,
   type WorkbookInfo,
 } from "@/lib/excel";
+import {
+  areaRect,
+  formatSelection,
+  type ActiveCellStyle,
+  type CellFormat,
+  type FilterPane,
+  type Formats,
+} from "@/lib/formats";
+import type { SessionOutline } from "@/lib/outline";
 
 interface Tab {
   info: WorkbookInfo;
@@ -66,6 +87,36 @@ interface Tab {
    * are never written back to the workbook.
    */
   marks: Map<string, string>;
+  /**
+   * The font and alignment the reader laid over the file from the ribbon,
+   * keyed by sheet and cell. Like the marks they are the app's own, and the
+   * tab closing is what forgets them.
+   */
+  formats: Formats;
+  /**
+   * The frozen bands the reader set or cleared from the ribbon, by sheet name.
+   * An entry beats the file's own `<pane>`; zero rows and zero columns means
+   * the file's freeze was cleared.
+   */
+  frozen: Record<string, { rows: number; cols: number }>;
+  /**
+   * The reader's filter decision by sheet: an area added from the ribbon, or a
+   * clearing of the file's own. Like everything else the ribbon changes, it
+   * lasts as long as the tab.
+   */
+  filterPane: Record<string, FilterPane>;
+  /**
+   * The outline groups the reader added or took away from the ribbon, by sheet.
+   * The file's own levels are untouched; this is laid over them while the tab
+   * is open, and forgotten with it.
+   */
+  sessionOutline: Record<string, SessionOutline>;
+  /**
+   * Where the reader split the sheet from the ribbon, by sheet name. Excel's
+   * split is per window rather than per sheet; keeping it per sheet is the
+   * same kind of decision the freeze and the filters already make.
+   */
+  splitAt: Record<string, { row: number; col: number }>;
   /**
    * The colours the reader gave the tabs, by sheet name. Excel writes a tab
    * colour into the file; this app has nowhere to write it, so the colour is its
@@ -161,6 +212,12 @@ export default function App() {
    */
   const [sheetGroup, setSheetGroup] = useState<{ names: string[]; anchor: string } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  /**
+   * Bumped by Ctrl+F. The panel focuses its input when it opens; this is what
+   * brings the keyboard back to it when it is already open, where pressing the
+   * shortcut used to put the whole panel away.
+   */
+  const [searchFocus, setSearchFocus] = useState(0);
   const [gotoOpen, setGotoOpen] = useState(false);
   /** The sheet dialog Excel opens from a tab's own menu — see `SheetTabs`. */
   const [unhideOpen, setUnhideOpen] = useState(false);
@@ -170,6 +227,11 @@ export default function App() {
    */
   const [unhideAt, setUnhideAt] = useState<UnhideAnchor | null>(null);
   const [detail, setDetail] = useState<Cell | null>(null);
+  /** The active cell's style as the ribbon shows it, overlays included. */
+  const [activeStyle, setActiveStyle] = useState<ActiveCellStyle | null>(null);
+  /** The frozen bands in force, and whether a filter is, as the grid reports them. */
+  const [frozenBands, setFrozenBands] = useState({ rows: 0, cols: 0 });
+  const [filterOn, setFilterOn] = useState(false);
   /** What the grid actually shows, which can exceed calamine's range. */
   const [extent, setExtent] = useState<{ rows: number; cols: number } | null>(
     null,
@@ -197,6 +259,14 @@ export default function App() {
    * has to be given the one thing it is a view of.
    */
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
+  /**
+   * The tab row's free area, when it is drawing a split's horizontal bars. The
+   * grid portals them there so they sit level with the tabs, as Excel draws
+   * them; with the tabs hidden it draws them itself and this stays null.
+   */
+  const [splitBarHost, setSplitBarHost] = useState<HTMLDivElement | null>(null);
+  /** Where the split line lies, in pixels from the grid's left edge. */
+  const [splitLineX, setSplitLineX] = useState<number | null>(null);
   /** View scale as a percentage, the way Excel names it. */
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [sheetListWidth, setSheetListWidth] = useState(DEFAULT_SHEET_LIST_W);
@@ -214,6 +284,15 @@ export default function App() {
   const [sheetBarWidth, setSheetBarWidth] = useState<number | null>(null);
   /** The row's own box, so a drag can start from the length it has now. */
   const sheetBarRef = useRef<HTMLDivElement>(null);
+  /**
+   * The same box, for a split's own horizontal bar to be drawn in: a split
+   * across rows only has one column band, so its bar lives where the sheet's
+   * ordinary one does and the splitter keeps working.
+   */
+  const setSheetBarHost = useCallback((element: HTMLDivElement | null) => {
+    sheetBarRef.current = element;
+    setSplitBarHost(element);
+  }, []);
   /** The search panel's box, so Escape can tell whose key it was. */
   const searchPanelRef = useRef<HTMLDivElement>(null);
   /**
@@ -288,6 +367,9 @@ export default function App() {
     ? (active.views[active.sheet] ?? active.defaultView)
     : "normal";
 
+  /** Whether the sheet on screen is split, which brings its own scrollbars. */
+  const splitOn = Boolean(active?.splitAt[active.sheet]);
+
   const openPaths = useCallback(async (paths: string[]) => {
     setError(null);
     for (const path of paths) {
@@ -313,6 +395,11 @@ export default function App() {
                   sheet: opening?.name ?? "",
                   cursors: cursor && opening ? { [opening.name]: cursor } : {},
                   marks: new Map(),
+                  formats: new Map(),
+                  frozen: {},
+                  filterPane: {},
+                  sessionOutline: {},
+                  splitAt: {},
                   tabColors: new Map(),
                   sheetHidden: new Map(),
                   defaultView: initialView(info, opening),
@@ -337,18 +424,35 @@ export default function App() {
     }
   }, []);
 
-  const handleOpen = useCallback(async () => {
-    try {
-      const picked = await openFileDialog({
-        multiple: true,
-        filters: [{ name: "Excel", extensions: EXCEL_EXTENSIONS }],
-      });
-      if (!picked) return;
-      await openPaths(Array.isArray(picked) ? picked : [picked]);
-    } catch (reason: unknown) {
-      setError(String(reason));
-    }
-  }, [openPaths]);
+  /** The picker's own flow, with an optional folder to start it in. */
+  const pickWorkbooks = useCallback(
+    async (defaultPath?: string) => {
+      try {
+        const picked = await openFileDialog({
+          ...(defaultPath ? { defaultPath } : {}),
+          multiple: true,
+          filters: [{ name: "Excel", extensions: EXCEL_EXTENSIONS }],
+        });
+        if (!picked) return;
+        await openPaths(Array.isArray(picked) ? picked : [picked]);
+      } catch (reason: unknown) {
+        setError(String(reason));
+      }
+    },
+    [openPaths],
+  );
+
+  const handleOpen = useCallback(() => pickWorkbooks(), [pickWorkbooks]);
+
+  /**
+   * A folder off the start page's own column: the same picker, already inside
+   * it. The folder button is not a second way to open a workbook — it is the
+   * same way, starting one step in.
+   */
+  const handleOpenInDirectory = useCallback(
+    (directory: string) => pickWorkbooks(directory),
+    [pickWorkbooks],
+  );
 
   /** A path off the File menu's list, which opens exactly as the picker would. */
   const handleOpenRecent = useCallback(
@@ -368,6 +472,22 @@ export default function App() {
     forgetAllFiles();
     setRecentFiles([]);
     setMissingFiles([]);
+  }, []);
+
+  /**
+   * Takes a folder off the start page with everything it held: its pin, and
+   * every workbook in it out of both file lists. The page lists a folder
+   * because its workbooks come from there, so dropping the folder alone would
+   * bring it back with the next workbook looked at.
+   */
+  const handleForgetFolder = useCallback((folder: string) => {
+    const key = folderKey(folder);
+    const inside = (path: string) => folderKey(folderName(path)) === key;
+    for (const path of readRecentFiles()) if (inside(path)) forgetFile(path);
+    for (const path of readPinnedFiles()) if (inside(path)) unpinFile(path);
+    unpinDir(folder);
+    setRecentFiles(readRecentFiles());
+    setMissingFiles(readMissingFiles());
   }, []);
 
   /**
@@ -576,6 +696,211 @@ export default function App() {
               }
             : tab,
         ),
+      );
+    },
+    [active, activeSheet, extent],
+  );
+
+  /**
+   * Lays a font or alignment choice over the selection, or takes the overlay
+   * off it when `patch` is null. It belongs to the tab and never reaches the
+   * file, exactly as a mark does.
+   */
+  const applyFormat = useCallback(
+    (patch: CellFormat | null) => {
+      if (!active || !activeSheet) return;
+      const bounds = extent ?? { rows: activeSheet.rows, cols: activeSheet.cols };
+      const cursor = active.cursors[active.sheet] ?? ORIGIN;
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.info.path === active.info.path
+            ? {
+                ...tab,
+                formats: formatSelection(tab.formats, active.sheet, cursor, bounds, patch),
+              }
+            : tab,
+        ),
+      );
+    },
+    [active, activeSheet, extent],
+  );
+
+  /**
+   * Freezes the sheet above and to the left of the active cell, or clears
+   * whatever freeze is in force — the file's included, which is why clearing
+   * is a zero-sized override rather than a return to null. Nothing reaches the
+   * workbook; the tab is what remembers it.
+   */
+  const applyFreeze = useCallback(
+    (next: { rows: number; cols: number }) => {
+      if (!active) return;
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.info.path === active.info.path
+            ? { ...tab, frozen: { ...tab.frozen, [tab.sheet]: next } }
+            : tab,
+        ),
+      );
+    },
+    [active],
+  );
+
+  /**
+   * Splits the sheet at the active cell, or closes the split. Like the freeze
+   * this is a view decision kept on the tab and never written to the file.
+   */
+  const applySplit = useCallback(
+    (next: { row: number; col: number } | null) => {
+      if (!active) return;
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.info.path !== active.info.path) return tab;
+          const splitAt = { ...tab.splitAt };
+          if (next) splitAt[tab.sheet] = next;
+          else delete splitAt[tab.sheet];
+          return { ...tab, splitAt };
+        }),
+      );
+    },
+    [active],
+  );
+
+  const toggleSplit = useCallback(() => {
+    if (!active) return;
+    if (active.splitAt[active.sheet]) {
+      applySplit(null);
+      return;
+    }
+    const at = selectionAnchor(active.cursors[active.sheet] ?? ORIGIN);
+    // The lines cross at the active cell's top-left corner. A freeze in the
+    // file is released first — it is not where the split goes.
+    //
+    // A cell in the first row or the first column splits only the other axis,
+    // as Excel does: there is nothing above row 1 or left of column A to put in
+    // a pane (measured: Split at A5 is SplitRow=4/SplitColumn=0, two panes). At
+    // A1 itself neither axis has anywhere to go and Excel halves the window
+    // instead, which the grid turns the zero/zero into.
+    applySplit({ row: at.row, col: at.col });
+    applyFreeze({ rows: 0, cols: 0 });
+    setFrozenBands({ rows: 0, cols: 0 });
+  }, [active, applySplit, applyFreeze]);
+
+  const toggleFreeze = useCallback(() => {
+    if (!active) return;
+    if (frozenBands.rows > 0 || frozenBands.cols > 0) {
+      applyFreeze({ rows: 0, cols: 0 });
+      return;
+    }
+    const at = selectionAnchor(active.cursors[active.sheet] ?? ORIGIN);
+    applyFreeze({ rows: at.row, cols: at.col });
+    // A frozen pane and a split are two answers to the same question, and
+    // Excel lets only one of them stand.
+    applySplit(null);
+  }, [active, frozenBands, applyFreeze, applySplit]);
+
+  /**
+   * Adds a filter over the current region, or takes away whichever filter is
+   * in force. Like the freeze, this is a decision kept on the tab.
+   */
+  const setFilterDecision = useCallback(
+    (pane: FilterPane) => {
+      if (!active) return;
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.info.path === active.info.path
+            ? { ...tab, filterPane: { ...tab.filterPane, [tab.sheet]: pane } }
+            : tab,
+        ),
+      );
+    },
+    [active],
+  );
+
+  const toggleFilter = useCallback(async () => {
+    if (!active) return;
+    if (filterOn) {
+      setFilterDecision({ area: null, off: true });
+      setFilterOn(false);
+      return;
+    }
+    const at = selectionAnchor(active.cursors[active.sheet] ?? ORIGIN);
+    try {
+      const block = await currentRegion(
+        active.info.path,
+        active.sheet,
+        at.row,
+        at.col,
+      );
+      const area: AutoFilter = {
+        row: block.row,
+        col: block.col,
+        rows: block.rows,
+        cols: block.cols,
+        applied: {},
+        custom: [],
+      };
+      setFilterDecision({ area, off: false });
+      setFilterOn(true);
+    } catch (reason: unknown) {
+      setError(String(reason));
+    }
+  }, [active, filterOn, setFilterDecision]);
+
+  /**
+   * Groups or ungroups the rows or columns the selection covers. Excel asks
+   * which axis from the Group dialog; the ribbon's little menu asks instead.
+   * Nothing is written back — the grid lays these over the file's own levels.
+   */
+  const applyOutline = useCallback(
+    (action: "rows" | "cols" | "ungroup") => {
+      if (!active || !activeSheet) return;
+      const bounds = extent ?? { rows: activeSheet.rows, cols: activeSheet.cols };
+      const cursor = active.cursors[active.sheet] ?? ORIGIN;
+      const rects = areasOf(cursor).map((area) => areaRect(area, bounds));
+      if (rects.length === 0) return;
+      const rowFrom = Math.min(...rects.map((rect) => rect.row));
+      const rowTo = Math.max(...rects.map((rect) => rect.row + rect.rows - 1));
+      const colFrom = Math.min(...rects.map((rect) => rect.col));
+      const colTo = Math.max(...rects.map((rect) => rect.col + rect.cols - 1));
+
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.info.path !== active.info.path) return tab;
+          const current: SessionOutline = tab.sessionOutline[tab.sheet] ?? {
+            added: { rows: [], cols: [] },
+            removed: { rows: [], cols: [] },
+          };
+          const next: SessionOutline = {
+            added: {
+              rows: [...current.added.rows],
+              cols: [...current.added.cols],
+            },
+            removed: {
+              rows: [...current.removed.rows],
+              cols: [...current.removed.cols],
+            },
+          };
+          if (action === "rows") {
+            next.added.rows.push([rowFrom, rowTo]);
+          } else if (action === "cols") {
+            next.added.cols.push([colFrom, colTo]);
+          } else {
+            // Ungroup follows the shape of what is selected, as Excel does: a
+            // run of whole rows is a row group, a run of columns a column one,
+            // and anything else is taken as rows — the axis a cell selection
+            // groups by default.
+            const axis = activeArea(cursor).kind === "column" ? "cols" : "rows";
+            const [from, to] = axis === "rows" ? [rowFrom, rowTo] : [colFrom, colTo];
+            next.removed[axis].push([from, to]);
+            next.added[axis] = next.added[axis].filter(
+              ([start, end]) => end < from || start > to,
+            );
+          }
+          return {
+            ...tab,
+            sessionOutline: { ...tab.sessionOutline, [tab.sheet]: next },
+          };
+        }),
       );
     },
     [active, activeSheet, extent],
@@ -913,9 +1238,25 @@ export default function App() {
     };
   }, []);
 
+  /**
+   * The shortcuts' own handlers, read through a ref: they are rebuilt with the
+   * selection they act on, and the window listener should not have to be taken
+   * off and put back on every time the cursor moves.
+   */
+  const keysRef = useRef({ tabs, activeStyle, applyFormat, toggleFilter });
+  keysRef.current = { tabs, activeStyle, applyFormat, toggleFilter };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      const { tabs, activeStyle, applyFormat, toggleFilter } = keysRef.current;
       if (!event.ctrlKey && !event.metaKey) {
+        // Excel's F5 opens Go To. Without this the webview would reload the
+        // page, which for a viewer means losing every open workbook's view.
+        if (event.key === "F5") {
+          event.preventDefault();
+          if (activePath) setGotoOpen(true);
+          return;
+        }
         if (event.key === "Escape") {
           // Escape puts the panel away only from the panel's own row — the
           // search field is where it is asked for. Everywhere else the key is
@@ -930,6 +1271,20 @@ export default function App() {
         return;
       }
       const key = event.key.toLowerCase();
+      // Ctrl+Tab walks the open workbooks, the way it walks Excel's windows;
+      // the sheet's own Ctrl+PageUp/Down belong to the grid.
+      if (key === "tab") {
+        event.preventDefault();
+        if (tabs.length < 2) return;
+        const at = tabs.findIndex((tab) => tab.info.path === activePath);
+        const forward = !event.shiftKey;
+        const next =
+          at < 0
+            ? (forward ? tabs[0] : tabs[tabs.length - 1])
+            : tabs[(at + (forward ? 1 : -1) + tabs.length) % tabs.length];
+        if (next) selectTab(next.info.path);
+        return;
+      }
       // Shift makes a different shortcut rather than the same one louder.
       // Without this, Ctrl+Shift+G answered as Ctrl+G and opened the ordinary
       // Go To, and every other letter did the same thing. Only Ctrl+Shift+D has
@@ -939,6 +1294,12 @@ export default function App() {
         if (key === "d" && import.meta.env.DEV) {
           event.preventDefault();
           toggleShapeDebug();
+        } else if (key === "l") {
+          // Excel's filter switch. It is the ribbon's own button: the key
+          // belongs to the sheet, not the cursor.
+          if (!activePath) return;
+          event.preventDefault();
+          void toggleFilter();
         }
         return;
       }
@@ -950,7 +1311,8 @@ export default function App() {
         case "f":
           if (!activePath) return;
           event.preventDefault();
-          setSearchOpen((open) => !open);
+          setSearchOpen(true);
+          setSearchFocus((n) => n + 1);
           break;
         case "g":
           if (!activePath) return;
@@ -962,6 +1324,22 @@ export default function App() {
           event.preventDefault();
           closeTab(activePath);
           break;
+        // Excel's typing keys, applied to what is selected. The formats are
+        // the session's own — the ribbon writes the same ones. A field being
+        // typed into keeps them: that text is not the sheet's.
+        case "b":
+        case "i":
+        case "u": {
+          if (!activePath) return;
+          const target = event.target as HTMLElement | null;
+          if (target?.closest("input, textarea, [contenteditable]")) return;
+          event.preventDefault();
+          const cell = activeStyle?.style ?? null;
+          if (key === "b") applyFormat({ bold: !(cell?.bold ?? false) });
+          else if (key === "i") applyFormat({ italic: !(cell?.italic ?? false) });
+          else applyFormat({ underline: cell?.underline ? null : "single" });
+          break;
+        }
         default:
           break;
       }
@@ -969,7 +1347,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleOpen, activePath, closeTab]);
+  }, [handleOpen, activePath, closeTab, selectTab]);
 
   const startPanelDrag = useCallback(
     (which: "sheetList" | "search", event: React.PointerEvent<HTMLDivElement>) => {
@@ -1066,20 +1444,19 @@ export default function App() {
   }, [draggingPanel, sheetBarRoom]);
 
   return (
-    <TooltipProvider>
+    // Nothing here is a tooltip you can hover into — they are one line of text
+    // beside the control. Turning that off also lets the pointer walk straight
+    // from one small icon to its neighbour: with it on, Radix holds the old
+    // hint open and treats the pointer as still on its way to it, so the next
+    // icon's hint never appears.
+    <TooltipProvider disableHoverableContent>
       {/* Dragging anywhere — a block of cells, a gutter, the sheet list — must
           not smear a text selection across the chrome, so nothing is
           selectable by default and the few read-only strings opt back in. */}
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground select-none">
         <Toolbar
           onOpen={handleOpen}
-          onToggleSidebar={() => togglePanel("list")}
-          onToggleSheetTabs={() => togglePanel("tabs")}
-          sidebarOpen={panels.list}
-          sheetTabsOpen={panels.tabs}
           hasWorkbook={active !== null}
-          onMark={applyMark}
-          markColor={markColor}
           recentFiles={recentFiles}
           missingFiles={missingFiles}
           onOpenRecent={handleOpenRecent}
@@ -1107,6 +1484,28 @@ export default function App() {
           onCloseHome={closeHome}
           onNew={handleNewTab}
         />
+
+        {/* Under the file tabs, and only while one is showing: the start page
+            has no sheet for any of this to act on. */}
+        {active && activeSheet && (
+          <Ribbon
+            sidebarOpen={panels.list}
+            onToggleSidebar={() => togglePanel("list")}
+            sheetTabsOpen={panels.tabs}
+            onToggleSheetTabs={() => togglePanel("tabs")}
+            onMark={applyMark}
+            markColor={markColor}
+            activeStyle={activeStyle}
+            onFormat={applyFormat}
+            frozen={frozenBands.rows > 0 || frozenBands.cols > 0}
+            onToggleFreeze={toggleFreeze}
+            splitOn={splitOn}
+            onToggleSplit={toggleSplit}
+            filterOn={filterOn}
+            onToggleFilter={() => void toggleFilter()}
+            onGroup={applyOutline}
+          />
+        )}
 
         {error && active && (
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-destructive/10 px-3 py-1 text-[11px] text-destructive">
@@ -1168,14 +1567,15 @@ export default function App() {
                       )}
                     </div>
                   </div>
-                  <div
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label={t("app.resizeSheetList")}
-                    title={t("app.dragToResize")}
-                    onPointerDown={(event) => startPanelDrag("sheetList", event)}
-                    className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
-                  />
+                  <Hint label={t("app.dragToResize")}>
+                    <div
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={t("app.resizeSheetList")}
+                      onPointerDown={(event) => startPanelDrag("sheetList", event)}
+                      className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
+                    />
+                  </Hint>
                 </>
               )}
 
@@ -1191,6 +1591,15 @@ export default function App() {
                     views={views.current}
                     selection={selection}
                     marks={active.marks}
+                    formats={active.formats}
+                    onActiveStyle={setActiveStyle}
+                    frozen={active.frozen[active.sheet] ?? null}
+                    onFrozenChange={setFrozenBands}
+                    filterPane={active.filterPane[active.sheet] ?? null}
+                    onFilterState={setFilterOn}
+                    sessionOutline={active.sessionOutline[active.sheet] ?? null}
+                    split={active.splitAt[active.sheet] ?? null}
+                    onSplitChange={applySplit}
                     onMark={applyMark}
                     markColor={markColor}
                     onSelect={handleSelect}
@@ -1202,7 +1611,10 @@ export default function App() {
                     previewNote={notePreview}
                     zoom={zoom}
                     onZoom={setZoom}
-                    hideHScroll={panels.tabs}
+                    hideHScroll={panels.tabs || splitOn}
+                    tabsShown={panels.tabs}
+                    splitBarHost={panels.tabs && splitOn ? splitBarHost : null}
+                    onSplitLine={setSplitLineX}
                     pageBreak={view === "pageBreak"}
                     onViewport={setViewport}
                     bar={
@@ -1230,34 +1642,49 @@ export default function App() {
                     }}
                     onReorder={handleReorderSheets}
                     hiddenCount={hiddenNames.length}
+                    splitX={splitOn ? splitLineX : null}
                     trailing={
+                      // A split with two column bands draws its own pair here,
+                      // segmented at the line. With one band — a split across
+                      // rows only — the row stays exactly as it is: splitter,
+                      // share and all. Only what drives the bar changes, from
+                      // the view to the band, so choosing a row split does not
+                      // move the scrollbar.
+                      splitOn && splitLineX != null ? (
+                        <div
+                          ref={setSplitBarHost}
+                          className="relative min-w-0 flex-1 self-stretch"
+                        />
+                      ) : (
                       <>
                         {/* Excel's splitter, at the left end of the sheet's
                             scrollbar: drag it and the scrollbar is longer or
                             shorter, the tabs taking what is left. Excel draws
                             it as a column of dots, so it can be found at all. */}
-                        <div
-                          role="separator"
-                          aria-orientation="vertical"
-                          aria-label={t("app.resizeSheetScrollBar")}
-                          title={t("app.dragToResize")}
-                          onPointerDown={startSheetBarDrag}
-                          className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#107C41]/40 hover:text-foreground"
-                        >
-                          <EllipsisVertical className="size-3" />
-                        </div>
+                        <Hint label={t("app.dragToResize")}>
+                          <div
+                            role="separator"
+                            aria-orientation="vertical"
+                            aria-label={t("app.resizeSheetScrollBar")}
+                            onPointerDown={startSheetBarDrag}
+                            className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#107C41]/40 hover:text-foreground"
+                          >
+                            <EllipsisVertical className="size-3" />
+                          </div>
+                        </Hint>
                         {/* A share of the row until it is dragged, so the length
                             is the row's rather than a number chosen here. The
                             bar is centred in the row; only the engine knows how
                             tall it is, so `SheetScrollBar` measures that. */}
                         <div
-                          ref={sheetBarRef}
-                          className={`flex min-w-24 shrink items-center ${sheetBarWidth === null ? "w-1/3" : ""}`}
+                          ref={setSheetBarHost}
+                          className={`relative flex min-w-24 shrink items-center ${sheetBarWidth === null ? "w-1/3" : ""}`}
                           style={sheetBarWidth === null ? undefined : { width: sheetBarWidth }}
                         >
-                          <SheetScrollBar viewport={viewport} />
+                          {splitOn ? null : <SheetScrollBar viewport={viewport} />}
                         </div>
                       </>
+                      )
                     }
                   />
                 )}
@@ -1266,18 +1693,20 @@ export default function App() {
               {searchOpen && (
                 <>
                   {/* Mirrors the sheet list's handle, on the other side. */}
-                  <div
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label={t("app.resizeSearch")}
-                    title={t("app.dragToResize")}
-                    onPointerDown={(event) => startPanelDrag("search", event)}
-                    className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
-                  />
+                  <Hint label={t("app.dragToResize")}>
+                    <div
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={t("app.resizeSearch")}
+                      onPointerDown={(event) => startPanelDrag("search", event)}
+                      className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
+                    />
+                  </Hint>
                   <div ref={searchPanelRef} className="shrink-0" style={{ width: searchWidth }}>
                     <SearchPanel
                       path={active.info.path}
                       sheet={active.sheet}
+                      focusSignal={searchFocus}
                       onJump={handleJump}
                       onClose={() => setSearchOpen(false)}
                     />
@@ -1292,6 +1721,8 @@ export default function App() {
           ) : (
             <Welcome
               onOpen={handleOpen}
+              onOpenDirectory={handleOpenInDirectory}
+              onForgetFolder={handleForgetFolder}
               recentFiles={recentFiles}
               missingFiles={missingFiles}
               onOpenRecent={handleOpenRecent}
