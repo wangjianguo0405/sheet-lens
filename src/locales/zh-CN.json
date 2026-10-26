@@ -67,7 +67,7 @@
     "open": "打开工作簿",
     "history": "最近打开的文件",
     "pinned": "固定文件",
-    "pinnedDirs": "目录固定",
+    "pinnedDirs": "固定目录",
     "folders": "目录",
     "noFolders": "打开过工作簿的目录会出现在这里。",
     "pinDir": "把 {{name}} 固定在首页",
