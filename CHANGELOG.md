@@ -12,6 +12,17 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.9] - 2026-10-26
+
+### Added
+
+- The sheet list on the left keeps the sheets you fix at its top, under a heading of their own: a workbook of many sheets no longer means hunting for the same two every time. A fixed sheet is remembered for its workbook, and nothing in the file changes
+
+### Improved
+
+- A fixed sheet is the same gesture as a fixed workbook: the heading over the fixed ones, the most recently fixed at the top, and the pin showing under the pointer and staying once it is fixed
+- The start page's two columns scroll at one height, so their two lists no longer end at different points
+
 ## [1.0.8] - 2026-10-23
 
 ### Added
