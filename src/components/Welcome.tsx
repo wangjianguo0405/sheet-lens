@@ -21,6 +21,15 @@ import { Hint } from "@/components/Hint";
 const HISTORY_SHOWN = 6;
 
 /**
+ * How tall a list may grow before it scrolls.
+ *
+ * The two columns stand side by side with a rule between them, so a folder
+ * list that scrolls at one height and a workbook list at another read as two
+ * pages rather than as one. They share the cap.
+ */
+const LIST_MAX = "max-h-96";
+
+/**
  * What a thing you can click is coloured: the Excel green the app already marks
  * its live parts with — the current sheet's rule, the panel splitters. A row
  * that is the same grey as the prose around it does not read as a link, and
@@ -363,7 +372,7 @@ export function Welcome({
                   <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                     {t("welcome.pinnedDirs")}
                   </h2>
-                  <ul className="mt-1 max-h-96 overflow-y-auto">
+                  <ul className={cn("mt-1 overflow-y-auto", LIST_MAX)}>
                     {pinnedDirs.map((path) => (
                       <DirRow
                         key={`fixed:${path}`}
@@ -387,7 +396,7 @@ export function Welcome({
                   >
                     {t("welcome.folders")}
                   </h2>
-                  <ul className="mt-1 max-h-96 overflow-y-auto">
+                  <ul className={cn("mt-1 overflow-y-auto", LIST_MAX)}>
                     {folderHistory.map((path) => (
                       <DirRow
                         key={`recent:${path}`}
@@ -424,7 +433,7 @@ export function Welcome({
                     <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                       {t("welcome.pinned")}
                     </h2>
-                    <ul className="mt-1 max-h-64 overflow-y-auto">
+                    <ul className={cn("mt-1 overflow-y-auto", LIST_MAX)}>
                       {pinnedFiles.map((path) => (
                         <Row
                           key={path}
@@ -449,7 +458,7 @@ export function Welcome({
                     >
                       {t("welcome.history")}
                     </h2>
-                    <ul className="mt-1 max-h-64 overflow-y-auto">
+                    <ul className={cn("mt-1 overflow-y-auto", LIST_MAX)}>
                       {(fullHistory ? history : history.slice(0, HISTORY_SHOWN)).map(
                         (path) => (
                           <Row
