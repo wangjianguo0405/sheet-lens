@@ -2087,17 +2087,20 @@ function paintCellSurface(
   const mark = view.markAt(sheetRow, col);
   const key = keyInSheet(view, sheetRow, col);
 
-  if (mark) {
-    // A mark is the reader's own, so it takes the cell whole — over the file's
-    // fill and over the print-area shade both.
-    fill(ctx, x, y, w, h, mark);
-  } else if (view.outsidePrint(sheetRow, col)) {
-    // Already OUTSIDE_PRINT: paintBase flooded the whole cell area with it and
-    // then cut the page rect back out in the sheet's own background, so shading
-    // the cell again would only repaint the colour that is underneath it. The
-    // one page rect that cannot be measured — its first row hidden — leaves no
-    // flood to lean on, and that cell does have to shade itself.
+  if (view.outsidePrint(sheetRow, col)) {
+    // Outside the print area the page-break shade is the whole of what Excel
+    // draws — a review mark included, so a row filled with the bucket stops at
+    // the print area's edge instead of running on across the sheet. Already
+    // OUTSIDE_PRINT: paintBase flooded the whole cell area with it and then cut
+    // the page rect back out in the sheet's own background, so shading the cell
+    // again would only repaint the colour that is underneath it. The one page
+    // rect that cannot be measured — its first row hidden — leaves no flood to
+    // lean on, and that cell does have to shade itself.
     if (!page) fill(ctx, x, y, w, h, OUTSIDE_PRINT);
+  } else if (mark) {
+    // A mark is the reader's own, so it takes the cell whole — over the file's
+    // fill, and over its pattern.
+    fill(ctx, x, y, w, h, mark);
   } else if (own) {
     fill(ctx, x, y, w, h, own);
   } else if (pattern) {
