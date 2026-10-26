@@ -140,6 +140,8 @@
     "scrollRight": "向右滚动工作表标签",
     "count_other": "{{count}} 个工作表",
     "none": "没有匹配的工作表。",
+    "pin": "固定工作表 {{name}}",
+    "unpin": "取消固定工作表 {{name}}",
     "tabColor": "工作表标签颜色",
     "tabColorNone": "无颜色",
     "moreLeft": "显示左侧隐藏的工作表标签",

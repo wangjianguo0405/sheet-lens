@@ -141,6 +141,8 @@
     "count_one": "{{count}} sheet",
     "count_other": "{{count}} sheets",
     "none": "No sheets match.",
+    "pin": "Pin sheet {{name}}",
+    "unpin": "Unpin sheet {{name}}",
     "tabColor": "Sheet tab colour",
     "tabColorNone": "No colour",
     "moreLeft": "Show the hidden sheet tabs to the left",

@@ -1552,6 +1552,7 @@ export default function App() {
                     <div className="min-h-0 flex-1">
                       {sidebarTab === "sheets" ? (
                         <SheetList
+                          path={active.info.path}
                           sheets={active.info.sheets}
                           hidden={new Set(hiddenNames)}
                           active={active.sheet}

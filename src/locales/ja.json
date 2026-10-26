@@ -140,6 +140,8 @@
     "scrollRight": "シート見出しを右へスクロール",
     "count_other": "{{count}} シート",
     "none": "一致するシートはありません。",
+    "pin": "シート「{{name}}」を固定",
+    "unpin": "シート「{{name}}」の固定を解除",
     "tabColor": "シート見出しの色",
     "tabColorNone": "色なし",
     "moreLeft": "左に隠れているシート見出しを表示",
