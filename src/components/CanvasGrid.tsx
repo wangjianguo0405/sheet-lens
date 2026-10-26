@@ -843,6 +843,13 @@ export function CanvasGrid({
   /** The clipped cell area the shapes and the print mark live in. */
   const pageLayerRef = useRef<HTMLDivElement>(null);
   const shapesInnerRef = useRef<HTMLDivElement>(null);
+  /**
+   * The same layers under a split: one per pane, because each pane is its own
+   * view of the sheet. A shape is drawn in every pane and moved by that pane's
+   * own scroll — Excel splits a shape that straddles the line across both.
+   */
+  const paneLayers = useRef(new Map<PaneId, HTMLDivElement>());
+  const paneInners = useRef(new Map<PaneId, HTMLDivElement>());
   const markRef = useRef<HTMLDivElement>(null);
   /**
    * How long the last frame took, per layer, for the hidden readout. A
@@ -1547,6 +1554,27 @@ export function CanvasGrid({
     if (x <= headerW && y <= headerH) return null;
     return { x, y };
   }, [split, displayOfRow, rows, cols, headerW, headerH, colCount]);
+
+  /**
+   * The panes the shape layers are laid out in: none when the window is not
+   * split, and otherwise one per pane, each with its own scroll. Worked out
+   * here rather than in the paint pass because the layers are React elements
+   * and there has to be one of them per pane before anything is painted.
+   */
+  const shapePanes = useMemo(() => {
+    if (!splitGeometry || !splitBands || box.width <= 0 || box.height <= 0) return null;
+    const z = zoom / 100;
+    return splitPanes(
+      splitGeometry,
+      box.width / z,
+      box.height / z - (tabsShown ? 0 : SPLIT_BAR_SPACE),
+      splitBands,
+      headerW,
+      headerH,
+    ).filter((pane) => pane.clip.w > 0 && pane.clip.h > 0);
+  }, [splitGeometry, splitBands, box, zoom, tabsShown, headerW, headerH]);
+  /** How many shape layers there are, which the wheel listener has to follow. */
+  const paneCount = shapePanes?.length ?? 0;
 
   /**
    * Every band starts where the sheet was left, which is what Excel does when
@@ -2750,20 +2778,23 @@ export function CanvasGrid({
    * anything but the grid.
    */
   useEffect(() => {
-    const layer = pageLayerRef.current;
-    if (!layer) return;
+    const layers = [
+      pageLayerRef.current,
+      ...paneLayers.current.values(),
+    ].filter((layer): layer is HTMLDivElement => layer !== null);
+    if (layers.length === 0) return;
     const onWheel = (event: WheelEvent) => {
       const el = viewportRef.current;
       if (!el) return;
       event.preventDefault();
       event.stopPropagation();
-      if (event.ctrlKey || event.metaKey) {
+      const forward = () =>
         el.dispatchEvent(
           new WheelEvent("wheel", {
             deltaX: event.deltaX,
             deltaY: event.deltaY,
             deltaMode: event.deltaMode,
-            ctrlKey: true,
+            ctrlKey: event.ctrlKey,
             shiftKey: event.shiftKey,
             altKey: event.altKey,
             metaKey: event.metaKey,
@@ -2773,13 +2804,21 @@ export function CanvasGrid({
             cancelable: true,
           }),
         );
+      // A split's panes are not the scroller's own position, so the wheel goes
+      // to the grid, which answers it for the pane under the pointer. Without
+      // this, scrolling over a shape moved the scroller instead — and the
+      // layers follow the scroller only when there is no split.
+      if (event.ctrlKey || event.metaKey || splitGeometry) {
+        forward();
         return;
       }
       el.scrollBy({ left: event.deltaX, top: event.deltaY });
     };
-    layer.addEventListener("wheel", onWheel, { passive: false });
-    return () => layer.removeEventListener("wheel", onWheel);
-  }, [layoutReady]);
+    for (const layer of layers) layer.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      for (const layer of layers) layer.removeEventListener("wheel", onWheel);
+    };
+  }, [layoutReady, splitGeometry, paneCount]);
 
   // A zoom change resizes the spacer, so the scroller has to be put back on the
   // same sheet coordinates or the view jumps.
@@ -4033,73 +4072,79 @@ export function CanvasGrid({
       }
 
       // The shapes and the print mark are DOM too, and the canvas underneath
-      // them does not scroll — so this layer is translated and scaled with the
-      // scroll rather than being scrolled, and clipped to the cell area so a
-      // shape near row 0 cannot paint over the gutters.
-      const page = pageLayerRef.current;
-      if (page) {
-        /**
-         * Shapes are drawn in the scroller's own pane. Under a split the other
-         * panes have their own offsets, and one layer cannot be in four places
-         * at once — so it is clipped to the bottom-right pane rather than left
-         * floating over content it does not belong to.
-         */
-        const shapePane = splitLayout?.find((pane) => pane.id === splitFocus);
-        const gutterX = shapePane ? shapePane.clip.x * view.zoom : headerW * view.zoom;
-        const gutterY = shapePane ? shapePane.clip.y * view.zoom : headerH * view.zoom;
-        page.style.left = `${gutterX}px`;
-        page.style.top = `${gutterY}px`;
-        page.style.width = `${
-          shapePane
-            ? Math.max(0, shapePane.clip.w * view.zoom)
-            : Math.max(0, view.width * view.zoom - gutterX)
-        }px`;
-        page.style.height = `${
-          shapePane
-            ? Math.max(0, shapePane.clip.h * view.zoom)
-            : Math.max(0, view.height * view.zoom - gutterY)
-        }px`;
-
-        const inner = shapesInnerRef.current;
-        if (inner) {
+      // them does not scroll — so these layers are translated and scaled with
+      // the scroll rather than being scrolled, and clipped to the cell area so
+      // a shape near row 0 cannot paint over the gutters.
+      /**
+       * Under a split every pane carries a layer of its own, moved by that
+       * pane's scroll and clipped to its own rectangle — which is how Excel
+       * draws them: a shape that straddles the split line shows on both sides
+       * of it, each half following its pane.
+       */
+      if (splitLayout) {
+        for (const pane of splitLayout) {
+          const page = paneLayers.current.get(pane.id);
+          const inner = paneInners.current.get(pane.id);
+          if (!page || !inner) continue;
+          page.style.left = `${pane.clip.x * view.zoom}px`;
+          page.style.top = `${pane.clip.y * view.zoom}px`;
+          page.style.width = `${Math.max(0, pane.clip.w * view.zoom)}px`;
+          page.style.height = `${Math.max(0, pane.clip.h * view.zoom)}px`;
           inner.style.transform =
-            `translate(${-view.scrollLeft * view.zoom}px, ${-view.scrollTop * view.zoom}px) ` +
+            `translate(${-pane.offset.left * view.zoom}px, ${-pane.offset.top * view.zoom}px) ` +
             `scale(${view.zoom})`;
-          // A shape anchored in a frozen band is pinned to it: the layer was
-          // just moved by the scroll, so those shapes add it back. The layer
-          // does not re-render on a scroll, which is why this is done here
-          // rather than with a prop.
-          if (freeze.rows > 0 || freeze.cols > 0) {
-            for (const node of inner.querySelectorAll<SVGGElement>("[data-shape-x]")) {
-              const x = Number(node.dataset.shapeX ?? 0);
-              const y = Number(node.dataset.shapeY ?? 0);
-              const dx = node.hasAttribute("data-pin-x") ? view.scrollLeft : 0;
-              const dy = node.hasAttribute("data-pin-y") ? view.scrollTop : 0;
-              node.setAttribute("transform", `translate(${x + dx} ${y + dy})`);
+        }
+      } else {
+        const page = pageLayerRef.current;
+        if (page) {
+          const gutterX = headerW * view.zoom;
+          const gutterY = headerH * view.zoom;
+          page.style.left = `${gutterX}px`;
+          page.style.top = `${gutterY}px`;
+          page.style.width = `${Math.max(0, view.width * view.zoom - gutterX)}px`;
+          page.style.height = `${Math.max(0, view.height * view.zoom - gutterY)}px`;
+
+          const inner = shapesInnerRef.current;
+          if (inner) {
+            inner.style.transform =
+              `translate(${-view.scrollLeft * view.zoom}px, ${-view.scrollTop * view.zoom}px) ` +
+              `scale(${view.zoom})`;
+            // A shape anchored in a frozen band is pinned to it: the layer was
+            // just moved by the scroll, so those shapes add it back. The layer
+            // does not re-render on a scroll, which is why this is done here
+            // rather than with a prop.
+            if (freeze.rows > 0 || freeze.cols > 0) {
+              for (const node of inner.querySelectorAll<SVGGElement>("[data-shape-x]")) {
+                const x = Number(node.dataset.shapeX ?? 0);
+                const y = Number(node.dataset.shapeY ?? 0);
+                const dx = node.hasAttribute("data-pin-x") ? view.scrollLeft : 0;
+                const dy = node.hasAttribute("data-pin-y") ? view.scrollTop : 0;
+                node.setAttribute("transform", `translate(${x + dx} ${y + dy})`);
+              }
             }
           }
-        }
 
-        const mark = markRef.current;
-        if (mark) {
-          const area = view.printArea;
-          if (area && !splitGeometry) {
-            const x0 = printColX(area.col);
-            const y0 = printRowY(area.row);
-            mark.style.display = "";
-            // The line straddles the boundary: shifted out by its inner share
-            // and widened by the whole line, so it lands as Excel measured it —
-            // 1 screen pixel inside the print area and 2 outside.
-            mark.style.left = `${(x0 - view.scrollLeft) * view.zoom - PRINT_AREA_INSIDE}px`;
-            mark.style.top = `${(y0 - view.scrollTop) * view.zoom - PRINT_AREA_INSIDE}px`;
-            mark.style.width = `${
-              (printColX(area.col + area.cols) - x0) * view.zoom + PRINT_AREA_LINE
-            }px`;
-            mark.style.height = `${
-              (printRowY(area.row + area.rows) - y0) * view.zoom + PRINT_AREA_LINE
-            }px`;
-          } else {
-            mark.style.display = "none";
+          const mark = markRef.current;
+          if (mark) {
+            const area = view.printArea;
+            if (area && !splitGeometry) {
+              const x0 = printColX(area.col);
+              const y0 = printRowY(area.row);
+              mark.style.display = "";
+              // The line straddles the boundary: shifted out by its inner share
+              // and widened by the whole line, so it lands as Excel measured it —
+              // 1 screen pixel inside the print area and 2 outside.
+              mark.style.left = `${(x0 - view.scrollLeft) * view.zoom - PRINT_AREA_INSIDE}px`;
+              mark.style.top = `${(y0 - view.scrollTop) * view.zoom - PRINT_AREA_INSIDE}px`;
+              mark.style.width = `${
+                (printColX(area.col + area.cols) - x0) * view.zoom + PRINT_AREA_LINE
+              }px`;
+              mark.style.height = `${
+                (printRowY(area.row + area.rows) - y0) * view.zoom + PRINT_AREA_LINE
+              }px`;
+            } else {
+              mark.style.display = "none";
+            }
           }
         }
       }
@@ -5953,66 +5998,87 @@ export function CanvasGrid({
           it to the cell area is what keeps a shape anchored at row 0 from
           painting over the column headers.
         */}
-        {layout && layoutReady && (
-          <div
-            ref={pageLayerRef}
-            className="pointer-events-none absolute top-0 left-0 overflow-hidden"
-            /*
-             * A shape's text names no font of its own in the file, so it renders
-             * in whatever it inherits — and this layer is a sibling of the
-             * scroller rather than a child of it, so without this declaration it
-             * inherits the app's UI font instead of the workbook's. That changes
-             * every glyph and, on a line that sits near the box's width, where
-             * the line breaks. The scroller that used to hold this layer carried
-             * the same three declarations.
-             */
-            style={{
-              fontFamily: fontFamily
-                ? `"${fontFamily}", ${CJK_FALLBACK}, system-ui, sans-serif`
-                : undefined,
-              fontSize,
-              lineHeight: LINE_HEIGHT,
-            }}
-          >
+        {layout && layoutReady &&
+          (shapePanes ?? [null]).map((pane) => (
             <div
-              ref={shapesInnerRef}
-              className="absolute top-0 left-0"
-              style={{ transformOrigin: "0 0" }}
-            >
-              <ShapeLayer
-                shapes={layout.drawings}
-                colX={shapeColX}
-                rowY={shapeRowY}
-                // The layer is clipped to the sheet's own extent, not to the
-                // scroller. An `<svg>` hides what falls outside it, which is
-                // what keeps a picture wider than the sheet's last column — or
-                // a shape whose cell the parser could only approximate — from
-                // spilling out into the blank area the scroller runs on into;
-                // sized from the scroller, every one of them showed again.
-                width={usedColsTotal}
-                height={usedRowsTotal}
-                path={path}
-                frozenRows={layout.frozenRows ?? 0}
-                frozenCols={layout.frozenCols ?? 0}
-                zoom={zoom / 100}
-                offsets={shapeOffsets}
-                onMoveShape={moveShape}
-                // Null unless the readout is on, so the layer's `memo` still
-                // holds in normal use — the facts change with the selection.
-                debug={debugFacts}
-              />
-            </div>
-            <div
-              ref={markRef}
-              aria-hidden
-              className="pointer-events-none absolute"
+              key={pane?.id ?? "all"}
+              ref={
+                pane
+                  ? (el) => {
+                      if (el) paneLayers.current.set(pane.id, el);
+                      else paneLayers.current.delete(pane.id);
+                    }
+                  : pageLayerRef
+              }
+              className="pointer-events-none absolute top-0 left-0 overflow-hidden"
+              /*
+               * A shape's text names no font of its own in the file, so it renders
+               * in whatever it inherits — and this layer is a sibling of the
+               * scroller rather than a child of it, so without this declaration it
+               * inherits the app's UI font instead of the workbook's. That changes
+               * every glyph and, on a line that sits near the box's width, where
+               * the line breaks. The scroller that used to hold this layer carried
+               * the same three declarations.
+               */
               style={{
-                display: "none",
-                border: `${PRINT_AREA_LINE}px solid ${PRINT_AREA_INK}`,
+                fontFamily: fontFamily
+                  ? `"${fontFamily}", ${CJK_FALLBACK}, system-ui, sans-serif`
+                  : undefined,
+                fontSize,
+                lineHeight: LINE_HEIGHT,
               }}
-            />
-          </div>
-        )}
+            >
+              <div
+                ref={
+                  pane
+                    ? (el) => {
+                        if (el) paneInners.current.set(pane.id, el);
+                        else paneInners.current.delete(pane.id);
+                      }
+                    : shapesInnerRef
+                }
+                className="absolute top-0 left-0"
+                style={{ transformOrigin: "0 0" }}
+              >
+                <ShapeLayer
+                  shapes={layout.drawings}
+                  colX={shapeColX}
+                  rowY={shapeRowY}
+                  // The layer is clipped to the sheet's own extent, not to the
+                  // scroller. An `<svg>` hides what falls outside it, which is
+                  // what keeps a picture wider than the sheet's last column — or
+                  // a shape whose cell the parser could only approximate — from
+                  // spilling out into the blank area the scroller runs on into;
+                  // sized from the scroller, every one of them showed again.
+                  width={usedColsTotal}
+                  height={usedRowsTotal}
+                  path={path}
+                  frozenRows={layout.frozenRows ?? 0}
+                  frozenCols={layout.frozenCols ?? 0}
+                  zoom={zoom / 100}
+                  offsets={shapeOffsets}
+                  onMoveShape={moveShape}
+                  // Null unless the readout is on, so the layer's `memo` still
+                  // holds in normal use — the facts change with the selection.
+                  // Only the first layer reports them: under a split the rest
+                  // are the same sheet drawn again.
+                  debug={pane && pane.id !== shapePanes?.[0]?.id ? null : debugFacts}
+                />
+              </div>
+              {/* The print mark is the sheet's, not a pane's, and a split hides it. */}
+              {!pane && (
+                <div
+                  ref={markRef}
+                  aria-hidden
+                  className="pointer-events-none absolute"
+                  style={{
+                    display: "none",
+                    border: `${PRINT_AREA_LINE}px solid ${PRINT_AREA_INK}`,
+                  }}
+                />
+              )}
+            </div>
+          ))}
 
         {tip && (
           <div
