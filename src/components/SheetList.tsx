@@ -101,8 +101,11 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
           setDragging(sheet.name);
         }}
         onDragOver={(event) => {
-          if (!isPinned || !dragging || dragging === sheet.name) return;
+          if (!dragging) return;
+          // Taken for the whole list, so the pointer keeps its move cursor
+          // instead of the no-drop one wherever a sheet may not land.
           event.preventDefault();
+          if (!isPinned || dragging === sheet.name) return;
           const box = event.currentTarget.getBoundingClientRect();
           setDropAt({
             name: sheet.name,
@@ -207,7 +210,21 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-px p-1">
+        <div
+          className="flex flex-col gap-px p-1"
+          // A drag is taken anywhere in the list — the gaps and the sheets
+          // below the fixed run included — so the pointer never turns into the
+          // no-drop cursor over a place a sheet simply may not be put.
+          onDragOver={(event) => {
+            if (dragging) event.preventDefault();
+          }}
+          onDrop={(event) => {
+            if (!dragging) return;
+            event.preventDefault();
+            setDragging(null);
+            setDropAt(null);
+          }}
+        >
           {/* The fixed ones are their own run above the count, as the start
               page's pinned files are above its history. */}
           {fixed.length > 0 && (
