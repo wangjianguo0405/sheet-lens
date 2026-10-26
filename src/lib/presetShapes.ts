@@ -25,8 +25,13 @@ interface Preset {
   av: [string, string][];
   /** Named values the path is built from, in dependency order. */
   gd: [string, string][];
-  /** The paths themselves. `f`/`s` are the element's own fill and stroke hints. */
-  p: { f: string | null; s: string | null; c: (string | number)[][] }[];
+  /**
+   * The paths themselves. `f`/`s` are the element's own fill and stroke hints,
+   * and `w`/`h` the coordinate space the numbers are written in — a flow-chart
+   * symbol is defined in a 6×6 or 21600×21600 box that maps onto the shape's,
+   * not in the shape's own pixels.
+   */
+  p: { w?: number; h?: number; f: string | null; s: string | null; c: (string | number)[][] }[];
 }
 
 /** One path of a preset, resolved for a box. */
@@ -266,6 +271,13 @@ export function resolvePreset(
 
   const out: PresetPath[] = [];
   for (const path of preset.p) {
+    // A path may be written in a space of its own, which maps onto the box —
+    // the same rule `resolveCustom` follows for a file's own geometry. Every
+    // other preset is in the shape's pixels already, where the factors are 1.
+    const pw = path.w && path.w > 0 ? path.w : w;
+    const ph = path.h && path.h > 0 ? path.h : h;
+    const sx = w / pw;
+    const sy = h / ph;
     let d = "";
     for (const command of path.c) {
       const [kind, ...values] = command as [string, ...(string | number)[]];
@@ -273,33 +285,34 @@ export function resolvePreset(
       switch (kind) {
         case "m": {
           const [x, y] = point(tokens, 0, vars);
-          d += `M${round(x)} ${round(y)}`;
+          d += `M${round(x * sx)} ${round(y * sy)}`;
           break;
         }
         case "l": {
           const [x, y] = point(tokens, 0, vars);
-          d += `L${round(x)} ${round(y)}`;
+          d += `L${round(x * sx)} ${round(y * sy)}`;
           break;
         }
         case "c": {
           const [x1, y1, i] = point(tokens, 0, vars);
           const [x2, y2, j] = point(tokens, i, vars);
           const [x, y] = point(tokens, j, vars);
-          d += `C${round(x1)} ${round(y1)} ${round(x2)} ${round(y2)} ${round(x)} ${round(y)}`;
+          d += `C${round(x1 * sx)} ${round(y1 * sy)} ${round(x2 * sx)} ${round(y2 * sy)} ${round(x * sx)} ${round(y * sy)}`;
           break;
         }
         case "q": {
           const [x1, y1, i] = point(tokens, 0, vars);
           const [x, y] = point(tokens, i, vars);
-          d += `Q${round(x1)} ${round(y1)} ${round(x)} ${round(y)}`;
+          d += `Q${round(x1 * sx)} ${round(y1 * sy)} ${round(x * sx)} ${round(y * sy)}`;
           break;
         }
         case "a": {
           // `arcTo` names an ellipse's radii and the angles it runs between, and
           // starts from wherever the path already is. Converting means working
-          // back to the centre it implies, then out to the far end.
-          const rx = formula(tokens[0], vars);
-          const ry = formula(tokens[1], vars);
+          // back to the centre it implies, then out to the far end. The radii
+          // scale with the space; the angles do not.
+          const rx = formula(tokens[0], vars) * sx;
+          const ry = formula(tokens[1], vars) * sy;
           const start = formula(tokens[2], vars) * ANGLE;
           const sweep = formula(tokens[3], vars) * ANGLE;
           const [cx, cy] = currentPoint(d, vars);
