@@ -7,7 +7,12 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { copyText } from "@/lib/clipboard";
 import type { SheetInfo } from "@/lib/excel";
-import { pinSheet, readPinnedSheets, unpinSheet } from "@/lib/sheetPins";
+import {
+  pinSheet,
+  readPinnedSheets,
+  setPinnedSheets,
+  unpinSheet,
+} from "@/lib/sheetPins";
 import { cn } from "@/lib/utils";
 
 /** A group's heading, the same type the start page puts over its own lists. */
@@ -57,6 +62,21 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
   const togglePin = (name: string) =>
     setPins(pinned.has(name) ? unpinSheet(path, name) : pinSheet(path, name));
 
+  /** The fixed sheet under the pointer's drag, and the edge it would land on. */
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropAt, setDropAt] = useState<{ name: string; after: boolean } | null>(null);
+
+  /**
+   * Carries a pulled sheet to where it was let go. Only the fixed run is
+   * ordered by hand — the rest follows the workbook, which is not this app's
+   * to change — so this moves a name within the fixed list and writes it back.
+   */
+  const moveFixed = (from: string, to: string, after: boolean) => {
+    const order = pins.filter((name) => name !== from);
+    order.splice(order.indexOf(to) + (after ? 1 : 0), 0, from);
+    setPins(setPinnedSheets(path, order));
+  };
+
   const row = (sheet: SheetInfo) => {
     /**
      * A hidden sheet is listed but goes nowhere: it has no tab to select
@@ -69,12 +89,46 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
     const pinLabel = t(isPinned ? "sheets.unpin" : "sheets.pin", {
       name: sheet.name,
     });
+    const edge = dropAt?.name === sheet.name ? (dropAt.after ? "after" : "before") : null;
     return (
       <div
         key={sheet.name}
+        // Only the fixed run is reordered by hand; the rest follows the file.
+        draggable={isPinned}
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", sheet.name);
+          setDragging(sheet.name);
+        }}
+        onDragOver={(event) => {
+          if (!isPinned || !dragging || dragging === sheet.name) return;
+          event.preventDefault();
+          const box = event.currentTarget.getBoundingClientRect();
+          setDropAt({
+            name: sheet.name,
+            after: event.clientY > box.top + box.height / 2,
+          });
+        }}
+        onDrop={(event) => {
+          if (!isPinned) return;
+          event.preventDefault();
+          if (dragging && dragging !== sheet.name) {
+            moveFixed(dragging, sheet.name, dropAt?.after ?? false);
+          }
+          setDragging(null);
+          setDropAt(null);
+        }}
+        onDragEnd={() => {
+          setDragging(null);
+          setDropAt(null);
+        }}
         className={cn(
           "group flex items-center rounded-sm transition-colors",
           sheet.name === active ? "bg-accent" : !isHidden && "hover:bg-accent/50",
+          isPinned && "cursor-grab",
+          dragging === sheet.name && "opacity-40",
+          edge === "before" && "shadow-[inset_0_2px_0_0_#107C41]",
+          edge === "after" && "shadow-[inset_0_-2px_0_0_#107C41]",
         )}
       >
         <button

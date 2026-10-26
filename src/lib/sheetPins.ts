@@ -43,22 +43,30 @@ export function readPinnedSheets(path: string): string[] {
   return readAll()[folderKey(path)] ?? [];
 }
 
-/** Fixes `name` in `path`, and hands back the names the list should show now. */
-export function pinSheet(path: string, name: string): string[] {
-  const next = [name, ...readPinnedSheets(path).filter((other) => other !== name)];
-  writeAll({ ...readAll(), [folderKey(path)]: next });
-  return next;
-}
-
-/** Unfixes it, and hands back what is left. The sheet itself is untouched. */
-export function unpinSheet(path: string, name: string): string[] {
+/** Writes the fixed order for `path` as given, and hands it back. */
+export function setPinnedSheets(path: string, names: string[]): string[] {
   const all = readAll();
   const key = folderKey(path);
-  const next = (all[key] ?? []).filter((other) => other !== name);
-  if (next.length > 0) writeAll({ ...all, [key]: next });
+  if (names.length > 0) writeAll({ ...all, [key]: names });
   else {
     delete all[key];
     writeAll(all);
   }
-  return next;
+  return names;
+}
+
+/** Fixes `name` in `path`, and hands back the names the list should show now. */
+export function pinSheet(path: string, name: string): string[] {
+  return setPinnedSheets(path, [
+    name,
+    ...readPinnedSheets(path).filter((other) => other !== name),
+  ]);
+}
+
+/** Unfixes it, and hands back what is left. The sheet itself is untouched. */
+export function unpinSheet(path: string, name: string): string[] {
+  return setPinnedSheets(
+    path,
+    readPinnedSheets(path).filter((other) => other !== name),
+  );
 }
