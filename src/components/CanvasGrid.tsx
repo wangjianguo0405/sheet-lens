@@ -98,7 +98,7 @@ import {
   toFilters,
   toOverrides,
 } from "@/lib/gridGeometry";
-import { MAX_ZOOM, MIN_ZOOM, stepZoom } from "@/lib/zoom";
+import { MAX_ZOOM, MIN_ZOOM, DEFAULT_ZOOM, stepZoom } from "@/lib/zoom";
 import { paginate } from "@/lib/pagination";
 import {
   activeArea,
@@ -179,6 +179,15 @@ export interface SheetView {
    * yet, which is not the same as having cleared it.
    */
   filters?: Map<number, string[]>;
+  /**
+   * The zoom the reader left this sheet at, in percent.
+   *
+   * Excel keeps a zoom per sheet rather than per window: zooming one sheet and
+   * switching to another shows that one at its own zoom. Absent means the
+   * reader has not zoomed this sheet, so the file's `zoomScale` — or 100% — is
+   * where it opens.
+   */
+  zoom?: number;
   /**
    * The column widths and row heights the reader has dragged or fitted here.
    *
@@ -925,6 +934,11 @@ export function CanvasGrid({
    * opens where Excel left it, not at A1.
    */
   const pendingView = useRef<[number, number] | null>(null);
+  /**
+   * Set while a sheet's own zoom is being put back, so the effect that keeps
+   * the reader's zoom does not record it as one of theirs.
+   */
+  const restoringZoom = useRef(false);
   /**
    * A drag-select in progress, and whether it has moved.
    *
@@ -2598,11 +2612,18 @@ export function CanvasGrid({
         // from the cursor instead dragged a sheet whose cursor sat far out to
         // the right until that cell was the first visible column.
         setScrollTo(saved?.top ?? 0, saved?.left ?? 0);
-        // The file's own view of this sheet: Excel opens it at the zoom and
-        // scroll position it was left at, so a reader with no session view of
-        // the sheet lands where Excel would.
-        if (parsed.zoomScale) {
-          onZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, parsed.zoomScale)));
+        // The sheet's own zoom, the way Excel keeps one per sheet: what the
+        // reader left it at, then the file's `zoomScale`, then 100%. Without
+        // the last two a sheet was drawn at whatever zoom the one before it
+        // was — and that carried across workbooks too, so zooming one sheet
+        // left every file opened after it at that zoom.
+        const wanted = Math.min(
+          MAX_ZOOM,
+          Math.max(MIN_ZOOM, saved?.zoom ?? parsed.zoomScale ?? DEFAULT_ZOOM),
+        );
+        if (wanted !== zoomRef.current * 100) {
+          restoringZoom.current = true;
+          onZoom(wanted);
         }
         pendingView.current = saved ? null : (parsed.viewTopLeft ?? null);
 
@@ -2654,6 +2675,24 @@ export function CanvasGrid({
     });
     views.set(path, bySheet);
   }, [views, path, sheet.name, colOverrides, rowOverrides, hiddenOverride]);
+
+  /**
+   * The zoom the reader chose, kept for this sheet the way Excel keeps one per
+   * sheet — leaving a sheet for another, or for another workbook and back,
+   * returns it at the zoom it was left at. A zoom that arrives with the sheet
+   * is not a choice of theirs and is not recorded: it was put back above.
+   */
+  useEffect(() => {
+    if (restoringZoom.current) {
+      restoringZoom.current = false;
+      return;
+    }
+    if (seeded.current !== sheetIdentity(path, sheet.name)) return;
+    const bySheet = views.get(path) ?? new Map<string, SheetView>();
+    const view = bySheet.get(sheet.name) ?? { ...scrollRef.current };
+    bySheet.set(sheet.name, { ...view, zoom });
+    views.set(path, bySheet);
+  }, [zoom]);
 
   /** Moves the scroller to a sheet-space offset, through the paint refs. */
   const setScrollTo = useCallback((top: number, left: number) => {
