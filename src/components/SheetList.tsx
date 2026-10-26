@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pin, PinOff, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -62,9 +62,23 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
   const togglePin = (name: string) =>
     setPins(pinned.has(name) ? unpinSheet(path, name) : pinSheet(path, name));
 
-  /** The fixed sheet under the pointer's drag, and the edge it would land on. */
+  /** The fixed sheet under the pointer, and the edge it would land on. */
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<{ name: string; after: boolean } | null>(null);
+  /**
+   * A press on a fixed row that may yet become a drag: which sheet, where the
+   * pointer went down, and whether it has moved far enough to be one.
+   *
+   * The pointer rather than the platform's own drag, because a window that
+   * takes dropped files — which is how a workbook is opened — makes the
+   * webview refuse one: the platform's drag turns into a no-drop cursor and
+   * never starts. The window follows the pointer, since it leaves the row at
+   * once.
+   */
+  const press = useRef<{ name: string; y: number; moved: boolean } | null>(null);
+  const over = useRef<{ name: string; after: boolean } | null>(null);
+  /** Set by a drop, so letting go of the drag is not also a click on the sheet. */
+  const dropped = useRef(false);
 
   /**
    * Carries a pulled sheet to where it was let go. Only the fixed run is
@@ -76,6 +90,68 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
     order.splice(order.indexOf(to) + (after ? 1 : 0), 0, from);
     setPins(setPinnedSheets(path, order));
   };
+  // The window's listeners are bound once, so they reach the newest of this.
+  const moveRef = useRef(moveFixed);
+  moveRef.current = moveFixed;
+
+  useEffect(() => {
+    /** The fixed row the pointer is over, and which half of it. */
+    const edgeAt = (clientY: number) => {
+      const rows = [...document.querySelectorAll<HTMLElement>("[data-fixed]")];
+      for (const row of rows) {
+        const box = row.getBoundingClientRect();
+        if (clientY < box.top || clientY > box.bottom) continue;
+        return {
+          name: row.dataset.fixed!,
+          after: clientY > box.top + box.height / 2,
+        };
+      }
+      // Past the last of them, the run's own end is the place.
+      const last = rows[rows.length - 1];
+      if (last && clientY > last.getBoundingClientRect().bottom) {
+        return { name: last.dataset.fixed!, after: true };
+      }
+      return null;
+    };
+
+    const onMove = (event: PointerEvent) => {
+      const state = press.current;
+      if (!state) return;
+      if (!state.moved) {
+        if (Math.abs(event.clientY - state.y) < 4) return;
+        state.moved = true;
+        setDragging(state.name);
+        document.body.style.cursor = "grabbing";
+      }
+      over.current = edgeAt(event.clientY);
+      setDropAt(over.current);
+    };
+
+    const onUp = () => {
+      const state = press.current;
+      press.current = null;
+      document.body.style.cursor = "";
+      if (!state?.moved) return;
+      const edge = over.current;
+      if (edge && edge.name !== state.name) {
+        moveRef.current(state.name, edge.name, edge.after);
+      }
+      over.current = null;
+      dropped.current = true;
+      setDragging(null);
+      setDropAt(null);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      document.body.style.cursor = "";
+    };
+  }, []);
 
   const row = (sheet: SheetInfo) => {
     /**
@@ -94,36 +170,13 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
       <div
         key={sheet.name}
         // Only the fixed run is reordered by hand; the rest follows the file.
-        draggable={isPinned}
-        onDragStart={(event) => {
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData("text/plain", sheet.name);
-          setDragging(sheet.name);
-        }}
-        onDragOver={(event) => {
-          if (!dragging) return;
-          // Taken for the whole list, so the pointer keeps its move cursor
-          // instead of the no-drop one wherever a sheet may not land.
-          event.preventDefault();
-          if (!isPinned || dragging === sheet.name) return;
-          const box = event.currentTarget.getBoundingClientRect();
-          setDropAt({
-            name: sheet.name,
-            after: event.clientY > box.top + box.height / 2,
-          });
-        }}
-        onDrop={(event) => {
+        data-fixed={isPinned ? sheet.name : undefined}
+        onPointerDown={(event) => {
           if (!isPinned) return;
-          event.preventDefault();
-          if (dragging && dragging !== sheet.name) {
-            moveFixed(dragging, sheet.name, dropAt?.after ?? false);
-          }
-          setDragging(null);
-          setDropAt(null);
-        }}
-        onDragEnd={() => {
-          setDragging(null);
-          setDropAt(null);
+          // The pin is its own control; pulling a sheet is the row's.
+          if ((event.target as HTMLElement).closest("[data-sheet-pin]")) return;
+          dropped.current = false;
+          press.current = { name: sheet.name, y: event.clientY, moved: false };
         }}
         className={cn(
           "group flex items-center rounded-sm transition-colors",
@@ -137,7 +190,11 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
         <button
           type="button"
           disabled={isHidden}
-          onClick={() => onSelect(sheet.name)}
+          onClick={() => {
+            // Letting go of a pull is not a click on the sheet under it.
+            if (dropped.current) return;
+            onSelect(sheet.name);
+          }}
           onKeyDown={(event) => {
             // Ctrl+C on a focused sheet copies its name, matching the
             // "copy whatever is selected" behaviour of the grid.
@@ -168,6 +225,7 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
           <Hint label={pinLabel}>
             <button
               type="button"
+              data-sheet-pin
               onClick={() => togglePin(sheet.name)}
               aria-label={pinLabel}
               aria-pressed={isPinned}
@@ -210,21 +268,7 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div
-          className="flex flex-col gap-px p-1"
-          // A drag is taken anywhere in the list — the gaps and the sheets
-          // below the fixed run included — so the pointer never turns into the
-          // no-drop cursor over a place a sheet simply may not be put.
-          onDragOver={(event) => {
-            if (dragging) event.preventDefault();
-          }}
-          onDrop={(event) => {
-            if (!dragging) return;
-            event.preventDefault();
-            setDragging(null);
-            setDropAt(null);
-          }}
-        >
+        <div className="flex flex-col gap-px p-1">
           {/* The fixed ones are their own run above the count, as the start
               page's pinned files are above its history. */}
           {fixed.length > 0 && (
