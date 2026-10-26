@@ -77,7 +77,6 @@
     "pin": "Pin {{name}} to the start page",
     "unpin": "Unpin {{name}}",
     "noHistory": "No workbook has been opened yet.",
-    "more": "More",
     "shortcuts": "Keyboard shortcuts",
     "sc": {
       "open": "Open a workbook",

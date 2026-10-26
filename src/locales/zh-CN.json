@@ -77,7 +77,6 @@
     "pin": "把 {{name}} 固定在首页",
     "unpin": "取消固定 {{name}}",
     "noHistory": "还没有打开过工作簿。",
-    "more": "更多",
     "shortcuts": "快捷键",
     "sc": {
       "open": "打开工作簿",

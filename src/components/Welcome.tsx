@@ -1,5 +1,5 @@
 import { FileSpreadsheet, Folder, FolderOpen, Pin, PinOff, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -17,17 +17,20 @@ import {
 import { cn } from "@/lib/utils";
 import { Hint } from "@/components/Hint";
 
-/** How much of the history shows before the rest goes behind "More". */
-const HISTORY_SHOWN = 6;
-
 /**
- * How tall a list may grow before it scrolls.
+ * One column's height, and how much of it the fixed run may take.
  *
- * The two columns stand side by side with a rule between them, so a folder
- * list that scrolls at one height and a workbook list at another read as two
- * pages rather than as one. They share the cap.
+ * A column is the scroller, not each list under it: one fixed folder beside
+ * ten fixed workbooks has to come out the same height, and a heading that
+ * scrolls away is no heading. The fixed run sticks at the top of its column,
+ * so what was fixed stays in reach while the rest goes by — but only for a
+ * share of the column, or a long enough fixed list would leave nothing below.
  */
-const LIST_MAX = "max-h-96";
+const COLUMN_HEIGHT = "md:h-72";
+const FIXED_HEIGHT = "max-h-40";
+
+/** A group's heading, as every column of the page draws it. */
+const HEAD = "text-[10px] font-medium tracking-wide text-muted-foreground uppercase";
 
 /**
  * What a thing you can click is coloured: the Excel green the app already marks
@@ -218,6 +221,62 @@ function DirRow({
 }
 
 /**
+ * One column of the page: the fixed run at its top, then the rest.
+ *
+ * The column scrolls rather than each of its lists, so the two columns come
+ * out one height whatever they hold, and the fixed run stays under its heading
+ * at the top while the rest of the column goes by. The rows are handed in
+ * made, since a folder and a workbook are drawn differently.
+ */
+function Column({
+  fixed,
+  rest,
+  fixedLabel,
+  restLabel,
+  emptyLabel,
+}: {
+  /** The rows of the fixed run, in the order they are to be drawn. */
+  fixed: ReactNode[];
+  /** Everything else, under its own heading. */
+  rest: ReactNode[];
+  fixedLabel: string;
+  restLabel: string;
+  /** What the column says when it has nothing to list at all. */
+  emptyLabel: string;
+}) {
+  return (
+    <div className={cn("overflow-y-auto", COLUMN_HEIGHT)}>
+      {fixed.length === 0 && rest.length === 0 ? (
+        <>
+          <h2 className={HEAD}>{restLabel}</h2>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">{emptyLabel}</p>
+        </>
+      ) : (
+        <>
+          {fixed.length > 0 && (
+            <div
+              className={cn(
+                "sticky top-0 z-10 bg-background",
+                rest.length > 0 && "border-b border-border pb-1",
+              )}
+            >
+              <h2 className={HEAD}>{fixedLabel}</h2>
+              <ul className={cn("mt-1 overflow-y-auto", FIXED_HEIGHT)}>{fixed}</ul>
+            </div>
+          )}
+          {rest.length > 0 && (
+            <>
+              <h2 className={cn(HEAD, fixed.length > 0 && "mt-3")}>{restLabel}</h2>
+              <ul className="mt-1">{rest}</ul>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * The start page: what to open on the left, and what the keyboard does on the
  * right.
  *
@@ -239,8 +298,6 @@ export function Welcome({
 }: WelcomeProps) {
   const { t } = useTranslation();
   const missing = new Set(missingFiles);
-  /** Whether the history is showing all of itself or only the newest few. */
-  const [fullHistory, setFullHistory] = useState(false);
   /** Fixed by hand, and kept here rather than in the app: the page is its only
       reader, and mounting reads the list back out of storage. */
   const [pinnedFiles, setPinnedFiles] = useState<string[]>(readPinnedFiles);
@@ -352,156 +409,72 @@ export function Welcome({
           )}
         </header>
 
-        <div className="flex flex-col gap-6 md:flex-row md:flex-wrap md:gap-0">
+        <div className="flex flex-col gap-6 md:flex-row md:gap-0">
           {/* Where to look. A workbook is often one of a folder's several, and
               finding the folder is the part that takes the walking. */}
           <section className="min-w-0 shrink-0 md:w-80 md:border-r md:border-border md:pr-6">
-          {pinnedDirs.length === 0 && folderHistory.length === 0 ? (
-            <>
-              <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                {t("welcome.folders")}
-              </h2>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                {t("welcome.noFolders")}
-              </p>
-            </>
-          ) : (
-            <>
-              {pinnedDirs.length > 0 && (
-                <>
-                  <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                    {t("welcome.pinnedDirs")}
-                  </h2>
-                  <ul className={cn("mt-1 overflow-y-auto", LIST_MAX)}>
-                    {pinnedDirs.map((path) => (
-                      <DirRow
-                        key={`fixed:${path}`}
-                        path={path}
-                        fixed
-                        onOpen={onOpenDirectory}
-                        onToggle={togglePinnedDir}
-                        onForget={forgetFolder}
-                      />
-                    ))}
-                  </ul>
-                </>
-              )}
-              {folderHistory.length > 0 && (
-                <>
-                  <h2
-                    className={cn(
-                      "text-[10px] font-medium tracking-wide text-muted-foreground uppercase",
-                      pinnedDirs.length > 0 && "mt-5",
-                    )}
-                  >
-                    {t("welcome.folders")}
-                  </h2>
-                  <ul className={cn("mt-1 overflow-y-auto", LIST_MAX)}>
-                    {folderHistory.map((path) => (
-                      <DirRow
-                        key={`recent:${path}`}
-                        path={path}
-                        fixed={false}
-                        onOpen={onOpenDirectory}
-                        onToggle={togglePinnedDir}
-                        onForget={forgetFolder}
-                      />
-                    ))}
-                  </ul>
-                </>
-              )}
-            </>
-          )}
-        </section>
-
-        {/* What to open */}
-        <div className="min-w-0 flex-1 md:px-6">
-          <section className="md:min-w-0 md:flex-1">
-            {pinnedFiles.length === 0 && history.length === 0 ? (
-              <>
-                <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                  {t("welcome.history")}
-                </h2>
-                <p className="mt-1.5 text-[11px] text-muted-foreground">
-                  {t("welcome.noHistory")}
-                </p>
-              </>
-            ) : (
-              <>
-                {pinnedFiles.length > 0 && (
-                  <>
-                    <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                      {t("welcome.pinned")}
-                    </h2>
-                    <ul className={cn("mt-1 overflow-y-auto", LIST_MAX)}>
-                      {pinnedFiles.map((path) => (
-                        <Row
-                          key={path}
-                          path={path}
-                          missing={missing.has(path)}
-                          fixed
-                          onOpen={onOpenRecent}
-                          onToggle={togglePinned}
-                        />
-                      ))}
-                    </ul>
-                  </>
-                )}
-
-                {history.length > 0 && (
-                  <>
-                    <h2
-                      className={cn(
-                        "text-[10px] font-medium tracking-wide text-muted-foreground uppercase",
-                        pinnedFiles.length > 0 && "mt-5",
-                      )}
-                    >
-                      {t("welcome.history")}
-                    </h2>
-                    <ul className={cn("mt-1 overflow-y-auto", LIST_MAX)}>
-                      {(fullHistory ? history : history.slice(0, HISTORY_SHOWN)).map(
-                        (path) => (
-                          <Row
-                            key={path}
-                            path={path}
-                            missing={missing.has(path)}
-                            fixed={false}
-                            onOpen={onOpenRecent}
-                            onToggle={togglePinned}
-                          />
-                        ),
-                      )}
-                      {/* The rest of the list, for a history with more in it
-                          than the page has room for — the File menu's own
-                          "More", in the one place a reader is already looking
-                          at the list. */}
-                      {!fullHistory && history.length > HISTORY_SHOWN && (
-                        <li>
-                          <button
-                            type="button"
-                            onClick={() => setFullHistory(true)}
-                            className={cn(
-                              LINK,
-                              "flex w-full items-center rounded-sm px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
-                            )}
-                          >
-                            {t("welcome.more")}
-                          </button>
-                        </li>
-                      )}
-                    </ul>
-                  </>
-                )}
-              </>
-            )}
+            <Column
+              fixed={pinnedDirs.map((path) => (
+                <DirRow
+                  key={`fixed:${path}`}
+                  path={path}
+                  fixed
+                  onOpen={onOpenDirectory}
+                  onToggle={togglePinnedDir}
+                  onForget={forgetFolder}
+                />
+              ))}
+              rest={folderHistory.map((path) => (
+                <DirRow
+                  key={`recent:${path}`}
+                  path={path}
+                  fixed={false}
+                  onOpen={onOpenDirectory}
+                  onToggle={togglePinnedDir}
+                  onForget={forgetFolder}
+                />
+              ))}
+              fixedLabel={t("welcome.pinnedDirs")}
+              restLabel={t("welcome.folders")}
+              emptyLabel={t("welcome.noFolders")}
+            />
           </section>
+
+          {/* What to open */}
+          <div className="min-w-0 flex-1 md:px-6">
+            <Column
+              fixed={pinnedFiles.map((path) => (
+                <Row
+                  key={path}
+                  path={path}
+                  missing={missing.has(path)}
+                  fixed
+                  onOpen={onOpenRecent}
+                  onToggle={togglePinned}
+                />
+              ))}
+              rest={history.map((path) => (
+                <Row
+                  key={path}
+                  path={path}
+                  missing={missing.has(path)}
+                  fixed={false}
+                  onOpen={onOpenRecent}
+                  onToggle={togglePinned}
+                />
+              ))}
+              fixedLabel={t("welcome.pinned")}
+              restLabel={t("welcome.history")}
+              emptyLabel={t("welcome.noHistory")}
+            />
+          </div>
         </div>
 
         {/* What the keyboard does, across the foot of the page: a rule above it
             holds it apart from the two lists, and its own three columns keep a
             list this long from running down the window. */}
-        <section className="min-w-0 shrink-0 border-t border-border pt-4 md:mt-6 md:w-full">
-          <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+        <section className="min-w-0 shrink-0 border-t border-border pt-4">
+          <h2 className={HEAD}>
             {t("welcome.shortcuts")}
           </h2>
           <div className="mt-1.5 grid gap-x-8 md:grid-cols-3">
@@ -528,7 +501,6 @@ export function Welcome({
             ))}
           </div>
         </section>
-        </div>
       </div>
     </div>
   );
