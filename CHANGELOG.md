@@ -12,6 +12,17 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.10] - 2026-10-26
+
+### Added
+
+- The fixed sheets in the sidebar's list can be dragged into the order you want them in; the rest of the list keeps the workbook's own order
+
+### Improved
+
+- The start page's two columns are one height whatever they hold, and scroll as a whole — the fixed run stays at the top of its column while the rest goes by
+- The start page's history is listed in full: the "More" step before the list would scroll is gone
+
 ## [1.0.9] - 2026-10-26
 
 ### Added
