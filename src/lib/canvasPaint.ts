@@ -269,6 +269,13 @@ function originY(view: GridView): number {
  */
 let fillRects = 0;
 
+/**
+ * The scale this pass draws at — `zoom × devicePixelRatio`, the factor the
+ * canvas transform applies. `fill` snaps to it, so both entry points set it
+ * from the transform they were handed before drawing anything.
+ */
+let paintScale = 1;
+
 function fill(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -280,7 +287,22 @@ function fill(
   if (w <= 0 || h <= 0) return;
   fillRects += 1;
   ctx.fillStyle = color;
-  ctx.fillRect(x, y, w, h);
+  /**
+   * Snapped to the device pixel grid, the way Excel's own drawing puts a fill
+   * down. Two neighbouring fills that end and begin on the same fractional
+   * edge each cover only part of that pixel, and whatever is underneath — the
+   * white page, the grey outside it — comes through as a hairline. That is why
+   * a band of filled cells at 125% reads as a grid of borders around them:
+   * the row heights and column widths no longer land on whole pixels. Both
+   * sides round the shared edge to the same pixel, so they meet instead.
+   */
+  const scale = paintScale;
+  const x0 = Math.round(x * scale);
+  const y0 = Math.round(y * scale);
+  const x1 = Math.round((x + w) * scale);
+  const y1 = Math.round((y + h) * scale);
+  if (x1 <= x0 || y1 <= y0) return;
+  ctx.fillRect(x0 / scale, y0 / scale, (x1 - x0) / scale, (y1 - y0) / scale);
 }
 
 /**
@@ -1817,6 +1839,8 @@ export function paintBase(ctx: CanvasRenderingContext2D, view: GridView): PaintS
   };
   const ox = originX(view);
   const oy = originY(view);
+  // The transform the caller set, which is what `fill` snaps to.
+  paintScale = ctx.getTransform().a || 1;
 
   ctx.clearRect(0, 0, view.width, view.height);
 
@@ -2587,6 +2611,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
   ctx.clearRect(0, 0, view.width, view.height);
   const ox = originX(view);
   const oy = originY(view);
+  paintScale = ctx.getTransform().a || 1;
   const rows = shownRows(view);
 
   // The overlay sits above the header bands, so a selected row or column that
