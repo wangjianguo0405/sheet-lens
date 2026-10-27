@@ -12,6 +12,21 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.11] - 2026-10-27
+
+### Added
+
+- A workbook's tab now closes the others from its right-click menu: just that one, the others, the ones to its right, or all of them
+
+### Fixed
+
+- Flow-chart symbols are drawn at the size the file gives them. A symbol whose box was 134×64 came out a few pixels across, so its label sat on the cells underneath
+- With the window split, the shapes belong to their own pane: scrolling one pane no longer leaves them behind, and a shape across the split line shows on both sides of it
+- A zoom belongs to the sheet it was set on, so switching sheets — or opening another workbook — no longer carries it along
+- Dates are written the way the file and Windows ask: a sheet formatted `yyyy/m/d` no longer reads `10/26/2026`, and where the file leaves the format to Windows, Windows' own short date is used
+- At 125% and 150%, filled cells no longer show a hairline seam between them, which made every one of them look outlined
+- In page-break preview, filling a whole row no longer paints over the grey outside the print area
+
 ## [1.0.10] - 2026-10-26
 
 ### Added
