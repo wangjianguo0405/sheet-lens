@@ -716,6 +716,44 @@ export function openWorkbook(path: string): Promise<WorkbookInfo> {
   return invoke<WorkbookInfo>("open_workbook", { path });
 }
 
+/**
+ * How this reader writes a short date, as a format pattern: `yyyy/m/d` on a
+ * Japanese Windows, `m/d/yyyy` on an American one.
+ *
+ * Excel's built-in short-date formats (14 and 22) carry no code of their own —
+ * it fills them in from the machine, so the same cell reads `2026/10/26` in
+ * Tokyo and `10/26/2026` in New York. The workbook cannot say which, and the
+ * parser cannot ask, so the pattern is taken from the reader's own locale here
+ * and handed over once at startup.
+ *
+ * The field widths are the ones a short date uses: a four-digit year, and month
+ * and day without a leading zero. Only the order and the separators come from
+ * `Intl`, which is what actually differs between locales.
+ */
+export function shortDatePattern(): string {
+  const parts = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(new Date(2026, 9, 26));
+  return parts
+    .map((part) =>
+      part.type === "year"
+        ? "yyyy"
+        : part.type === "month"
+          ? "m"
+          : part.type === "day"
+            ? "d"
+            : part.value,
+    )
+    .join("");
+}
+
+/** Tells the parser how this reader writes a short date; once, before any sheet. */
+export function tellShortDate(pattern: string): Promise<void> {
+  return invoke("set_short_date", { pattern });
+}
+
 export function getCells(
   path: string,
   sheet: string,

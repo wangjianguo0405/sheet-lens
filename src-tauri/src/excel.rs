@@ -812,6 +812,11 @@ mod tests {
         // The whole point of a sweep over hundreds of workbooks is the page
         // layout; serialising every cell as well turns it into gigabytes.
         let layout_only = std::env::var("SHEETLENS_LAYOUT_ONLY").is_ok();
+        // The reader's short date, for the cells whose format is the built-in
+        // one — a fixture dumped without it gets the American pattern.
+        if let Ok(pattern) = std::env::var("SHEETLENS_SHORT_DATE") {
+            crate::layout::set_short_date(pattern);
+        }
 
         let mut book = load(&path).expect("workbook should load");
         let mut sheets = serde_json::Map::new();
