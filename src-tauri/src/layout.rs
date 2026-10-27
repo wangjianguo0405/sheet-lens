@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek};
+use std::sync::OnceLock;
 
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::Reader as XmlReader;
@@ -335,6 +336,11 @@ impl PartialEq for CellStyle {
             && self.color == other.color
             && self.fill == other.fill
             && self.pattern == other.pattern
+            // The number format is part of the style: two cells that differ
+            // only in it are drawn with different text — one `2026/10/26`, the
+            // other `10/26/2026` — so leaving it out made the first one on the
+            // sheet the format of every date after it.
+            && self.format == other.format
             && self.border == other.border
     }
 }
@@ -363,6 +369,7 @@ impl std::hash::Hash for CellStyle {
         self.color.hash(state);
         self.fill.hash(state);
         self.pattern.hash(state);
+        self.format.hash(state);
         self.border.hash(state);
     }
 }
@@ -557,7 +564,7 @@ impl Styles {
                 .num_formats
                 .get(&entry.num_fmt_id)
                 .cloned()
-                .or_else(|| builtin_date_format(entry.num_fmt_id).map(str::to_owned)),
+                .or_else(|| builtin_date_format(entry.num_fmt_id)),
             border: self.borders.get(entry.border_id).and_then(|b| b.clone()),
         };
         (!style.is_empty()).then_some(style)
@@ -2587,20 +2594,41 @@ fn new_xf(element: &BytesStart) -> Xf {
 
 /// The built-in formats that carry a date or time. The rest are numeric or
 /// plain, and are left to the default rendering.
-fn builtin_date_format(id: u32) -> Option<&'static str> {
+fn builtin_date_format(id: u32) -> Option<String> {
     Some(match id {
-        14 => "m/d/yyyy",
-        15 => "d-mmm-yy",
-        16 => "d-mmm",
-        17 => "mmm-yy",
-        18 => "h:mm AM/PM",
-        19 => "h:mm:ss AM/PM",
-        20 => "h:mm",
-        21 => "h:mm:ss",
-        22 => "m/d/yyyy h:mm",
-        45 => "mm:ss",
+        14 => short_date().to_owned(),
+        15 => "d-mmm-yy".to_owned(),
+        16 => "d-mmm".to_owned(),
+        17 => "mmm-yy".to_owned(),
+        18 => "h:mm AM/PM".to_owned(),
+        19 => "h:mm:ss AM/PM".to_owned(),
+        20 => "h:mm".to_owned(),
+        21 => "h:mm:ss".to_owned(),
+        22 => format!("{} h:mm", short_date()),
+        45 => "mm:ss".to_owned(),
         _ => return None,
     })
+}
+
+/// The reader's own short date, as a format pattern.
+///
+/// The built-in short-date formats (14 and 22) carry no code in the file: Excel
+/// fills them in from the machine it runs on, so the same cell reads
+/// `2026/10/26` on a Japanese Windows and `10/26/2026` on an American one.
+/// Nothing in the workbook says which, and this side cannot ask — the webview
+/// knows the reader's locale, so it hands the pattern over once at startup
+/// (`set_short_date`) and the parser uses it from then on.
+static SHORT_DATE: OnceLock<String> = OnceLock::new();
+
+/// Records the reader's short date. First caller wins: the locale does not
+/// change under a running app, and a second one would only mean the sheets
+/// already parsed and the ones to come disagreed.
+pub fn set_short_date(pattern: String) {
+    let _ = SHORT_DATE.set(pattern);
+}
+
+fn short_date() -> &'static str {
+    SHORT_DATE.get().map(String::as_str).unwrap_or("m/d/yyyy")
 }
 
 /// Records one side's style and returns which side is open, so a nested
@@ -3770,10 +3798,22 @@ fn read_entry<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Str
 }
 
 /// First attribute matching `name`, ignoring any namespace prefix.
+///
+/// The value is decoded from XML: a format code holding `&quot;` — which every
+/// custom date format with quoted text does — would otherwise be read as those
+/// six characters, and a sheet named `R&amp;D` as the text the file uses to
+/// escape it.
 pub(crate) fn attr(element: &BytesStart, name: &[u8]) -> Option<String> {
     element.attributes().flatten().find_map(|attribute| {
-        (attribute.key.local_name().as_ref() == name)
-            .then(|| String::from_utf8_lossy(&attribute.value).into_owned())
+        if attribute.key.local_name().as_ref() != name {
+            return None;
+        }
+        let raw = String::from_utf8_lossy(&attribute.value);
+        Some(
+            quick_xml::escape::unescape(&raw)
+                .map(|value| value.into_owned())
+                .unwrap_or_else(|_| raw.into_owned()),
+        )
     })
 }
 
@@ -3893,6 +3933,19 @@ mod tests {
     /// The style stored for one cell, or `None` when it carries none.
     fn style_at(layout: &SheetLayout, row: u32, col: u32) -> Option<&CellStyle> {
         layout.styles.get(style_index(layout, row, col)? as usize)
+    }
+
+    /// The built-in short date is drawn in the reader's pattern, not in a code
+    /// the file carries — so a Japanese machine gets `2026/10/26` out of the
+    /// same cell an American one draws `10/26/2026`.
+    #[test]
+    fn the_builtin_short_date_follows_the_reader() {
+        // Set once for the whole process; no other test asks about these ids.
+        set_short_date("yyyy/m/d".to_owned());
+        assert_eq!(builtin_date_format(14).as_deref(), Some("yyyy/m/d"));
+        assert_eq!(builtin_date_format(22).as_deref(), Some("yyyy/m/d h:mm"));
+        // A format the workbook wrote itself is drawn as written.
+        assert_eq!(builtin_date_format(15).as_deref(), Some("d-mmm-yy"));
     }
 
     fn style_index(layout: &SheetLayout, row: u32, col: u32) -> Option<u32> {

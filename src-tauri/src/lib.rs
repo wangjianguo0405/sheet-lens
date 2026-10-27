@@ -134,6 +134,19 @@ fn sheet_layout(
     book.layout(&sheet)
 }
 
+/// How this reader writes a short date — `yyyy/m/d` on a Japanese Windows,
+/// `m/d/yyyy` on an American one. Excel's built-in short-date formats are drawn
+/// in it rather than in any code the file carries, and only the webview knows
+/// the reader's locale, so it sends the pattern once at startup.
+///
+/// Synchronous, unlike the rest: it stores a string, and it has to land before
+/// the workbook that the next message opens is parsed — an `async` command
+/// would go to the thread pool and could be overtaken.
+#[tauri::command]
+fn set_short_date(pattern: String) {
+    layout::set_short_date(pattern);
+}
+
 #[tauri::command(async)]
 fn column_values(
     path: String,
@@ -301,6 +314,7 @@ pub fn run() {
             get_cells,
             search_workbook,
             sheet_layout,
+            set_short_date,
             column_values,
             filter_rows,
             axis_values,
