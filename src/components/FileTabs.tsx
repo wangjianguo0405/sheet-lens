@@ -1,4 +1,16 @@
-import { AppWindow, Check, ChevronDown, Copy, FolderOpen, Plus, RotateCw, X } from "lucide-react";
+import {
+  AppWindow,
+  Check,
+  ChevronDown,
+  Copy,
+  FolderOpen,
+  PanelRightClose,
+  Plus,
+  RotateCw,
+  X,
+  XCircle,
+  XSquare,
+} from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -51,6 +63,13 @@ interface FileTabsProps {
   active: string | null;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
+  /**
+   * Closes several tabs in one go — the ones the strip's menu takes away at
+   * once. `activate` is the tab the reader aimed at: it is the one left
+   * showing when it survives, the way a browser leaves the tab you closed the
+   * others from.
+   */
+  onCloseMany: (paths: string[], activate?: string) => void;
   /** Reads a workbook again from disk, for a file that has changed under us. */
   onReload: (path: string) => void;
   /** A tab dragged to another place in the strip: both are indices into `tabs`. */
@@ -75,6 +94,7 @@ export function FileTabs({
   active,
   onSelect,
   onClose,
+  onCloseMany,
   onReload,
   onReorder,
   homeOpen,
@@ -237,6 +257,8 @@ export function FileTabs({
       >
         {tabs.map((tab, index) => {
           const isActive = tab.path === active;
+          const others = tabs.filter((one) => one.path !== tab.path);
+          const right = tabs.slice(index + 1);
           return (
             <ContextMenu key={tab.path}>
               <ContextMenuTrigger asChild>
@@ -284,6 +306,36 @@ export function FileTabs({
                   handed to whatever the system opens it with, and where it sits
                   on disk. */}
               <ContextMenuContent className="min-w-44">
+                {/* Closing, first and together, the way every tab strip has it:
+                    the one under the pointer, then the sweep options — which are
+                    greyed out when there is nothing for them to take away. */}
+                <ContextMenuItem className="text-xs" icon={<X />} onSelect={() => onClose(tab.path)}>
+                  {t("tabs.closeThis")}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<XSquare />}
+                  disabled={others.length === 0}
+                  onSelect={() => onCloseMany(others.map((one) => one.path), tab.path)}
+                >
+                  {t("tabs.closeOthers")}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<PanelRightClose />}
+                  disabled={right.length === 0}
+                  onSelect={() => onCloseMany(right.map((one) => one.path), tab.path)}
+                >
+                  {t("tabs.closeRight")}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<XCircle />}
+                  onSelect={() => onCloseMany(tabs.map((one) => one.path))}
+                >
+                  {t("tabs.closeAll")}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
                 <ContextMenuItem
                   className="text-xs"
                   icon={<RotateCw />}

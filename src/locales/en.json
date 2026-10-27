@@ -112,6 +112,10 @@
   },
   "tabs": {
     "close": "Close {{name}}",
+    "closeThis": "Close",
+    "closeOthers": "Close others",
+    "closeRight": "Close to the right",
+    "closeAll": "Close all",
     "new": "New tab",
     "openAnother": "Open another workbook",
     "copy": "Copy",

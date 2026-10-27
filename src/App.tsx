@@ -578,6 +578,30 @@ export default function App() {
   );
 
   /**
+   * Closes several tabs at once: the strip's menu takes away the others, the
+   * ones to its right, or all of them. `activate` is the tab the menu was
+   * opened on — it survives the sweep and is the one left showing, the way a
+   * browser leaves the tab you cleared the rest out from.
+   */
+  const closeTabs = useCallback(
+    (paths: string[], activate?: string) => {
+      if (paths.length === 0) return;
+      const gone = new Set(paths);
+      for (const path of paths) {
+        void closeWorkbook(path).catch(() => {});
+        views.current.delete(path);
+      }
+      const remaining = tabs.filter((tab) => !gone.has(tab.info.path));
+      setTabs(remaining);
+      if (activate !== undefined && !gone.has(activate)) setActivePath(activate);
+      else if (activePath !== null && gone.has(activePath)) {
+        setActivePath(remaining.at(-1)?.info.path ?? null);
+      }
+    },
+    [tabs, activePath],
+  );
+
+  /**
    * Reads a workbook again from disk, for the file that changed underneath us —
    * Excel had it open, or something else wrote it.
    *
@@ -1476,6 +1500,7 @@ export default function App() {
           active={activePath}
           onSelect={selectTab}
           onClose={closeTab}
+          onCloseMany={closeTabs}
           onReload={(path) => void reloadTab(path)}
           onReorder={handleReorderTabs}
           homeOpen={homeOpen}

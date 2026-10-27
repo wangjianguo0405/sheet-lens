@@ -112,6 +112,10 @@
   },
   "tabs": {
     "close": "{{name}} を閉じる",
+    "closeThis": "閉じる",
+    "closeOthers": "他のタブを閉じる",
+    "closeRight": "右側のタブを閉じる",
+    "closeAll": "すべて閉じる",
     "new": "新しいタブ",
     "openAnother": "別のブックを開く",
     "copy": "コピー",
