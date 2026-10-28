@@ -54,9 +54,18 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
   }, [expanded, value]);
 
   /**
-   * The chevron sits in a strip of its own whichever way the bar is laid out, so
-   * opening the value area below it leaves the button exactly where it was
-   * rather than shifting it into the middle of a taller row.
+   * The chevron is placed to line up with the value's own right edge, and left
+   * to itself each engine draws a different scrollbar width — so the strip
+   * takes the width the engine actually used, measured off the span. Only the
+   * open bar has a scrollbar to line up with.
+   */
+  const chevronRight = expanded && barWidth > 0 ? { right: barWidth } : undefined;
+
+  /**
+   * The chevron sits over the value rather than in a row of its own: a row
+   * would add a band of empty bar above the text when the field opens, which
+   * reads as a blank first line. Overlaid, opening the value adds only the
+   * lines the value needs.
    */
   const toggle = value !== "" && (
     <Hint label={expanded ? t("formulaBar.collapse") : t("formulaBar.expand")}>
@@ -64,7 +73,10 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
         type="button"
         aria-label={expanded ? t("formulaBar.collapse") : t("formulaBar.expand")}
         onClick={() => setExpanded((open) => !open)}
-        className="my-1.5 flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent"
+        className={cn(
+          "flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent",
+          !expanded && "my-1.5",
+        )}
       >
         {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
       </button>
@@ -136,20 +148,10 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
       */}
       <div
         className={cn(
-          "flex min-w-0 flex-1 flex-col bg-background",
+          "relative flex min-w-0 flex-1 flex-col bg-background",
           !expanded && "h-7",
         )}
       >
-        {expanded && (
-          // `self-end` puts the strip against the right edge: a column's cross
-          // axis starts at the left, and without it the chevron jumps there.
-          <div
-            style={barWidth ? { width: barWidth } : undefined}
-            className="flex h-7 w-3.5 shrink-0 items-center justify-center self-end"
-          >
-            {toggle}
-          </div>
-        )}
         {/*
           The two branches of the value are separate elements on purpose:
           `truncate` and `whitespace-pre-wrap` both set `white-space`, and as
@@ -170,6 +172,13 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
           </span>
           {!expanded && toggle}
         </div>
+        {/* Over the value's right edge, level with its first line, and clear of
+            the scrollbar underneath it. */}
+        {expanded && (
+          <div className="absolute top-0 right-0 h-7" style={chevronRight}>
+            {toggle}
+          </div>
+        )}
       </div>
     </div>
   );
