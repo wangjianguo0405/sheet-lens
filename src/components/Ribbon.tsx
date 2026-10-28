@@ -238,7 +238,10 @@ export function Ribbon({
   const fonts = family && !families.includes(family) ? [family, ...families] : families;
 
   return (
-    <div className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-border bg-muted/20 px-2 py-1">
+    <div
+      data-ribbon
+      className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-border bg-muted/20 px-2 py-1"
+    >
       <Group label={t("ribbon.view")}>
         <Toggle
           pressed={sidebarOpen}
@@ -352,7 +355,13 @@ export function Ribbon({
               size="sm"
               variant="ghost"
               className="h-6 rounded-r-none px-1.5"
-              onClick={() => onFontColor(fontColor)}
+              // On the press rather than the click: the press is what would
+              // take the focus, and with it the field's selection. Painting on
+              // it leaves the field open and the stretch still selected.
+              onPointerDown={(event) => {
+                event.preventDefault();
+                onFontColor(fontColor);
+              }}
               aria-label={t("ribbon.fontColor")}
             >
               <span className="flex flex-col items-center justify-center">
