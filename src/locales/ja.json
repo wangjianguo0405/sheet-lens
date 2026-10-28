@@ -54,7 +54,9 @@
     "freeze": "選択セルの上と左を固定",
     "unfreeze": "固定解除",
     "split": "選択セルでウィンドウを分割",
-    "unsplit": "分割を解除"
+    "unsplit": "分割を解除",
+    "focusCell": "フォーカスセル（行と列を強調表示）",
+    "focusCellOff": "フォーカスセルをオフ"
   },
   "language": {
     "en": "English",

@@ -54,7 +54,9 @@
     "freeze": "冻结活动单元格上方和左侧的窗格",
     "unfreeze": "取消冻结窗格",
     "split": "在活动单元格处拆分窗口",
-    "unsplit": "取消拆分"
+    "unsplit": "取消拆分",
+    "focusCell": "聚焦单元格（高亮所在行和列）",
+    "focusCellOff": "关闭聚焦单元格"
   },
   "language": {
     "en": "English",

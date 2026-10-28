@@ -33,6 +33,7 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { toggleShapeDebug } from "@/lib/debugPanels";
+import { initialFocusCell, storeFocusCell } from "@/lib/focusCell";
 import { initialMarkColor, markSelection, storeMarkColor } from "@/lib/marks";
 import type { Target } from "@/lib/column";
 import {
@@ -248,6 +249,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   /** Which of the two sheet pickers are showing; they are independent. */
   const [panels, setPanels] = useState<SheetPanels>(initialSheetPanels);
+  /** Whether the cursor's row and column are washed, kept between sessions. */
+  const [focusCell, setFocusCell] = useState(initialFocusCell);
   /** The colour the toolbar's paint bucket is holding, kept between sessions. */
   const [markColor, setMarkColor] = useState(initialMarkColor);
   /** The workbook paths the File menu offers, newest first. */
@@ -1148,6 +1151,10 @@ export default function App() {
   }, [panels]);
 
   useEffect(() => {
+    storeFocusCell(focusCell);
+  }, [focusCell]);
+
+  useEffect(() => {
     storeMarkColor(markColor);
   }, [markColor]);
 
@@ -1529,6 +1536,8 @@ export default function App() {
             filterOn={filterOn}
             onToggleFilter={() => void toggleFilter()}
             onGroup={applyOutline}
+            focusCell={focusCell}
+            onToggleFocusCell={() => setFocusCell((on) => !on)}
           />
         )}
 
@@ -1642,6 +1651,7 @@ export default function App() {
                     splitBarHost={panels.tabs && splitOn ? splitBarHost : null}
                     onSplitLine={setSplitLineX}
                     pageBreak={view === "pageBreak"}
+                    focusCell={focusCell}
                     onViewport={setViewport}
                     bar={
                       <FormulaBar

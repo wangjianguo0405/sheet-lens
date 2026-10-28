@@ -152,6 +152,17 @@ export const ACCENT_INK = "#217346";
 export const SELECTION_WASH = "rgba(33, 115, 70, 0.07)";
 
 /**
+ * The wash across the cursor's row and column when focus cell is on.
+ *
+ * A shade stronger than a selection's own wash, because it has to be found at a
+ * glance rather than read as a selection — that is the whole point of it after
+ * a search hit jumps somewhere the eye was not looking. Where the row and the
+ * column meet, the two washes stack and the cursor's cell reads a little darker
+ * than either arm, which is the crossing that makes the whole shape legible.
+ */
+export const FOCUS_WASH = "rgba(33, 115, 70, 0.10)";
+
+/**
  * How thick the selection's rule is, in the sheet's own pixels.
  *
  * Excel marks a selection with a heavy line rather than a hairline, and the

@@ -54,7 +54,9 @@
     "freeze": "Freeze the rows above and columns left of the active cell",
     "unfreeze": "Unfreeze panes",
     "split": "Split the window at the active cell",
-    "unsplit": "Remove the split"
+    "unsplit": "Remove the split",
+    "focusCell": "Focus cell (highlight its row and column)",
+    "focusCellOff": "Turn focus cell off"
   },
   "language": {
     "en": "English",
