@@ -72,9 +72,12 @@ import {
   areaRect,
   formatSelection,
   type ActiveCellStyle,
+  colorRange,
+  formatKey,
   type CellFormat,
   type FilterPane,
   type Formats,
+  type TextColors,
 } from "@/lib/formats";
 import type { SessionOutline } from "@/lib/outline";
 
@@ -95,6 +98,12 @@ interface Tab {
    * tab closing is what forgets them.
    */
   formats: Formats;
+  /**
+   * Text the reader coloured by hand, as character ranges of a cell's value.
+   * Kept beside the formats for the same reason: it is the app's own lens on
+   * the file, and closing the tab is what forgets it.
+   */
+  textColors: TextColors;
   /**
    * The frozen bands the reader set or cleared from the ribbon, by sheet name.
    * An entry beats the file's own `<pane>`; zero rows and zero columns means
@@ -256,6 +265,12 @@ export default function App() {
   const [markColor, setMarkColor] = useState(initialMarkColor);
   /** The colour it paints text with, kept the same way and for the same reason. */
   const [fontColor, setFontColor] = useState(initialFontColor);
+  /**
+   * The grid puts its "colour the field's selection, else the cell" function
+   * here, so the ribbon's button — which is not inside the grid — can call it.
+   * Null while no grid is mounted.
+   */
+  const textColorVia = useRef<((color: string | null) => void) | null>(null);
   /** The workbook paths the File menu offers, newest first. */
   const [recentFiles, setRecentFiles] = useState<string[]>(readRecentFiles);
   /** Those of them that would not open, which the menu greys out. */
@@ -402,6 +417,7 @@ export default function App() {
                   cursors: cursor && opening ? { [opening.name]: cursor } : {},
                   marks: new Map(),
                   formats: new Map(),
+                  textColors: new Map(),
                   frozen: {},
                   filterPane: {},
                   sessionOutline: {},
@@ -753,6 +769,32 @@ export default function App() {
       );
     },
     [active, activeSheet, extent],
+  );
+
+  /**
+   * Colours a stretch of one cell's text, or takes the colour back off it when
+   * `color` is null. The stretch is character offsets into the value — what
+   * the field over the cell reports for whatever it has selected.
+   */
+  const applyTextColor = useCallback(
+    (
+      at: { row: number; col: number; from: number; to: number },
+      color: string | null,
+    ) => {
+      if (!active) return;
+      const key = formatKey(active.sheet, at.row, at.col);
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.info.path !== active.info.path) return tab;
+          const next = new Map(tab.textColors);
+          const runs = colorRange(next.get(key) ?? [], at.from, at.to, color);
+          if (runs.length === 0) next.delete(key);
+          else next.set(key, runs);
+          return { ...tab, textColors: next };
+        }),
+      );
+    },
+    [active],
   );
 
   /**
@@ -1536,14 +1578,10 @@ export default function App() {
             markColor={markColor}
             fontColor={fontColor}
             onFontColor={(color) => {
-              if (color === null) {
-                // "Automatic" takes the overlay off rather than painting a
-                // colour on: what is left is whatever the cell itself says.
-                applyFormat({ color: null });
-                return;
-              }
-              setFontColor(color);
-              applyFormat({ color });
+              if (color !== null) setFontColor(color);
+              // The grid decides whether this lands on the whole selection or
+              // on the stretch of the open cell's text the reader selected.
+              textColorVia.current?.(color);
             }}
             activeStyle={activeStyle}
             onFormat={applyFormat}
@@ -1645,6 +1683,10 @@ export default function App() {
                     selection={selection}
                     marks={active.marks}
                     formats={active.formats}
+                    textColors={active.textColors}
+                    textColorVia={textColorVia}
+                    onTextColor={applyTextColor}
+                    onFormatColor={(color) => applyFormat({ color })}
                     onActiveStyle={setActiveStyle}
                     frozen={active.frozen[active.sheet] ?? null}
                     onFrozenChange={setFrozenBands}

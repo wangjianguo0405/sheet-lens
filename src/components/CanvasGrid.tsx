@@ -115,7 +115,15 @@ import {
   type Selection,
 } from "@/lib/selection";
 import { markKey, type Marks } from "@/lib/marks";
-import { formatKey, withFormat, type ActiveCellStyle, type FilterPane, type Formats } from "@/lib/formats";
+import {
+  formatKey,
+  textRuns,
+  withFormat,
+  type ActiveCellStyle,
+  type FilterPane,
+  type Formats,
+  type TextColors,
+} from "@/lib/formats";
 import {
   colLevelButtonRect,
   groupButtonBox,
@@ -440,6 +448,33 @@ interface GridProps {
    * They are the tab's own, so closing it is what forgets them.
    */
   formats?: Formats;
+  /**
+   * Text the reader coloured by hand, by sheet and cell, as character ranges
+   * of the value. Kept apart from `formats` because it is not a style the cell
+   * wears whole — it is a stretch of its text — and the painter takes it the
+   * same way the file's own runs arrive.
+   */
+  textColors?: TextColors;
+  /**
+   * Paints a stretch of the open cell's text. The field exists only while a
+   * cell is open and is read-only, so this is what its selection is for: the
+   * reader selects some words and the colour lands on those, not the cell.
+   */
+  onTextColor?: (
+    at: { row: number; col: number; from: number; to: number },
+    color: string | null,
+  ) => void;
+  /**
+   * The font colour for the selection as a whole, for when nothing in the open
+   * field is singled out. The field's stretch takes precedence.
+   */
+  onFormatColor?: (color: string | null) => void;
+  /**
+   * Where to put the function that decides between the two. The app hands a
+   * ref down, and the grid fills it so the ribbon — which owns the button but
+   * not the field — can call it.
+   */
+  textColorVia?: { current: ((color: string | null) => void) | null };
   /** Reports the active cell's style, overlays included, for the ribbon. */
   onActiveStyle?: (style: ActiveCellStyle) => void;
   /**
@@ -816,6 +851,10 @@ export function CanvasGrid({
   onSelect,
   marks,
   formats,
+  textColors,
+  onTextColor,
+  onFormatColor,
+  textColorVia,
   onActiveStyle,
   frozen,
   onFrozenChange,
@@ -3048,6 +3087,113 @@ export function CanvasGrid({
     return () => observer.disconnect();
   }, [editing]);
 
+  /**
+   * The characters of the open value the reader has selected, if any.
+   *
+   * The field is read-only, so this is the one thing it can still be used for
+   * besides copying: a stretch of the value singled out to be coloured. It is
+   * reported up as offsets rather than as anything DOM-shaped, because the cell
+   * behind it belongs to the grid and not to the field.
+   */
+  const selectedText = useCallback((): { row: number; col: number; from: number; to: number } | null => {
+    const el = editorRef.current;
+    const at = editingRef.current;
+    if (!el || !at) return null;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null;
+    // Offsets within the field's own text, counted by walking its nodes: the
+    // field draws the runs as spans, and a range across two of them has to
+    // come out as one stretch however many spans it crossed.
+    const offsetIn = (node: Node, offset: number): number => {
+      let total = 0;
+      const walk = (current: Node): boolean => {
+        if (current === node) {
+          total += offset;
+          return true;
+        }
+        if (current.nodeType === Node.TEXT_NODE) {
+          total += (current as Text).length;
+          return false;
+        }
+        for (const child of Array.from(current.childNodes)) {
+          if (walk(child)) return true;
+        }
+        return false;
+      };
+      walk(el);
+      return total;
+    };
+    const a = offsetIn(range.startContainer, range.startOffset);
+    const b = offsetIn(range.endContainer, range.endOffset);
+    return { row: at.row, col: at.col, from: Math.min(a, b), to: Math.max(a, b) };
+  }, []);
+
+  /**
+   * The ribbon's font colour, pointed at the open field when some of its text
+   * is selected and at the whole selection otherwise.
+   *
+   * The field's selection exists only in this component, so the two are told
+   * apart here rather than in the app: above, there is no DOM node to ask.
+   */
+  const colorText = useCallback(
+    (color: string | null) => {
+      // The live selection first: the field may still be open and the reader
+      // may have selected something new since the last pointer or key event.
+      const stretch = selectedText() ?? keptStretch.current;
+      if (stretch) {
+        onTextColor?.(stretch, color);
+        if (!editingRef.current) keptStretch.current = null;
+      } else {
+        onFormatColor?.(color);
+      }
+    },
+    [selectedText, onTextColor, onFormatColor],
+  );
+
+  /**
+   * The same function, handed up so the ribbon's button can reach the field's
+   * selection. A ref rather than state: it is called from an event and never
+   * rendered, and a setter here would redraw the grid for a value that is not
+   * on screen.
+   */
+  useEffect(() => {
+    if (!textColorVia) return;
+    textColorVia.current = colorText;
+    return () => {
+      if (textColorVia.current === colorText) textColorVia.current = null;
+    };
+  }, [colorText, textColorVia]);
+
+  /**
+   * The stretch the reader last had selected inside the field.
+   *
+   * Pressing the ribbon's button takes the focus and closes the field, so by
+   * the time the click arrives the selection is gone. It is kept here as it is
+   * made, and the paint uses this when the field has nothing live to report.
+   */
+  const keptStretch = useRef<{ row: number; col: number; from: number; to: number } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!editing) {
+      keptStretch.current = null;
+      return;
+    }
+    const keep = () => {
+      keptStretch.current = selectedText();
+    };
+    document.addEventListener("selectionchange", keep);
+    window.addEventListener("pointerup", keep, true);
+    window.addEventListener("keyup", keep, true);
+    return () => {
+      document.removeEventListener("selectionchange", keep);
+      window.removeEventListener("pointerup", keep, true);
+      window.removeEventListener("keyup", keep, true);
+    };
+  }, [editing, selectedText]);
+
   /** A press anywhere else puts it away, the way leaving a cell does in Excel. */
   useEffect(() => {
     if (!editing) return;
@@ -3110,6 +3256,7 @@ export function CanvasGrid({
     sheet.name,
     marks,
     formats,
+    textColors,
     splitGeometry,
     splitBands,
   ]);
@@ -3626,10 +3773,28 @@ export function CanvasGrid({
      * The runs a cell draws part of its text in, keyed by the cell. Sparse: only
      * cells that format part of their text are in it, and two cells spelling
      * the same text may carry different runs.
+     *
+     * The reader's own colours are laid over the file's here, so every
+     * consumer — the painter, the field over the cell, each split pane — reads
+     * one list and none of them has to know both exist.
      */
     const richIndex = new Map<number, RichRun[]>();
     for (const cell of layout.richCells ?? []) {
       richIndex.set(cellKey(sheetCols, cell.row, cell.col), cell.runs);
+    }
+    if (textColors && textColors.size > 0) {
+      const prefix = `${sheet.name}\u0000`;
+      for (const [key, ranges] of textColors) {
+        // One map for the whole tab, so only this sheet's cells belong here.
+        if (!key.startsWith(prefix)) continue;
+        const [row, col] = key.slice(prefix.length).split(":").map(Number);
+        if (!Number.isFinite(row) || !Number.isFinite(col)) continue;
+        const text = cellAt(row, col)?.text ?? "";
+        if (text === "") continue;
+        const at = cellKey(sheetCols, row, col);
+        const merged = textRuns(richIndex.get(at) ?? null, ranges, text);
+        if (merged) richIndex.set(at, merged);
+      }
     }
 
     /** The data bars by cell, for the bars drawn over the cell's fill. */
@@ -3750,6 +3915,7 @@ export function CanvasGrid({
     uiFont,
     outsidePrint,
     focusAt,
+    textColors,
   ]);
 
   const paint = useCallback(
