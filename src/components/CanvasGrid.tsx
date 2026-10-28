@@ -3150,6 +3150,12 @@ export function CanvasGrid({
   );
 
   /**
+   * The stretch to put back into the field once it has been redrawn for a new
+   * colour, or null when there is nothing to put back.
+   */
+  const restoreSelection = useRef<{ from: number; to: number } | null>(null);
+
+  /**
    * The ribbon's font colour, pointed at the open field when some of its text
    * is selected and at the whole selection otherwise.
    *
@@ -3163,12 +3169,61 @@ export function CanvasGrid({
       const stretch = selectedText() ?? keptStretch.current;
       if (stretch) {
         onTextColor?.(stretch, color);
+        keptStretch.current = stretch;
+        // The press took the browser's selection and the repaint a moment
+        // later rebuilds the field's nodes, so what the reader had singled out
+        // has to be put back — otherwise the caret lands at the very start,
+        // which reads as the field having reset under them.
+        restoreSelection.current = stretch;
       } else {
         onFormatColor?.(color);
       }
     },
     [selectedText, onTextColor, onFormatColor],
   );
+
+  /**
+   * Puts that stretch back into the field after the repaint that follows a
+   * colour, so the same words stay selected and the button can be pressed
+   * again on them.
+   */
+  useEffect(() => {
+    const asked = restoreSelection.current;
+    if (!asked) return;
+    const el = editorRef.current;
+    if (!el || !editing) return;
+    restoreSelection.current = null;
+    // After the browser has laid the new nodes out, or the range is built over
+    // spans that are about to be replaced.
+    const frame = requestAnimationFrame(() => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      const ends: { node: Text; start: number }[] = [];
+      let total = 0;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const text = node as Text;
+        ends.push({ node: text, start: total });
+        total += text.length;
+      }
+      const at = (offset: number) => {
+        for (let i = ends.length - 1; i >= 0; i -= 1) {
+          if (ends[i].start <= offset) {
+            return { node: ends[i].node, offset: offset - ends[i].start };
+          }
+        }
+        return ends[0] ? { node: ends[0].node, offset: 0 } : null;
+      };
+      const a = at(asked.from);
+      const b = at(asked.to);
+      if (!a || !b) return;
+      const range = document.createRange();
+      range.setStart(a.node, a.offset);
+      range.setEnd(b.node, b.offset);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    return () => cancelAnimationFrame(frame);
+  });
 
   /**
    * The same function, handed up so the ribbon's button can reach the field's
