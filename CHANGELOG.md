@@ -12,6 +12,23 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.13] - 2026-10-28
+
+### Added
+
+- A font-colour button in the Font group: the A paints what is selected with the colour it holds, the caret beside it opens a palette, and "Automatic" takes the colour back off. Nothing is written to the file, and closing the tab forgets it
+- With a cell open, the colour can go on just the words selected inside it, leaving the rest of the value alone
+
+### Improved
+
+- Pressing a button on the ribbon no longer closes the cell being read; the field stays open
+
+### Fixed
+
+- The field over a cell is placed by the number of lines the value actually takes, so a wrapped or merged cell no longer opens with a band of white and a scrollbar
+- The formula bar no longer opens with a blank line: the chevron floats over the value's top right corner instead of taking a row, and the first line no longer sits flush against the top
+- A colour shows in the open field as soon as it is applied, rather than only after moving to another cell, and the caret is left at the end of what was coloured
+
 ## [1.0.12] - 2026-10-28
 
 ### Added
