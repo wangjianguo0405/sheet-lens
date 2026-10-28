@@ -25,8 +25,18 @@ export type CellFormat = Partial<
   >
 >;
 
+/** One run of the reader's text colour: characters `[from, to)` of the value. */
+export interface TextColorRun {
+  from: number;
+  to: number;
+  color: string;
+}
+
 /** One cell's overlay, keyed off the sheet and the cell. */
 export type Formats = Map<string, CellFormat>;
+
+/** The reader's text colours, by cell, as character ranges rather than rules. */
+export type TextColors = Map<string, TextColorRun[]>;
 
 /** What the ribbon shows for the active cell. */
 export interface ActiveCellStyle {
@@ -143,4 +153,80 @@ export function withFormat(
 ): CellStyle | null {
   if (!patch) return base;
   return { ...PLAIN_STYLE, ...base, ...patch };
+}
+
+/**
+ * Cuts `runs` so that every character in `[from, to)` wears `color`, and the
+ * rest keeps whatever it wore.
+ *
+ * Cut per character against what is already there rather than spliced from two
+ * run lists, so painting the same word twice leaves neither the older colour
+ * showing through a gap nor an entry per character piling up. A null colour is
+ * "whatever the cell says", which is what takes a colour back off again.
+ */
+export function colorRange(
+  runs: TextColorRun[],
+  from: number,
+  to: number,
+  color: string | null,
+): TextColorRun[] {
+  if (to <= from) return runs;
+  const edges = new Set<number>([from, to]);
+  for (const run of runs) {
+    edges.add(run.from);
+    edges.add(run.to);
+  }
+  const sorted = [...edges].sort((a, b) => a - b);
+  const out: TextColorRun[] = [];
+  for (let i = 0; i + 1 < sorted.length; i += 1) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+    if (b <= a) continue;
+    const covering = runs.find((run) => run.from <= a && a < run.to);
+    const value = a >= from && b <= to ? color : (covering?.color ?? null);
+    if (value === null) continue;
+    const last = out[out.length - 1];
+    if (last && last.to === a && last.color === value) last.to = b;
+    else out.push({ from: a, to: b, color: value });
+  }
+  return out;
+}
+
+/**
+ * The value's runs with the reader's colours laid over the file's own — the
+ * shape the painter and the field both read.
+ *
+ * The reader's ranges win: a stretch of text the reader coloured is drawn in
+ * that colour whether or not the file gave it one.
+ */
+export function textRuns(
+  fileRuns: { text: string; color: string | null }[] | null,
+  own: TextColorRun[] | undefined,
+  text: string,
+): { text: string; color: string | null }[] | null {
+  if (!own || own.length === 0) return fileRuns;
+  // One run per character position, then recoloured by the reader's ranges:
+  // text is short, and this is exact where merging two run lists is not.
+  const colors: (string | null)[] = Array.from({ length: text.length }, () => null);
+  if (fileRuns) {
+    let at = 0;
+    for (const run of fileRuns) {
+      for (let i = 0; i < run.text.length; i += 1) {
+        if (at + i < colors.length) colors[at + i] = run.color;
+      }
+      at += run.text.length;
+    }
+  }
+  for (const run of own) {
+    for (let i = run.from; i < Math.min(run.to, colors.length); i += 1) {
+      colors[i] = run.color;
+    }
+  }
+  const out: { text: string; color: string | null }[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const last = out[out.length - 1];
+    if (last && last.color === colors[i]) last.text += text[i];
+    else out.push({ text: text[i], color: colors[i] });
+  }
+  return out;
 }
