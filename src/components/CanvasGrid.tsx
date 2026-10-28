@@ -3131,6 +3131,18 @@ export function CanvasGrid({
   }, []);
 
   /**
+   * The stretch the reader last had selected inside the field.
+   *
+   * Pressing the ribbon's button takes the focus and closes the field, so by
+   * the time the click arrives the selection is gone. It is kept here as it is
+   * made and survives that close — the close is exactly what the colour is
+   * about to act on. It goes when another cell is opened.
+   */
+  const keptStretch = useRef<{ row: number; col: number; from: number; to: number } | null>(
+    null,
+  );
+
+  /**
    * The ribbon's font colour, pointed at the open field when some of its text
    * is selected and at the whole selection otherwise.
    *
@@ -3139,12 +3151,12 @@ export function CanvasGrid({
    */
   const colorText = useCallback(
     (color: string | null) => {
-      // The live selection first: the field may still be open and the reader
-      // may have selected something new since the last pointer or key event.
+      // The live selection first; failing that, the stretch kept from the field
+      // that a press has just closed.
       const stretch = selectedText() ?? keptStretch.current;
       if (stretch) {
         onTextColor?.(stretch, color);
-        if (!editingRef.current) keptStretch.current = null;
+        keptStretch.current = null;
       } else {
         onFormatColor?.(color);
       }
@@ -3154,35 +3166,34 @@ export function CanvasGrid({
 
   /**
    * The same function, handed up so the ribbon's button can reach the field's
-   * selection. A ref rather than state: it is called from an event and never
-   * rendered, and a setter here would redraw the grid for a value that is not
-   * on screen.
+   * selection. Registered once and forwarding through a ref: `colorText` gets
+   * a new identity whenever the field opens or closes — which is exactly when
+   * the button is pressed — and tearing the registration down at that moment
+   * left the press with nothing to call.
    */
+  const colorTextRef = useRef<((color: string | null) => void) | null>(null);
+  colorTextRef.current = colorText;
   useEffect(() => {
     if (!textColorVia) return;
-    textColorVia.current = colorText;
+    textColorVia.current = (color) => colorTextRef.current?.(color);
     return () => {
-      if (textColorVia.current === colorText) textColorVia.current = null;
+      textColorVia.current = null;
     };
-  }, [colorText, textColorVia]);
+  }, [textColorVia]);
 
   /**
-   * The stretch the reader last had selected inside the field.
-   *
-   * Pressing the ribbon's button takes the focus and closes the field, so by
-   * the time the click arrives the selection is gone. It is kept here as it is
-   * made, and the paint uses this when the field has nothing live to report.
+   * Keeps the field's selection as it is made, so the button can still ask for
+   * it after the press has closed the field.
    */
-  const keptStretch = useRef<{ row: number; col: number; from: number; to: number } | null>(
-    null,
-  );
   useEffect(() => {
-    if (!editing) {
-      keptStretch.current = null;
-      return;
-    }
+    const el = editorRef.current;
+    if (!editing || !el) return;
+    // A cell opened: whatever the last one had singled out is a different
+    // cell's text, so it is not this field's to colour.
+    keptStretch.current = null;
     const keep = () => {
-      keptStretch.current = selectedText();
+      const stretch = selectedText();
+      if (stretch) keptStretch.current = stretch;
     };
     document.addEventListener("selectionchange", keep);
     window.addEventListener("pointerup", keep, true);
@@ -3198,7 +3209,12 @@ export function CanvasGrid({
   useEffect(() => {
     if (!editing) return;
     const onDown = (event: PointerEvent) => {
-      if (!editorRef.current?.contains(event.target as Node)) setEditing(null);
+      if (editorRef.current?.contains(event.target as Node)) return;
+      // Read before closing: the press is what takes the selection away, and
+      // the colour may be about to be asked for it.
+      const stretch = selectedText();
+      if (stretch) keptStretch.current = stretch;
+      setEditing(null);
     };
     document.addEventListener("pointerdown", onDown, true);
     return () => document.removeEventListener("pointerdown", onDown, true);
