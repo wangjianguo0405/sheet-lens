@@ -12,6 +12,17 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.12] - 2026-10-28
+
+### Added
+
+- The row and the column of the selected cell can be shaded, so a cell a search turned up can be placed at a glance. It is the crosshair button in the View group, and it is on by default
+- A search hit, a Go To target and a reference typed into the name box light their row and column whether or not that button is on — arriving somewhere you did not choose is exactly when the mark earns its keep. Moving the cursor by hand hands the question back to the button
+
+### Improved
+
+- A workbook's tab menu now opens with reading the file again and getting at its name, path or folder, and keeps the four closing commands together at the foot, with "close all" behind a rule of its own
+
 ## [1.0.11] - 2026-10-27
 
 ### Added
