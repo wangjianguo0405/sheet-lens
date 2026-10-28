@@ -3149,19 +3149,9 @@ export function CanvasGrid({
     null,
   );
 
-  /**
-   * The stretch to put back into the field once it has been redrawn for a new
-   * colour, or null when there is nothing to put back.
-   */
-  const restoreSelection = useRef<{ from: number; to: number } | null>(null);
+  /** Where the caret belongs once the field has been redrawn, or null. */
+  const caretAfter = useRef<number | null>(null);
 
-  /**
-   * The ribbon's font colour, pointed at the open field when some of its text
-   * is selected and at the whole selection otherwise.
-   *
-   * The field's selection exists only in this component, so the two are told
-   * apart here rather than in the app: above, there is no DOM node to ask.
-   */
   const colorText = useCallback(
     (color: string | null) => {
       // The live selection first; failing that, the stretch kept from the field
@@ -3170,11 +3160,12 @@ export function CanvasGrid({
       if (stretch) {
         onTextColor?.(stretch, color);
         keptStretch.current = stretch;
-        // The press took the browser's selection and the repaint a moment
-        // later rebuilds the field's nodes, so what the reader had singled out
-        // has to be put back — otherwise the caret lands at the very start,
-        // which reads as the field having reset under them.
-        restoreSelection.current = stretch;
+        // The press takes the browser's selection and the repaint rebuilds the
+        // field's nodes, which would otherwise leave the caret at the very
+        // start. Putting it at the end of what was just coloured reads as "that
+        // is done" — and the selection is not needed again, since the button
+        // keeps the stretch for as long as the field is open.
+        caretAfter.current = stretch.to;
       } else {
         onFormatColor?.(color);
       }
@@ -3183,16 +3174,15 @@ export function CanvasGrid({
   );
 
   /**
-   * Puts that stretch back into the field after the repaint that follows a
-   * colour, so the same words stay selected and the button can be pressed
-   * again on them.
+   * Puts the caret back after the repaint that follows a colour: at the end of
+   * the stretch that was painted. A refresh that dropped the caret to the start
+   * of the value read as the field having reset under the reader.
    */
   useEffect(() => {
-    const asked = restoreSelection.current;
-    if (!asked) return;
+    const asked = caretAfter.current;
     const el = editorRef.current;
-    if (!el || !editing) return;
-    restoreSelection.current = null;
+    if (asked === null || !el || !editing) return;
+    caretAfter.current = null;
     // After the browser has laid the new nodes out, or the range is built over
     // spans that are about to be replaced.
     const frame = requestAnimationFrame(() => {
@@ -3204,23 +3194,16 @@ export function CanvasGrid({
         ends.push({ node: text, start: total });
         total += text.length;
       }
-      const at = (offset: number) => {
-        for (let i = ends.length - 1; i >= 0; i -= 1) {
-          if (ends[i].start <= offset) {
-            return { node: ends[i].node, offset: offset - ends[i].start };
-          }
-        }
-        return ends[0] ? { node: ends[0].node, offset: 0 } : null;
-      };
-      const a = at(asked.from);
-      const b = at(asked.to);
-      if (!a || !b) return;
-      const range = document.createRange();
-      range.setStart(a.node, a.offset);
-      range.setEnd(b.node, b.offset);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
+      for (let i = ends.length - 1; i >= 0; i -= 1) {
+        if (ends[i].start > asked) continue;
+        const range = document.createRange();
+        range.setStart(ends[i].node, Math.min(asked - ends[i].start, ends[i].node.length));
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
     });
     return () => cancelAnimationFrame(frame);
   });
