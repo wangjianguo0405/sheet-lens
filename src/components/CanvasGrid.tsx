@@ -4150,12 +4150,30 @@ export function CanvasGrid({
                 : style?.horizontal === "right"
                   ? "right"
                   : "left";
-            // Where the cell's own text sat: one line box of it, placed by the
-            // cell's vertical alignment. Without this the text of a bottom- or
-            // middle-aligned cell — which is most of them — would jump to the
-            // top of the field and the cell would look as though it had moved.
+            // Where the cell's own text sat. The canvas places the whole block
+            // of lines — a wrapped or multi-line value is centred or bottom-
+            // aligned as a block — so the field has to count the same lines.
+            // Counting one put a single line's box where the painter put
+            // several, and the text spilled out of a field it should have
+            // filled, reading as a white gap with a scrollbar in it.
+            //
+            // `layoutLines` with the painter's own inputs is the answer: the
+            // same font, the same width, the same wrap flag. `w` is already
+            // the merge's whole width, so a merged cell wraps where it drew.
             const lineHeight = size * LINE_HEIGHT;
-            const room = h * view.zoom - lineHeight;
+            const blockLines = layoutLines(
+              fontString(
+                cellFontStack(style?.family ?? null, view.workbookFontFamily),
+                style?.sizePx ?? view.workbookFontSizePx,
+                style?.bold ?? false,
+                style?.italic ?? false,
+              ),
+              view.cellAt(at.row, at.col)?.text ?? "",
+              w - CELL_PAD_LEFT - CELL_PAD_RIGHT,
+              style?.wrap ?? false,
+            ).length;
+            const blockHeight = blockLines * lineHeight;
+            const room = h * view.zoom - blockHeight;
             const vertical = style?.vertical ?? "bottom";
             field.style.lineHeight = `${lineHeight}px`;
             field.style.paddingTop = `${
