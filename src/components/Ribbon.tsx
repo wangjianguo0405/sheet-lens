@@ -8,6 +8,7 @@ import {
   Bold,
   ChevronDown,
   Columns3,
+  Crosshair,
   Italic,
   ListFilter,
   ListTree,
@@ -82,6 +83,9 @@ interface RibbonProps {
   /** Adds a filter over the current region, or takes the one in force away. */
   onToggleFilter: () => void;
   onGroup: (action: "rows" | "cols" | "ungroup") => void;
+  /** Whether the cursor's row and column are washed, and the switch for it. */
+  focusCell: boolean;
+  onToggleFocusCell: () => void;
 }
 
 /**
@@ -197,6 +201,8 @@ export function Ribbon({
   filterOn,
   onToggleFilter,
   onGroup,
+  focusCell,
+  onToggleFocusCell,
 }: RibbonProps) {
   const { t } = useTranslation();
 
@@ -259,6 +265,13 @@ export function Ribbon({
           title={splitOn ? t("ribbon.unsplit") : t("ribbon.split")}
         >
           <SplitSquareHorizontal className="size-3.5" />
+        </Toggle>
+        <Toggle
+          pressed={focusCell}
+          onClick={onToggleFocusCell}
+          title={focusCell ? t("ribbon.focusCellOff") : t("ribbon.focusCell")}
+        >
+          <Crosshair className="size-3.5" />
         </Toggle>
       </Group>
 

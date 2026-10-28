@@ -532,6 +532,12 @@ interface GridProps {
    */
   pageBreak: boolean;
   /**
+   * Whether the cursor's row and column are washed, which is what makes a hit
+   * jumped to from the search panel findable at a glance. The reader's switch,
+   * so it is the same for every sheet and every workbook.
+   */
+  focusCell: boolean;
+  /**
    * The element the sheet scrolls within, handed out so a scrollbar drawn
    * elsewhere is a view of it rather than a second scroller.
    */
@@ -825,6 +831,7 @@ export function CanvasGrid({
   splitBarHost = null,
   onSplitLine,
   pageBreak,
+  focusCell,
   onViewport,
 }: GridProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -3100,6 +3107,14 @@ export function CanvasGrid({
   }, [selection]);
 
   /**
+   * The focus cross is drawn by the same pass, so switching it is one overlay
+   * frame — no cell is touched either way.
+   */
+  useLayoutEffect(() => {
+    paintRef.current("overlay");
+  }, [focusCell]);
+
+  /**
    * Brings the selected cell into view.
    *
    * Moving the selection with the keyboard, from a search hit or from Go To has
@@ -3628,6 +3643,7 @@ export function CanvasGrid({
       workbookFontFamily: fontFamily,
       workbookFontSizePx: fontSize,
       showGrid,
+      focusCell,
       selection: selectionRef.current,
       copied:
         copiedRef.current?.path === path && copiedRef.current?.sheet === sheet.name
@@ -3686,6 +3702,7 @@ export function CanvasGrid({
     fontFamily,
     fontSize,
     showGrid,
+    focusCell,
     autoFilter,
     visibleRows,
     filters,

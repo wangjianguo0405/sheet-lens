@@ -69,6 +69,7 @@ import {
   COL_HEADER_H,
   decorationFor,
   FILTERED_INK,
+  FOCUS_WASH,
   GUTTER_TINT,
   OUTSIDE_PRINT,
   PRINT_AREA_INSIDE,
@@ -87,6 +88,7 @@ import {
 import {
   activeArea,
   areasOf,
+  selectionAnchor,
   selectionBandCovers,
   selectionBandCrosses,
   selectionCovers,
@@ -176,6 +178,11 @@ export interface GridView {
   workbookFontFamily: string | null;
   workbookFontSizePx: number;
   showGrid: boolean;
+  /**
+   * Whether the row and column of the cursor are washed. On by default, and
+   * the reader's switch rather than the file's — see `lib/focusCell.ts`.
+   */
+  focusCell: boolean;
   selection: Selection;
   /**
    * What Ctrl+C took on this sheet, or an empty list when the clipboard holds
@@ -2603,6 +2610,46 @@ function paintLevelButton(
   ctx.textBaseline = "alphabetic";
 }
 
+/**
+ * The row and the column of the cursor, washed across the whole row and column.
+ *
+ * Under everything `paintOverlay` draws — the wash belongs to the sheet, not to
+ * the selection — but inside the clip that keeps it off the header bands, so
+ * the numbers and letters stay clear of it. A cursor that has been scrolled
+ * out of view draws nothing: the band it belongs to is off the canvas anyway,
+ * and letting the rectangle run to the viewport edge would put a stripe along
+ * the top or the left that points at nothing.
+ *
+ * A cursor inside a run of whole rows or columns draws no cross at all. That
+ * selection is already a band across the sheet, and the cell an anchor would
+ * pick — the run's first column, the run's first row — is not where the reader
+ * is looking; a stripe along it would point at an edge of the selection rather
+ * than at a cursor.
+ */
+function paintFocusCross(
+  ctx: CanvasRenderingContext2D,
+  view: GridView,
+  ox: number,
+  oy: number,
+): void {
+  if (!view.focusCell) return;
+  const area = activeArea(view.selection);
+  if (area.kind === "row" || area.kind === "column") return;
+  const at = selectionAnchor(view.selection);
+
+  const display = view.displayOfRow(at.row);
+  // A hidden row has no cells on screen, so there is nothing to wash.
+  if (display >= 0 && !view.hiddenRows.has(at.row)) {
+    const y = oy + view.rows.offsets[display];
+    fill(ctx, 0, y, view.width, spanAt(view.rows.offsets, display), FOCUS_WASH);
+  }
+
+  if (at.col < view.colStart || at.col >= view.colEnd) return;
+  if (view.hiddenCols.has(at.col)) return;
+  const x = ox + view.cols.offsets[at.col];
+  fill(ctx, x, 0, spanAt(view.cols.offsets, at.col), view.height, FOCUS_WASH);
+}
+
 // ---------------------------------------------------------------------------
 // Overlay layer
 // ---------------------------------------------------------------------------
@@ -2627,6 +2674,8 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
     view.height - view.headerH,
   );
   ctx.clip();
+
+  paintFocusCross(ctx, view, ox, oy);
 
   // Excel marks one cell with an outline and anything larger with a fill — and
   // inside a fill it leaves the active cell clear and outlines that one, which
