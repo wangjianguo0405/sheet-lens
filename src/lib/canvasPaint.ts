@@ -183,6 +183,14 @@ export interface GridView {
    * the reader's switch rather than the file's — see `lib/focusCell.ts`.
    */
   focusCell: boolean;
+  /**
+   * A cell a jump landed on — a search hit, Go To, the name box — whose row and
+   * column are washed whatever `focusCell` says. The cross exists to answer
+   * "where did that put me", and a hit that landed without it is the one case
+   * it is for. Cleared the moment the cursor is moved by hand, which hands the
+   * question back to the switch.
+   */
+  focusAt: { row: number; col: number } | null;
   selection: Selection;
   /**
    * What Ctrl+C took on this sheet, or an empty list when the clipboard holds
@@ -2625,6 +2633,11 @@ function paintLevelButton(
  * pick — the run's first column, the run's first row — is not where the reader
  * is looking; a stripe along it would point at an edge of the selection rather
  * than at a cursor.
+ *
+ * Where the cross goes is `focusAt` when a jump has landed, and the cursor
+ * otherwise — and the cursor only when the switch is on. That is what makes a
+ * search hit's cell findable on a sheet read with the switch off: the jump is
+ * the one moment the reader did not choose where to look.
  */
 function paintFocusCross(
   ctx: CanvasRenderingContext2D,
@@ -2632,10 +2645,8 @@ function paintFocusCross(
   ox: number,
   oy: number,
 ): void {
-  if (!view.focusCell) return;
-  const area = activeArea(view.selection);
-  if (area.kind === "row" || area.kind === "column") return;
-  const at = selectionAnchor(view.selection);
+  const at = view.focusAt ?? (view.focusCell ? cursorOf(view) : null);
+  if (!at) return;
 
   const display = view.displayOfRow(at.row);
   // A hidden row has no cells on screen, so there is nothing to wash.
@@ -2648,6 +2659,14 @@ function paintFocusCross(
   if (view.hiddenCols.has(at.col)) return;
   const x = ox + view.cols.offsets[at.col];
   fill(ctx, x, 0, spanAt(view.cols.offsets, at.col), view.height, FOCUS_WASH);
+}
+
+/** The cell the cross follows when the reader's switch is what asks for it. */
+function cursorOf(view: GridView): { row: number; col: number } | null {
+  const area = activeArea(view.selection);
+  // See the note above on why a run of whole rows or columns draws nothing.
+  if (area.kind === "row" || area.kind === "column") return null;
+  return selectionAnchor(view.selection);
 }
 
 // ---------------------------------------------------------------------------
