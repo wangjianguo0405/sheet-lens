@@ -164,7 +164,7 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
             className={cn(
               "min-w-0 flex-1 pl-2",
               expanded
-                ? "max-h-24 overflow-y-auto break-all whitespace-pre-wrap pb-1.5"
+                ? "max-h-24 overflow-y-auto break-all whitespace-pre-wrap py-1.5"
                 : "truncate py-1.5",
             )}
           >
@@ -172,10 +172,13 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
           </span>
           {!expanded && toggle}
         </div>
-        {/* Over the value's right edge, level with its first line, and clear of
+        {/* Over the value's right edge, centred on its first line, and clear of
             the scrollbar underneath it. */}
         {expanded && (
-          <div className="absolute top-0 right-0 h-7" style={chevronRight}>
+          <div
+            className="absolute top-0 right-0 flex h-7 items-center"
+            style={chevronRight}
+          >
             {toggle}
           </div>
         )}
