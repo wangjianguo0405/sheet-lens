@@ -34,6 +34,7 @@ import {
 } from "@/lib/selection";
 import { toggleShapeDebug } from "@/lib/debugPanels";
 import { initialFocusCell, storeFocusCell } from "@/lib/focusCell";
+import { initialFontColor, storeFontColor } from "@/lib/fontColor";
 import { initialMarkColor, markSelection, storeMarkColor } from "@/lib/marks";
 import type { Target } from "@/lib/column";
 import {
@@ -253,6 +254,8 @@ export default function App() {
   const [focusCell, setFocusCell] = useState(initialFocusCell);
   /** The colour the toolbar's paint bucket is holding, kept between sessions. */
   const [markColor, setMarkColor] = useState(initialMarkColor);
+  /** The colour it paints text with, kept the same way and for the same reason. */
+  const [fontColor, setFontColor] = useState(initialFontColor);
   /** The workbook paths the File menu offers, newest first. */
   const [recentFiles, setRecentFiles] = useState<string[]>(readRecentFiles);
   /** Those of them that would not open, which the menu greys out. */
@@ -1158,6 +1161,10 @@ export default function App() {
     storeMarkColor(markColor);
   }, [markColor]);
 
+  useEffect(() => {
+    storeFontColor(fontColor);
+  }, [fontColor]);
+
   /**
    * Ctrl+PageUp/PageDown steps along the workbook's sheets in tab order, and
    * stops at either end rather than wrapping — which is what Excel does. It
@@ -1527,6 +1534,17 @@ export default function App() {
             onToggleSheetTabs={() => togglePanel("tabs")}
             onMark={applyMark}
             markColor={markColor}
+            fontColor={fontColor}
+            onFontColor={(color) => {
+              if (color === null) {
+                // "Automatic" takes the overlay off rather than painting a
+                // colour on: what is left is whatever the cell itself says.
+                applyFormat({ color: null });
+                return;
+              }
+              setFontColor(color);
+              applyFormat({ color });
+            }}
             activeStyle={activeStyle}
             onFormat={applyFormat}
             frozen={frozenBands.rows > 0 || frozenBands.cols > 0}

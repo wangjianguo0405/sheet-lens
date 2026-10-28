@@ -56,7 +56,10 @@
     "split": "在活动单元格处拆分窗口",
     "unsplit": "取消拆分",
     "focusCell": "聚焦单元格（高亮所在行和列）",
-    "focusCellOff": "关闭聚焦单元格"
+    "focusCellOff": "关闭聚焦单元格",
+    "fontColor": "字体颜色",
+    "fontColorAuto": "自动",
+    "moreFontColors": "其他字体颜色"
   },
   "language": {
     "en": "English",

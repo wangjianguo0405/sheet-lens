@@ -70,6 +70,10 @@ interface RibbonProps {
   onMark: (fill: string | null) => void;
   /** What the bucket fills with when it is pressed rather than its caret. */
   markColor: string;
+  /** What the font-colour button paints text with, likewise. */
+  fontColor: string;
+  /** Null is "Automatic": the reader's colour comes off the cell. */
+  onFontColor: (color: string | null) => void;
   /** The active cell's style, as the font and alignment groups show it. */
   activeStyle: ActiveCellStyle | null;
   /** Lays a font or alignment choice over the selection; null takes it off. */
@@ -192,6 +196,8 @@ export function Ribbon({
   onToggleSheetTabs,
   onMark,
   markColor,
+  fontColor,
+  onFontColor,
   activeStyle,
   onFormat,
   frozen,
@@ -335,6 +341,53 @@ export function Ribbon({
         >
           <Underline className="size-3.5" />
         </Toggle>
+
+        {/* Excel's font colour: a split button, the A painting with the colour
+            the button is holding and the caret beside it opening the palette.
+            It sits with the font group because the colour is the font's, which
+            is also where Excel keeps it. */}
+        <div className="flex items-stretch">
+          <Hint label={t("ribbon.fontColor")}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 rounded-r-none px-1.5"
+              onClick={() => onFontColor(fontColor)}
+              aria-label={t("ribbon.fontColor")}
+            >
+              <span className="flex flex-col items-center justify-center">
+                <span className="text-[11px] leading-none font-semibold">A</span>
+                <span
+                  aria-hidden
+                  className="mt-px h-[3px] w-4 rounded-[1px] ring-1 ring-foreground/20 ring-inset"
+                  style={{ background: fontColor }}
+                />
+              </span>
+            </Button>
+          </Hint>
+          <DropdownMenu>
+            <Hint label={t("ribbon.fontColor")}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 rounded-l-none px-0.5"
+                  aria-label={t("ribbon.moreFontColors")}
+                >
+                  <ChevronDown className="size-3" />
+                </Button>
+              </DropdownMenuTrigger>
+            </Hint>
+            <DropdownMenuContent align="start" className="min-w-[13.5rem]">
+              <ColorPalette
+                variant="dropdown"
+                current={fontColor}
+                onPick={(color) => onFontColor(color)}
+                clearLabel={t("ribbon.fontColorAuto")}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </Group>
 
       {/* Alignment, split the way Excel splits it: across, then down. */}

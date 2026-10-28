@@ -21,6 +21,7 @@ export type CellFormat = Partial<
     | "horizontal"
     | "vertical"
     | "wrap"
+    | "color"
   >
 >;
 
