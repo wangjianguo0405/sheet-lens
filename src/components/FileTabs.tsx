@@ -306,36 +306,6 @@ export function FileTabs({
                   handed to whatever the system opens it with, and where it sits
                   on disk. */}
               <ContextMenuContent className="min-w-44">
-                {/* Closing, first and together, the way every tab strip has it:
-                    the one under the pointer, then the sweep options — which are
-                    greyed out when there is nothing for them to take away. */}
-                <ContextMenuItem className="text-xs" icon={<X />} onSelect={() => onClose(tab.path)}>
-                  {t("tabs.closeThis")}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  className="text-xs"
-                  icon={<XSquare />}
-                  disabled={others.length === 0}
-                  onSelect={() => onCloseMany(others.map((one) => one.path), tab.path)}
-                >
-                  {t("tabs.closeOthers")}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  className="text-xs"
-                  icon={<PanelRightClose />}
-                  disabled={right.length === 0}
-                  onSelect={() => onCloseMany(right.map((one) => one.path), tab.path)}
-                >
-                  {t("tabs.closeRight")}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  className="text-xs"
-                  icon={<XCircle />}
-                  onSelect={() => onCloseMany(tabs.map((one) => one.path))}
-                >
-                  {t("tabs.closeAll")}
-                </ContextMenuItem>
-                <ContextMenuSeparator />
                 <ContextMenuItem
                   className="text-xs"
                   icon={<RotateCw />}
@@ -371,7 +341,6 @@ export function FileTabs({
                     </ContextMenuItem>
                   </ContextMenuSubContent>
                 </ContextMenuSub>
-                <ContextMenuSeparator />
                 <ContextMenuSub>
                   <ContextMenuSubTrigger className="text-xs" icon={<AppWindow />}>
                     {t("tabs.openWith")}
@@ -399,6 +368,40 @@ export function FileTabs({
                   }}
                 >
                   {t("tabs.reveal")}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                {/* Closing, last and together: the one under the pointer, then
+                    the sweep options — greyed out when there is nothing for them
+                    to take away — and "close all" behind its own rule, since it
+                    is the one command here with no undo behind it. A viewer's
+                    menu is opened to get at the path or to read the file again
+                    far more often than to shut it. */}
+                <ContextMenuItem className="text-xs" icon={<X />} onSelect={() => onClose(tab.path)}>
+                  {t("tabs.closeThis")}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<XSquare />}
+                  disabled={others.length === 0}
+                  onSelect={() => onCloseMany(others.map((one) => one.path), tab.path)}
+                >
+                  {t("tabs.closeOthers")}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<PanelRightClose />}
+                  disabled={right.length === 0}
+                  onSelect={() => onCloseMany(right.map((one) => one.path), tab.path)}
+                >
+                  {t("tabs.closeRight")}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<XCircle />}
+                  onSelect={() => onCloseMany(tabs.map((one) => one.path))}
+                >
+                  {t("tabs.closeAll")}
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
