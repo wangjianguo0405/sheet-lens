@@ -71,13 +71,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-
+      # pnpm first: `setup-node@v5` now caches the package manager's store by
+      # default, and it decides what to cache by running the manager — which is
+      # not installed yet if node comes first.
       - uses: pnpm/action-setup@v5
         with:
           version: 11.7.0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
 
