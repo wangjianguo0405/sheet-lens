@@ -38,7 +38,6 @@ import { validationListItems } from "@/lib/validationList";
 import {
   cellFontStack,
   clearTextCaches,
-  flatText,
   fontString,
   layoutLines,
   textWidth,
@@ -5799,14 +5798,6 @@ export function CanvasGrid({
     : null;
 
   /**
-   * Whether the field draws the text with its breaks taken out. A cell that
-   * does not wrap is one line to Excel, and that is how the painter drew it —
-   * see the note on the field below.
-   */
-  const flatRuns =
-    styleAt(editing?.row ?? 0, editing?.col ?? 0)?.wrap === false;
-
-  /**
    * The tab row's right bar starts at the split line, or at the tabs when the
    * line is behind them and there is no left bar to draw.
    */
@@ -6095,22 +6086,17 @@ export function CanvasGrid({
               style={{ display: "none" }}
               className="pointer-events-auto absolute top-0 left-0 overflow-auto break-words whitespace-pre-wrap outline-none select-text"
             >
-              {/* A cell that does not wrap is one line to Excel, and the
-                  painter lays it out as one — a break in the value is drawn as
-                  nothing. The field has to draw the same thing, or its `pre-wrap`
-                  turns the break into a second line the cell never showed, and
-                  the text overflows a box with a gap under it. */}
               {runs ? (
                 runs.map((run, index) => (
                   <span
                     key={index}
                     style={run.color ? { color: run.color } : undefined}
                   >
-                    {flatRuns ? flatText(run.text) : run.text}
+                    {run.text}
                   </span>
                 ))
               ) : (
-                <span>{flatRuns ? flatText(editingText) : editingText}</span>
+                <span>{editingText}</span>
               )}
             </div>
           )}
