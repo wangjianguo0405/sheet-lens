@@ -3079,9 +3079,16 @@ export function CanvasGrid({
   useEffect(() => {
     const el = editorRef.current;
     if (!editing || !el) return;
-    const asRead = el.innerHTML;
+    /**
+     * The value as it was read, compared on the text alone: the field's colours
+     * are the reader's to change — that is what its selection is for — so a
+     * check on the whole `innerHTML` would undo a colour the moment it was laid
+     * down, which is exactly what it did before this was text-only.
+     */
+    const want = el.textContent ?? "";
     const observer = new MutationObserver(() => {
-      if (el.innerHTML !== asRead) el.innerHTML = asRead;
+      if (el.textContent === want) return;
+      el.textContent = want;
     });
     observer.observe(el, { childList: true, characterData: true, subtree: true });
     return () => observer.disconnect();
@@ -3156,7 +3163,6 @@ export function CanvasGrid({
       const stretch = selectedText() ?? keptStretch.current;
       if (stretch) {
         onTextColor?.(stretch, color);
-        keptStretch.current = null;
       } else {
         onFormatColor?.(color);
       }
@@ -3193,6 +3199,9 @@ export function CanvasGrid({
     keptStretch.current = null;
     const keep = () => {
       const stretch = selectedText();
+      // Only ever replaced by a real stretch. Every press clears the document
+      // selection and fires this with nothing, and taking that as the answer
+      // would throw away the stretch the press is about to act on.
       if (stretch) keptStretch.current = stretch;
     };
     document.addEventListener("selectionchange", keep);
@@ -3205,13 +3214,25 @@ export function CanvasGrid({
     };
   }, [editing, selectedText]);
 
-  /** A press anywhere else puts it away, the way leaving a cell does in Excel. */
+  /**
+   * A press puts the field away, the way leaving a cell does in Excel — but
+   * only a press on the sheet. The ribbon's buttons are a press elsewhere that
+   * is doing something to this cell rather than to another one: closing the
+   * field on the way would take its selection with it, which is the very thing
+   * the font-colour button is about to act on.
+   */
   useEffect(() => {
     if (!editing) return;
     const onDown = (event: PointerEvent) => {
       if (editorRef.current?.contains(event.target as Node)) return;
-      // Read before closing: the press is what takes the selection away, and
-      // the colour may be about to be asked for it.
+      const onRibbon = (event.target as HTMLElement | null)?.closest("[data-ribbon]");
+      if (onRibbon) {
+        // The press is already taking the selection apart, so read it now; the
+        // field stays open and the button acts on this stretch.
+        const stretch = selectedText();
+        if (stretch) keptStretch.current = stretch;
+        return;
+      }
       const stretch = selectedText();
       if (stretch) keptStretch.current = stretch;
       setEditing(null);
@@ -5974,9 +5995,22 @@ export function CanvasGrid({
    */
   const editingText = editing ? (cellAt(editing.row, editing.col)?.text ?? "") : "";
   const runs = editing
-    ? (layout?.richCells?.find(
-        (cell) => cell.row === editing.row && cell.col === editing.col,
-      )?.runs ?? null)
+    ? (() => {
+        const file =
+          layout?.richCells?.find(
+            (cell) => cell.row === editing.row && cell.col === editing.col,
+          )?.runs ?? null;
+        // The reader's own colours are laid over the file's, the same merge the
+        // painter reads — otherwise the field draws the file's runs alone and a
+        // stretch that was coloured on the sheet goes black the moment the cell
+        // is opened.
+        const own = textColors?.get(
+          formatKey(sheet.name, editing.row, editing.col),
+        );
+        if (!own) return file;
+        const text = cellAt(editing.row, editing.col)?.text ?? "";
+        return textRuns(file, own, text);
+      })()
     : null;
 
   /**
