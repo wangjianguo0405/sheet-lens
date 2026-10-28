@@ -798,6 +798,15 @@ function describePaint(timing: PaintTimings): string {
   return lines.join("\n");
 }
 
+/** Whether a selection still has its anchor on the cell the cross was set to. */
+function sameCursor(
+  at: { row: number; col: number },
+  selection: Selection,
+): boolean {
+  const anchor = selectionAnchor(selection);
+  return anchor.row === at.row && anchor.col === at.col;
+}
+
 export function CanvasGrid({
   path,
   sheet,
@@ -992,6 +1001,18 @@ export function CanvasGrid({
   const followedRef = useRef<Selection | null>(null);
   /** The last jump token the pass acted on, so only a new one may drag the view. */
   const revealRef = useRef(reveal ?? 0);
+  /**
+   * The cell the last jump landed on, its row and column washed whatever the
+   * ribbon's switch says. A jump is the one time the reader did not choose
+   * where to look — a search hit, Go To, the name box — so the cross answers
+   * "where did that put me" even on a sheet read with the switch off.
+   *
+   * Cleared by any cursor move that is not a jump: the question has been
+   * answered and the reader is looking somewhere they meant to.
+   */
+  const [focusAt, setFocusAt] = useState<{ row: number; col: number } | null>(null);
+  /** The jump token the effect below last set the cross from. */
+  const localReveal = useRef(reveal ?? 0);
   const sizeRef = useRef({ width: 0, height: 0 });
   /** The same box as state, for the split's scrollbars to lay themselves out. */
   const [box, setBox] = useState({ width: 0, height: 0 });
@@ -3104,15 +3125,30 @@ export function CanvasGrid({
    */
   useLayoutEffect(() => {
     paintRef.current("overlay");
-  }, [selection]);
+  }, [selection, focusAt, focusCell]);
 
   /**
-   * The focus cross is drawn by the same pass, so switching it is one overlay
-   * frame — no cell is touched either way.
+   * Where the cross belongs after this selection arrived.
+   *
+   * A jump — `reveal` is the app's token for one, bumped by a search hit, Go To
+   * and the name box, and by nothing else — puts it on the cell it landed on
+   * whether or not the switch is on: the jump is the one time the reader did
+   * not choose where to look. Any other move has read the answer already, so
+   * the cross goes back to being the switch's business.
+   *
+   * One effect rather than two, because both fire in the same commit: a jump
+   * changes the selection as well as the token, and a separate "did the cursor
+   * move?" effect would then clear what the jump had just set.
    */
   useLayoutEffect(() => {
-    paintRef.current("overlay");
-  }, [focusCell]);
+    if ((reveal ?? 0) !== localReveal.current) {
+      localReveal.current = reveal ?? 0;
+      const at = selectionAnchor(selection);
+      setFocusAt({ row: at.row, col: at.col });
+      return;
+    }
+    if (focusAt && !sameCursor(focusAt, selection)) setFocusAt(null);
+  }, [reveal, selection, focusAt]);
 
   /**
    * Brings the selected cell into view.
@@ -3644,6 +3680,7 @@ export function CanvasGrid({
       workbookFontSizePx: fontSize,
       showGrid,
       focusCell,
+      focusAt,
       selection: selectionRef.current,
       copied:
         copiedRef.current?.path === path && copiedRef.current?.sheet === sheet.name
@@ -3712,6 +3749,7 @@ export function CanvasGrid({
     pageLabel,
     uiFont,
     outsidePrint,
+    focusAt,
   ]);
 
   const paint = useCallback(
