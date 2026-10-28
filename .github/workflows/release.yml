@@ -43,7 +43,7 @@ jobs:
     steps:
       # Without a checkout `gh release create` gives up before it makes the call
       # ("failed to run git"), which is the call this job exists to watch.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: What this token can do
         shell: pwsh
@@ -69,13 +69,13 @@ jobs:
     if: github.event_name == 'push' || inputs.publish
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 11.7.0
 
