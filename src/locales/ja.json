@@ -56,7 +56,10 @@
     "split": "選択セルでウィンドウを分割",
     "unsplit": "分割を解除",
     "focusCell": "フォーカスセル（行と列を強調表示）",
-    "focusCellOff": "フォーカスセルをオフ"
+    "focusCellOff": "フォーカスセルをオフ",
+    "fontColor": "フォントの色",
+    "fontColorAuto": "自動",
+    "moreFontColors": "その他のフォントの色"
   },
   "language": {
     "en": "English",

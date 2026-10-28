@@ -56,7 +56,10 @@
     "split": "Split the window at the active cell",
     "unsplit": "Remove the split",
     "focusCell": "Focus cell (highlight its row and column)",
-    "focusCellOff": "Turn focus cell off"
+    "focusCellOff": "Turn focus cell off",
+    "fontColor": "Font color",
+    "fontColorAuto": "Automatic",
+    "moreFontColors": "More font colors"
   },
   "language": {
     "en": "English",
