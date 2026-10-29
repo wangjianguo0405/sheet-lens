@@ -3183,8 +3183,12 @@ export function CanvasGrid({
   const colorText = useCallback(
     (color: string | null) => {
       // The live selection first; failing that, the stretch kept from the field
-      // that a press has just closed.
-      const stretch = selectedText() ?? keptStretch.current;
+      // that a press has just closed — and only while that field is still the
+      // one being coloured. A stretch belongs to the cell it was taken in: once
+      // the reader has moved on to another cell, keeping it would paint the
+      // colour onto the sheet behind them and leave the cell they are looking
+      // at untouched, which reads as the button doing nothing at all.
+      const stretch = selectedText() ?? (editing ? keptStretch.current : null);
       if (stretch) {
         onTextColor?.(stretch, color);
         keptStretch.current = stretch;
@@ -3198,7 +3202,7 @@ export function CanvasGrid({
         onFormatColor?.(color);
       }
     },
-    [selectedText, onTextColor, onFormatColor],
+    [selectedText, onTextColor, onFormatColor, editing],
   );
 
   /**
