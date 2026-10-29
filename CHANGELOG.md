@@ -12,6 +12,14 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.15] - 2026-10-29
+
+### Fixed
+
+- The font-colour button colours the cell in front of you again: a stretch of text picked inside an open cell no longer claims the next press once that cell is closed
+- A fixed sheet keeps its place in the list instead of vanishing from it — the fixed block at the top is a shortcut, and the sheet still appears where the workbook has it
+- Long sheet names shorten with an ellipsis instead of widening the sidebar and pushing the pin button out of reach; the full name shows on hover and returns as the sidebar is dragged wider
+
 ## [1.0.14] - 2026-10-29
 
 ### Fixed
