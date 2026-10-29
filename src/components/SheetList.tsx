@@ -55,9 +55,13 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
         const sheet = byName.get(name);
         return sheet ? [sheet] : [];
       }),
-      rest: matched.filter((sheet) => !pinned.has(sheet.name)),
+      // Every matched sheet, fixed ones included: fixing a sheet adds a row
+      // above, it does not take the sheet out of the list. The list below is
+      // the workbook's own order and must read the same whether anything is
+      // fixed or not.
+      rest: matched,
     };
-  }, [sheets, filter, pins, pinned]);
+  }, [sheets, filter, pins]);
 
   const togglePin = (name: string) =>
     setPins(pinned.has(name) ? unpinSheet(path, name) : pinSheet(path, name));
@@ -153,7 +157,13 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
     };
   }, []);
 
-  const row = (sheet: SheetInfo) => {
+  /**
+   * One sheet's row. `placed` is which of the list's two runs it is being drawn
+   * in: a fixed sheet appears twice — once in the fixed run at the top, once in
+   * the workbook's own order below, because fixing it adds a shortcut and does
+   * not move the sheet.
+   */
+  const row = (sheet: SheetInfo, placed: "fixed" | "list") => {
     /**
      * A hidden sheet is listed but goes nowhere: it has no tab to select
      * from, and a click that opened one would leave the strip with no
@@ -162,17 +172,19 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
      */
     const isHidden = hidden.has(sheet.name);
     const isPinned = pinned.has(sheet.name);
+    const inFixed = placed === "fixed";
     const pinLabel = t(isPinned ? "sheets.unpin" : "sheets.pin", {
       name: sheet.name,
     });
     const edge = dropAt?.name === sheet.name ? (dropAt.after ? "after" : "before") : null;
     return (
       <div
-        key={sheet.name}
+        key={inFixed ? `fixed ${sheet.name}` : sheet.name}
         // Only the fixed run is reordered by hand; the rest follows the file.
-        data-fixed={isPinned ? sheet.name : undefined}
+        // The copy below is not a place to drag from, even of a fixed sheet.
+        data-fixed={inFixed ? sheet.name : undefined}
         onPointerDown={(event) => {
-          if (!isPinned) return;
+          if (!inFixed) return;
           // The pin is its own control; pulling a sheet is the row's.
           if ((event.target as HTMLElement).closest("[data-sheet-pin]")) return;
           dropped.current = false;
@@ -182,7 +194,7 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
           "group flex items-center rounded-sm transition-colors",
           sheet.name === active ? "bg-accent" : !isHidden && "hover:bg-accent/50",
           isPinned && "cursor-grab",
-          dragging === sheet.name && "opacity-40",
+          dragging === sheet.name && inFixed && "opacity-40",
           edge === "before" && "shadow-[inset_0_2px_0_0_#107C41]",
           edge === "after" && "shadow-[inset_0_-2px_0_0_#107C41]",
         )}
@@ -267,20 +279,24 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
         )}
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
+      {/* Radix wraps the children in an inner `display: table` also — that is
+          the wrapper that sizes itself to the widest name, takes the panel
+          sideways and keeps `truncate` from ever firing. Both levels are made
+          block: the viewport, and the div it puts inside it. */}
+      <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:!block [&_[data-slot=scroll-area-viewport]>div]:!block">
         <div className="flex flex-col gap-px p-1">
           {/* The fixed ones are their own run above the count, as the start
               page's pinned files are above its history. */}
           {fixed.length > 0 && (
             <>
               <h2 className={HEAD}>{t("sheets.pinned")}</h2>
-              {fixed.map(row)}
+              {fixed.map((sheet) => row(sheet, "fixed"))}
             </>
           )}
           <h2 className={cn(HEAD, fixed.length > 0 && "mt-4")}>
             {t("sheets.count", { count: sheets.length })}
           </h2>
-          {rest.map(row)}
+          {rest.map((sheet) => row(sheet, "list"))}
           {rest.length === 0 && fixed.length === 0 && (
             <p className="px-2 py-4 text-xs text-muted-foreground">
               {t("sheets.none")}
