@@ -12,6 +12,14 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.14] - 2026-10-29
+
+### Fixed
+
+- Pressing the dropdown arrow on a list-validated cell no longer jumps the selection to the cell beside it
+- Alt+Down opens a list-validated cell's choices, from the sheet and from the cell's open text alike, and the arrow keys walk them
+- Ctrl+Shift+arrow carries the selection on a stretch at a time instead of staying put after the first press
+
 ## [1.0.13] - 2026-10-28
 
 ### Added
