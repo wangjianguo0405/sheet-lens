@@ -57,6 +57,7 @@ import {
   type Cell,
   type CellStyle,
   type DataBarCell,
+  type DataValidation,
   type FilterCriterion,
   type IconCell,
   type MergeRect,
@@ -1111,6 +1112,16 @@ export function CanvasGrid({
     y: number;
     items: string[];
   } | null>(null);
+  /**
+   * What opened the list: the arrow takes the sheet's focus so the arrows can
+   * walk the choices, while Alt+Down is pressed *in* a field that has to keep
+   * its caret. Read by the focus effect, which runs after the box is up.
+   */
+  const valueListTrigger = useRef<"pointer" | "keyboard">("pointer");
+  const valueListRef = useRef<HTMLDivElement>(null);
+  /** The element the keys came from, to get them back when the box closes. */
+  const valueListReturn = useRef<HTMLElement | null>(null);
+
   const editorRef = useRef<HTMLDivElement>(null);
   /** What the paint pass reads, since a scroll does not re-render React. */
   const editingRef = useRef(editing);
@@ -5092,11 +5103,56 @@ export function CanvasGrid({
     [layout],
   );
 
+  /** The rule the cursor sits on, when it is one a dropdown can be opened on. */
+  const dropdownRuleAt = useCallback(
+    (row: number, col: number) => {
+      const rule = validationAtCell(row, col);
+      return rule && rule.kind === "list" && !rule.hideDropdown ? rule : null;
+    },
+    [validationAtCell],
+  );
+
   /**
-   * Opens a list validation's choices when the press was on its arrow — the
-   * small button the overlay draws at the active cell's right edge. The list is
-   * a viewer's list: this app does not write a value back, so choosing one
-   * closes it rather than inventing an edit the file does not have.
+   * Opens the list a validation rule offers under the active cell's arrow, at
+   * the cell's bottom-left corner, and marks it active so Alt+Down can reach
+   * the same box. The list is a viewer's list: this app does not write a value
+   * back, so choosing one closes it rather than inventing an edit the file does
+   * not have.
+   */
+  const openValueList = useCallback(
+    (rule: DataValidation, row: number, col: number, trigger: "pointer" | "keyboard") => {
+      const el = viewportRef.current;
+      if (!el) return;
+      const display = displayOfRow(row);
+      if (display < 0) return;
+      const z = zoomRef.current;
+      const rect = el.getBoundingClientRect();
+      const sheetX = cols.offsets[col] ?? 0;
+      const sheetY = rows.offsets[display] ?? 0;
+      const h = spanAt(rows.offsets, display);
+      const screenX = (headerW + sheetX) * z - (col < freeze.cols ? 0 : el.scrollLeft);
+      const screenY = (headerH + sheetY) * z - (display < freeze.rows ? 0 : el.scrollTop);
+      void validationListItems(path, sheet.name, rule.formula1, layout?.names).then((items) => {
+        if (items.length === 0) return;
+        const boxHeight = Math.min(items.length * 24 + 8, 272);
+        const y = Math.min(rect.top + screenY + h * z + 2, window.innerHeight - boxHeight - 8);
+        const x = Math.min(rect.left + screenX, window.innerWidth - 208);
+        valueListTrigger.current = trigger;
+        // Where the keys came from: the cell, or the field a list-validated
+        // cell is being read in — Escape has to give the caret back to it.
+        valueListReturn.current =
+          trigger === "keyboard" ? (document.activeElement as HTMLElement | null) : null;
+        setValueList({ x, y, items });
+      });
+    },
+    [path, sheet.name, layout?.names, displayOfRow, cols, rows, freeze, headerW, headerH],
+  );
+
+  /**
+   * Whether a press landed on that arrow. The painter puts the button on the
+   * cell's right border — it hangs over the next column — and pins it to the
+   * bottom of the cell, so the geometry here has to match `paintOverlay`'s
+   * exactly or a press that looks like it is on the button falls beside it.
    */
   const handleDropdownPress = useCallback(
     (clientX: number, clientY: number): boolean => {
@@ -5115,38 +5171,102 @@ export function CanvasGrid({
       const sheetY = rows.offsets[display] ?? 0;
       const w = spanAt(cols.offsets, at.col);
       const h = spanAt(rows.offsets, display);
-      // The same geometry the overlay painted the button with.
       const screenX = (headerW + sheetX) * z - (at.col < freeze.cols ? 0 : el.scrollLeft);
       const screenY = (headerH + sheetY) * z - (display < freeze.rows ? 0 : el.scrollTop);
       const size = Math.min(16, Math.max(9, h - 2)) * z;
-      // The painter puts the button on the cell's right border, hanging over
-      // the next column, and pins it to the bottom edge.
       const left = rect.left + screenX + (w - 1) * z;
       const top = rect.top + screenY + (h - size / z - 2) * z;
       if (clientX < left || clientX > left + size || clientY < top || clientY > top + size) {
         return false;
       }
-      void validationListItems(path, sheet.name, rule.formula1, layout?.names).then((items) => {
-        if (items.length === 0) return;
-        const boxHeight = Math.min(items.length * 24 + 8, 272);
-        const y = Math.min(rect.top + screenY + h * z + 2, window.innerHeight - boxHeight - 8);
-        const x = Math.min(rect.left + screenX, window.innerWidth - 208);
-        setValueList({ x, y, items });
-      });
+      valueListTrigger.current = "pointer";
+      openValueList(rule, at.row, at.col, "pointer");
       return true;
     },
-    [selection, validationAtCell, displayOfRow, cols, rows, freeze, path, sheet.name, headerW, headerH],
+    [selection, validationAtCell, displayOfRow, cols, rows, freeze, headerW, headerH, openValueList],
   );
 
+  /**
+   * Alt+Down, Excel's way to a list-validated cell's choices from the keyboard.
+   *
+   * It has to work from two places: over the sheet, on the cursor's cell, and
+   * from inside the open field, since that is where the caret is once the cell
+   * is being read — a field swallows its own keys, so this cannot be a branch
+   * of `handleKeyDown`. Like F2 it lives on `window` so a press that left the
+   * focus on a toolbar button does not take the shortcut away.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "ArrowDown" || !event.altKey || event.ctrlKey || event.metaKey) return;
+      // Over the sheet the key handler already answered it; this is for the
+      // caret being in a field, where that handler never sees the press.
+      if (event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-sheet-strip]")) return;
+      const at = editing ?? selectionAnchor(selection);
+      const rule = dropdownRuleAt(at.row, at.col);
+      if (!rule) return;
+      event.preventDefault();
+      // A box already up is the keyboard's from here, whatever opened it.
+      valueListTrigger.current = "keyboard";
+      valueListReturn.current = document.activeElement as HTMLElement | null;
+      valueListRef.current?.focus({ preventScroll: true });
+      if (!valueList) openValueList(rule, at.row, at.col, "keyboard");
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selection, editing, dropdownRuleAt, openValueList, valueList]);
+
   // A list belongs to a cell on screen; a scroll or a press anywhere else is
-  // the end of it. Escape closes it, as it closes every menu.
+  // the end of it. Escape closes it, as it closes every menu. Opened from Alt+Down
+  // it takes the keys instead of the cell: the arrows walk the choices and
+  // Enter, in a viewer, only puts the box away.
   useEffect(() => {
     if (!valueList) return;
     const close = () => setValueList(null);
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
     const view = viewportRef.current;
+    if (valueListTrigger.current === "keyboard") {
+      valueListRef.current?.focus({ preventScroll: true });
+    }
+    /** Who has the keys now: the sheet, or the field the list was opened from. */
+    const giveBack = () => {
+      valueListReturn.current?.focus({ preventScroll: true });
+      valueListReturn.current = null;
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        close();
+        if (valueListTrigger.current === "keyboard") giveBack();
+        return;
+      }
+      // A press that opened the box is a press on the sheet, and the sheet's
+      // own key handling is what the arrows mean there.
+      if (valueListTrigger.current !== "keyboard") return;
+      const box = valueListRef.current;
+      if (!box) return;
+      const options = Array.from(box.querySelectorAll<HTMLElement>('[role="option"]'));
+      if (options.length === 0) return;
+      const current = options.findIndex((one) => one.dataset.active === "true");
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const next =
+          event.key === "ArrowDown"
+            ? Math.min(options.length - 1, current + 1)
+            : Math.max(0, current < 0 ? options.length - 1 : current - 1);
+        options.forEach((one, index) => {
+          if (index === next) one.dataset.active = "true";
+          else delete one.dataset.active;
+        });
+        options[next].scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        // Nothing here writes a value back, so taking a choice closes the box.
+        event.preventDefault();
+        close();
+        giveBack();
+      }
+    };
     window.addEventListener("pointerdown", close, true);
     window.addEventListener("keydown", key);
     view?.addEventListener("scroll", close);
@@ -5171,9 +5291,12 @@ export function CanvasGrid({
     window.getSelection()?.removeAllRanges();
     if (event.button !== 0) return;
     // Excel's in-cell dropdown: a press on the arrow opens the choices and does
-    // not move the selection.
+    // not move the selection. The button overhangs the *next* column, so the
+    // click that follows the release would otherwise land there and take the
+    // selection with it; it is consumed here instead.
     if (handleDropdownPress(event.clientX, event.clientY)) {
       event.preventDefault();
+      suppressClick.current = true;
       return;
     }
     // A press on a grouping button toggles that group and moves nothing else.
@@ -5233,7 +5356,12 @@ export function CanvasGrid({
       onSelect(base ? withArea(base, next) : next);
     };
     const onUp = () => {
-      suppressClick.current = rangeDrag.current?.dragged ?? false;
+      // A drag that never armed — the press was consumed by the dropdown arrow,
+      // by a grouping button, or by a header resize — set no flag of its own,
+      // and its release says nothing about the click that follows it.
+      if (rangeDrag.current || dragPointer.current) {
+        suppressClick.current = rangeDrag.current?.dragged ?? false;
+      }
       rangeDrag.current = null;
       dragBase.current = null;
       dragPointer.current = null;
@@ -5490,6 +5618,23 @@ export function CanvasGrid({
       }
       event.preventDefault();
       return;
+    }
+
+    // Alt+Down: Excel's way to a list-validated cell's choices. Read from the
+    // cell, not the caret, so B2 can move down while B1 is highlighted.
+    if (event.altKey && event.key === "ArrowDown") {
+      const at = activeArea(selection);
+      if (at.kind === "cell") {
+        const rule = dropdownRuleAt(at.row, at.col);
+        if (rule) {
+          event.preventDefault();
+          valueListTrigger.current = "keyboard";
+          valueListReturn.current = viewportRef.current;
+          valueListRef.current?.focus({ preventScroll: true });
+          if (!valueList) openValueList(rule, at.row, at.col, "keyboard");
+          return;
+        }
+      }
     }
 
     // Alt+PageUp / PageDown: a screen left or right. The cursor lands on the
@@ -6332,7 +6477,13 @@ export function CanvasGrid({
                 if (event.key === "Escape" || event.key === "Enter") {
                   event.preventDefault();
                   setEditing(null);
+                  return;
                 }
+                // A read-only field has nothing for the arrows: not moving the
+                // caret keeps Shift+arrow selections intact. Alt+ArrowDown is
+                // the exception — it is the sheet's list shortcut, and the
+                // window handler that answers it skips anything cancelled here.
+                if (event.key.startsWith("Arrow") && !event.altKey) event.preventDefault();
               }}
               // Put in place by the paint pass, which is the thing that knows
               // where the cell is; hidden until it has been, or it would show up
@@ -6522,8 +6673,11 @@ export function CanvasGrid({
         {/* The values a list validation allows, under its own arrow. */}
         {valueList && (
           <div
+            ref={valueListRef}
             role="listbox"
-            className="fixed z-50 max-h-64 min-w-48 overflow-auto border border-border bg-background py-1 text-xs shadow-md"
+            tabIndex={-1}
+            aria-orientation="vertical"
+            className="fixed z-50 max-h-64 min-w-48 overflow-auto border border-border bg-background py-1 text-xs shadow-md outline-none"
             style={{ left: valueList.x, top: valueList.y }}
           >
             {valueList.items.map((item, index) => (
@@ -6531,7 +6685,7 @@ export function CanvasGrid({
                 key={`${index}-${item}`}
                 role="option"
                 aria-selected={false}
-                className="cursor-default truncate px-2 py-1 hover:bg-accent"
+                className="cursor-default truncate px-2 py-1 data-[active=true]:bg-accent hover:bg-accent"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setValueList(null)}
               >
