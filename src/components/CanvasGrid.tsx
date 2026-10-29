@@ -2524,23 +2524,40 @@ export function CanvasGrid({
    * by the last cell too. A block keeps its anchor under Shift and collapses to
    * the cell it lands on without it, and a run of whole rows or columns — which
    * has only the one axis it runs along — slides along that axis, measured from
-   * the cell the run's own edge sits on.
+   * the cell the run's own edge sits on. Shift measures from the block's own
+   * far end, so each press carries the block on rather than redrawing it.
    */
   const jumpToEdge = useCallback(
     async (dir: "up" | "down" | "left" | "right", extend: boolean) => {
       const sheetRows = Math.max(sheet.rows, layout?.rows ?? 0);
       const sheetCols = Math.max(sheet.cols, layout?.cols ?? 0);
       const from = selectionAnchor(selection);
+      /**
+       * Where Shift's press measures from: the block's own far end. The anchor
+       * stays put through the whole run, so jumping from it again would only
+       * ever redraw the same block — Excel's block walk leaves from the edge,
+       * which is what lets repeated presses accumulate and a press back
+       * retrace.
+       */
+      const start = !extend
+        ? from
+        : selection.kind === "range"
+          ? selection.edge
+          : selection.kind === "row"
+            ? { row: selection.edge, col: from.col }
+            : selection.kind === "column"
+              ? { row: from.row, col: selection.edge }
+              : from;
       const vertical = dir === "up" || dir === "down";
       let to: { row: number; col: number } | null = null;
       try {
-        to = await edgeCell(path, sheet.name, from.row, from.col, dir);
+        to = await edgeCell(path, sheet.name, start.row, start.col, dir);
       } catch {
         // The backend is gone, and the sheet's own edge is still the answer
         // Excel would give from a cell with nothing after it.
       }
-      const row = to?.row ?? (vertical ? (dir === "up" ? 0 : sheetRows - 1) : from.row);
-      const col = to?.col ?? (vertical ? from.col : dir === "left" ? 0 : sheetCols - 1);
+      const row = to?.row ?? (vertical ? (dir === "up" ? 0 : sheetRows - 1) : start.row);
+      const col = to?.col ?? (vertical ? start.col : dir === "left" ? 0 : sheetCols - 1);
 
       // A run of whole rows or columns moves along the one axis it has; the
       // direction across it has nothing there for it to select. Shift grows the
