@@ -316,8 +316,16 @@ function fill(
   const y0 = Math.round(y * scale);
   const x1 = Math.round((x + w) * scale);
   const y1 = Math.round((y + h) * scale);
-  if (x1 <= x0 || y1 <= y0) return;
-  ctx.fillRect(x0 / scale, y0 / scale, (x1 - x0) / scale, (y1 - y0) / scale);
+  /**
+   * At a fractional zoom a 1 px rule is narrower than the device pixel it
+   * snaps into, and both of its edges round to the same pixel — which dropped
+   * the rule outright. On a sheet left at 85% that ate whichever column or row
+   * boundary happened to land there, so a table lost some of its rules and
+   * kept the rest. A rectangle that asked for ink still leaves a pixel.
+   */
+  const dw = Math.max(1, x1 - x0);
+  const dh = Math.max(1, y1 - y0);
+  ctx.fillRect(x0 / scale, y0 / scale, dw / scale, dh / scale);
 }
 
 /**
