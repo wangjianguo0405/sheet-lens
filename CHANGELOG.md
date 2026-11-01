@@ -12,6 +12,12 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.16] - 2026-11-01
+
+### Fixed
+
+- At a zoom below 100%, some cell borders no longer go missing: a table left at 85% used to lose a handful of its rules — often exactly the one closing a column — while the rest stayed
+
 ## [1.0.15] - 2026-10-29
 
 ### Fixed
