@@ -5976,8 +5976,13 @@ export function CanvasGrid({
     // supplies the size; this supplies the place. With no room on the right it
     // mirrors to the left.
     const merge = mergeAt(note.row, note.col);
+    // A cell in a frozen band does not scroll with the rest.
     const cellLeft =
-      rect.left + (headerW + cols.offsets[note.col] - scrollRef.current.left) * z;
+      rect.left +
+      (headerW +
+        cols.offsets[note.col] -
+        (note.col < freeze.cols ? 0 : scrollRef.current.left)) *
+        z;
     const mergeEnd = merge === null ? undefined : cols.offsets[merge.col + merge.cols];
     const cellWidth =
       merge === null || mergeEnd === undefined
@@ -5985,7 +5990,11 @@ export function CanvasGrid({
         : mergeEnd - cols.offsets[merge.col];
     const cellRight = cellLeft + cellWidth * z;
     const cellTop =
-      rect.top + (headerH + rows.offsets[display] - scrollRef.current.top) * z;
+      rect.top +
+      (headerH +
+        rows.offsets[display] -
+        (display < freeze.rows ? 0 : scrollRef.current.top)) *
+        z;
     const gapX = NOTE_BOX_GAP_PX * z;
     const right = cellRight + gapX;
     const flip = right + w > rect.left + el.clientWidth;
@@ -6076,10 +6085,18 @@ export function CanvasGrid({
     const z = zoomRef.current;
     setTip({
       text,
-      x: rect.left + (headerW + cols.offsets[hit.col] - scrollRef.current.left) * z,
+      x:
+        rect.left +
+        (headerW +
+          cols.offsets[hit.col] -
+          (hit.col < freeze.cols ? 0 : scrollRef.current.left)) *
+          z,
       y:
         rect.top +
-        (headerH + rows.offsets[display] - scrollRef.current.top) * z +
+        (headerH +
+          rows.offsets[display] -
+          (display < freeze.rows ? 0 : scrollRef.current.top)) *
+          z +
         spanAt(rows.offsets, display) * z,
     });
   };
