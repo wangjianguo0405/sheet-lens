@@ -12,6 +12,12 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.17] - 2026-11-02
+
+### Fixed
+
+- A note stays on its own cell when the sheet has fixed rows or columns: the box and its leader used to slide away by the distance scrolled, so it opened over other columns
+
 ## [1.0.16] - 2026-11-01
 
 ### Fixed
