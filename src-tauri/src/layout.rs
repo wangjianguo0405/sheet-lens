@@ -28,14 +28,12 @@ const WHITE: &str = "#FFFFFF";
 /// Most workbooks leave it alone; the 23 in the corpus that override it write
 /// `<colors><indexedColors>` at the end of styles.xml.
 const INDEXED: [&str; 64] = [
-    "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF", "000000",
-    "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF", "800000", "008000",
-    "000080", "808000", "800080", "008080", "C0C0C0", "808080", "9999FF", "993366", "FFFFCC",
-    "CCFFFF", "660066", "FF8080", "0066CC", "CCCCFF", "000080", "FF00FF", "FFFF00", "00FFFF",
-    "800080", "800000", "008080", "0000FF", "00CCFF", "CCFFFF", "CCFFCC", "FFFF99", "99CCFF",
-    "FF99CC", "CC99FF", "FFCC99", "3366FF", "33CCCC", "99CC00", "FFCC00", "FF9900", "FF6600",
-    "666699", "969696", "003366", "339966", "003300", "333300", "993300", "993366", "333399",
-    "333333",
+    "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF", "000000", "FFFFFF", "FF0000",
+    "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF", "800000", "008000", "000080", "808000", "800080", "008080",
+    "C0C0C0", "808080", "9999FF", "993366", "FFFFCC", "CCFFFF", "660066", "FF8080", "0066CC", "CCCCFF", "000080",
+    "FF00FF", "FFFF00", "00FFFF", "800080", "800000", "008080", "0000FF", "00CCFF", "CCFFFF", "CCFFCC", "FFFF99",
+    "99CCFF", "FF99CC", "CC99FF", "FFCC99", "3366FF", "33CCCC", "99CC00", "FFCC00", "FF9900", "FF6600", "666699",
+    "969696", "003366", "339966", "003300", "333300", "993300", "993366", "333399", "333333",
 ];
 
 /// The two colour tables a `<color>` can name: the theme's twelve slots and the
@@ -62,20 +60,14 @@ impl Palette<'_> {
 /// walk instead. A file with 64 entries redefines every index, one with 56
 /// starts at 8 (the first eight are fixed).
 fn indexed_palette(xml: &str) -> Vec<Option<String>> {
-    let mut palette: Vec<Option<String>> = INDEXED
-        .iter()
-        .map(|hex| Some(format!("#{hex}")))
-        .collect();
+    let mut palette: Vec<Option<String>> = INDEXED.iter().map(|hex| Some(format!("#{hex}"))).collect();
     let Some(start) = xml.find("<indexedColors") else {
         return palette;
     };
     let Some(open_end) = xml[start..].find('>').map(|at| start + at + 1) else {
         return palette;
     };
-    let Some(end) = xml[open_end..]
-        .find("</indexedColors>")
-        .map(|at| open_end + at)
-    else {
+    let Some(end) = xml[open_end..].find("</indexedColors>").map(|at| open_end + at) else {
         return palette;
     };
     let mut colors = Vec::new();
@@ -103,13 +95,10 @@ fn indexed_palette(xml: &str) -> Vec<Option<String>> {
 /// dk1 first while the index starts at lt1.
 fn theme_slots(scheme: &HashMap<String, String>) -> Vec<Option<String>> {
     const ORDER: [&str; 12] = [
-        "lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5",
-        "accent6", "hlink", "folHlink",
+        "lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink",
+        "folHlink",
     ];
-    ORDER
-        .iter()
-        .map(|name| scheme.get(*name).cloned())
-        .collect()
+    ORDER.iter().map(|name| scheme.get(*name).cloned()).collect()
 }
 /// Excel's stock font. Cells inherit this size, so the grid renders text at the
 /// same scale as the workbook rather than picking its own.
@@ -608,11 +597,7 @@ impl Styles {
 
 /// Stores `style` once and returns its index, so the payload carries each
 /// distinct style a single time.
-pub(crate) fn intern(
-    styles: &mut Vec<CellStyle>,
-    ids: &mut HashMap<CellStyle, u32>,
-    style: CellStyle,
-) -> u32 {
+pub(crate) fn intern(styles: &mut Vec<CellStyle>, ids: &mut HashMap<CellStyle, u32>, style: CellStyle) -> u32 {
     if let Some(found) = ids.get(&style) {
         return *found;
     }
@@ -1313,21 +1298,16 @@ fn sheet_state(xml: &str) -> SheetState {
     let picked = active_pane
         .as_deref()
         .and_then(|pane| {
-            selections.iter().find(|selection| {
-                selection.get("pane").map(|value| value.as_str()) == Some(pane)
-            })
+            selections
+                .iter()
+                .find(|selection| selection.get("pane").map(|value| value.as_str()) == Some(pane))
         })
         .or_else(|| selections.first());
     let selection = picked.and_then(|selection| {
         let active = selection.get("activecell").and_then(|cell| parse_cell(cell))?;
         let areas = selection
             .get("sqref")
-            .map(|sqref| {
-                sqref
-                    .split_whitespace()
-                    .filter_map(parse_range)
-                    .collect()
-            })
+            .map(|sqref| sqref.split_whitespace().filter_map(parse_range).collect())
             .unwrap_or_default();
         Some(SavedSelection {
             active: [active.0, active.1],
@@ -1494,11 +1474,7 @@ fn read_notes<R: Read + Seek>(zip: &mut ZipArchive<R>, part: &str, layout: &mut 
 
 /// The part a worksheet relates to by relationship type — its comments, which
 /// no element in the sheet names directly.
-fn part_by_type<R: Read + Seek>(
-    zip: &mut ZipArchive<R>,
-    part: &str,
-    suffix: &str,
-) -> Option<String> {
+fn part_by_type<R: Read + Seek>(zip: &mut ZipArchive<R>, part: &str, suffix: &str) -> Option<String> {
     let (dir, base) = part.rsplit_once('/')?;
     let rels = read_entry(zip, &format!("{dir}/_rels/{base}.rels")).ok()?;
     scan(&rels, b"Relationship").into_iter().find_map(|element| {
@@ -1620,7 +1596,16 @@ fn parse_anchor(text: &str, row: u32, col: u32) -> [f64; 8] {
         anchor.copy_from_slice(&values);
         return anchor;
     }
-    [col as f64, 0.0, row as f64, 0.0, (col + 1) as f64, 0.0, (row + 1) as f64, 0.0]
+    [
+        col as f64,
+        0.0,
+        row as f64,
+        0.0,
+        (col + 1) as f64,
+        0.0,
+        (row + 1) as f64,
+        0.0,
+    ]
 }
 
 /// `comments1.xml`: the wording of each note, by the cell it hangs on, with the
@@ -1703,12 +1688,7 @@ fn parse_comments(xml: &str) -> HashMap<(u32, u32), (String, Option<NoteFont>)> 
 ///
 /// Every failure here is silent on purpose: a sheet whose shapes cannot be read
 /// still shows its cells, and the cells are the part that matters.
-fn read_drawings<R: Read + Seek>(
-    zip: &mut ZipArchive<R>,
-    cache: &Cache,
-    part: &str,
-    layout: &mut SheetLayout,
-) {
+fn read_drawings<R: Read + Seek>(zip: &mut ZipArchive<R>, cache: &Cache, part: &str, layout: &mut SheetLayout) {
     let Some(rel) = layout.drawing_rel.take() else {
         return;
     };
@@ -1840,8 +1820,7 @@ fn shared_strings(xml: &str) -> Vec<String> {
                 }
             }
             Ok(Event::Text(text)) if in_text && !in_phonetic => {
-                if let (Some(slot), Ok(text)) = (out.last_mut(), text.xml_content(XmlVersion::default()))
-                {
+                if let (Some(slot), Ok(text)) = (out.last_mut(), text.xml_content(XmlVersion::default())) {
                     slot.push_str(&text);
                 }
             }
@@ -1974,9 +1953,7 @@ fn rich_strings(xml: &str, palette: Palette) -> Vec<Option<Vec<RichRun>>> {
             // Only text inside a `<r>` counts; a phonetic `<rPh>` sets the same
             // flag but has no run open, so its reading is left out.
             Ok(Event::Text(text)) if in_text => {
-                if let (Some(run), Ok(text)) =
-                    (run.as_mut(), text.xml_content(XmlVersion::default()))
-                {
+                if let (Some(run), Ok(text)) = (run.as_mut(), text.xml_content(XmlVersion::default())) {
                     run.text.push_str(&text);
                 }
             }
@@ -2139,10 +2116,7 @@ fn print_area(workbook: &str, sheet_name: &str) -> Option<MergeRect> {
 /// repeating columns, `Sheet!$1:$2` for the repeating rows, in either order.
 fn print_titles(workbook: &str, sheet_name: &str) -> Option<PrintTitles> {
     let formula = defined_names(workbook, "_xlnm.Print_Titles").remove(sheet_name)?;
-    let mut titles = PrintTitles {
-        rows: None,
-        cols: None,
-    };
+    let mut titles = PrintTitles { rows: None, cols: None };
     for part in formula.split(',') {
         // A local name may leave the sheet out; the scope already says which.
         let range = part.rsplit_once('!').map_or(part, |(_, tail)| tail).trim();
@@ -2173,9 +2147,7 @@ fn column_index(text: &str) -> Option<u32> {
     for ch in text.chars() {
         match ch {
             '$' => {}
-            'A'..='Z' | 'a'..='z' => {
-                value = value * 26 + (ch.to_ascii_uppercase() as u32 - 'A' as u32 + 1)
-            }
+            'A'..='Z' | 'a'..='z' => value = value * 26 + (ch.to_ascii_uppercase() as u32 - 'A' as u32 + 1),
             _ => return None,
         }
     }
@@ -2242,10 +2214,7 @@ fn sheet_part(workbook: &str, rels: &str, sheet_name: &str) -> Result<String, St
 
 /// Reads `xl/styles.xml`: the `cellXfs` table, the `borders` it points into, and
 /// the `fonts` those point into.
-fn read_styles<R: Read + Seek>(
-    zip: &mut ZipArchive<R>,
-    theme: &[Option<String>],
-) -> Styles {
+fn read_styles<R: Read + Seek>(zip: &mut ZipArchive<R>, theme: &[Option<String>]) -> Styles {
     let Ok(xml) = read_entry(zip, "xl/styles.xml") else {
         return Styles::default();
     };
@@ -2311,8 +2280,7 @@ fn parse_styles(xml: &str, palette: Palette) -> Styles {
                     fill_bg = None;
                 }
                 b"patternFill" if in_fills => {
-                    fill_pattern =
-                        attr(&element, b"patternType").and_then(|kind| pattern_kind(&kind));
+                    fill_pattern = attr(&element, b"patternType").and_then(|kind| pattern_kind(&kind));
                 }
                 b"fgColor" if in_fills => {
                     // A solid fill paints its `fgColor`; a pattern draws it as
@@ -2327,9 +2295,7 @@ fn parse_styles(xml: &str, palette: Palette) -> Styles {
                 b"numFmts" => in_num_fmts = true,
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
                 b"font" if in_fonts => font = Some(FontInfo::default()),
-                b"b" | b"i" | b"u" | b"strike" if in_fonts => {
-                    read_font_prop(&element, font.as_mut())
-                }
+                b"b" | b"i" | b"u" | b"strike" if in_fonts => read_font_prop(&element, font.as_mut()),
                 b"vertAlign" if in_fonts => {
                     if let Some(slot) = font.as_mut() {
                         slot.vert_align = match attr(&element, b"val").as_deref() {
@@ -2389,8 +2355,7 @@ fn parse_styles(xml: &str, palette: Palette) -> Styles {
                 b"color" if in_borders => color_edge(&element, border.as_mut(), edge, palette),
                 b"fill" if in_fills => styles.fills.push(None),
                 b"patternFill" if in_fills => {
-                    fill_pattern =
-                        attr(&element, b"patternType").and_then(|kind| pattern_kind(&kind));
+                    fill_pattern = attr(&element, b"patternType").and_then(|kind| pattern_kind(&kind));
                 }
                 b"fgColor" if in_fills => {
                     fill_fg = color_of(&element, palette);
@@ -2401,9 +2366,7 @@ fn parse_styles(xml: &str, palette: Palette) -> Styles {
                 b"bgColor" if in_fills => fill_bg = color_of(&element, palette),
                 b"font" if in_fonts => styles.fonts.push(FontInfo::default()),
                 b"numFmt" if in_num_fmts => record_num_format(&element, &mut styles),
-                b"b" | b"i" | b"u" | b"strike" if in_fonts => {
-                    read_font_prop(&element, font.as_mut())
-                }
+                b"b" | b"i" | b"u" | b"strike" if in_fonts => read_font_prop(&element, font.as_mut()),
                 b"vertAlign" if in_fonts => {
                     if let Some(slot) = font.as_mut() {
                         slot.vert_align = match attr(&element, b"val").as_deref() {
@@ -2455,9 +2418,7 @@ fn parse_styles(xml: &str, palette: Palette) -> Styles {
                         || b.left.is_some()
                         || b.diagonal.is_some()
                 })),
-                b"left" | b"right" | b"top" | b"bottom" | b"diagonal" if in_borders => {
-                    edge = None
-                }
+                b"left" | b"right" | b"top" | b"bottom" | b"diagonal" if in_borders => edge = None,
                 b"fonts" => in_fonts = false,
                 b"numFmts" => in_num_fmts = false,
                 b"fills" => in_fills = false,
@@ -2633,11 +2594,7 @@ fn short_date() -> &'static str {
 
 /// Records one side's style and returns which side is open, so a nested
 /// `<color>` knows where to land.
-pub(crate) fn set_edge(
-    element: &BytesStart,
-    border: Option<&mut CellBorder>,
-    name: &[u8],
-) -> Option<Side> {
+pub(crate) fn set_edge(element: &BytesStart, border: Option<&mut CellBorder>, name: &[u8]) -> Option<Side> {
     let side = match name {
         b"top" => Side::Top,
         b"right" => Side::Right,
@@ -2659,12 +2616,7 @@ pub(crate) fn set_edge(
     Some(side)
 }
 
-pub(crate) fn color_edge(
-    element: &BytesStart,
-    border: Option<&mut CellBorder>,
-    side: Option<Side>,
-    palette: Palette,
-) {
+pub(crate) fn color_edge(element: &BytesStart, border: Option<&mut CellBorder>, side: Option<Side>, palette: Palette) {
     let (Some(border), Some(side)) = (border, side) else {
         return;
     };
@@ -2814,9 +2766,7 @@ fn read_theme_fonts<R: Read + Seek>(zip: &mut ZipArchive<R>) -> HashMap<String, 
                     _ => {}
                 }
             }
-            Ok(Event::End(element))
-                if matches!(element.local_name().as_ref(), b"majorFont" | b"minorFont") =>
-            {
+            Ok(Event::End(element)) if matches!(element.local_name().as_ref(), b"majorFont" | b"minorFont") => {
                 if let (Some(scheme), Some(latin)) = (scheme, latin.take()) {
                     fonts.entry(format!("{scheme}-ea")).or_insert(latin);
                 }
@@ -2969,9 +2919,7 @@ pub(crate) fn tint(hex: String, tint: Option<String>) -> String {
         return hex;
     }
 
-    let channel = |range: std::ops::Range<usize>| {
-        u8::from_str_radix(&hex[range], 16).unwrap_or(0) as f64 / 255.0
-    };
+    let channel = |range: std::ops::Range<usize>| u8::from_str_radix(&hex[range], 16).unwrap_or(0) as f64 / 255.0;
     let (r, g, b) = (channel(1..3), channel(3..5), channel(5..7));
 
     let max = r.max(g).max(b);
@@ -3092,11 +3040,34 @@ fn collect_runs(layout: &mut SheetLayout, row: u32, cells: &mut Vec<(u32, u32)>)
     cells.clear();
 }
 
-fn parse_sheet<R: BufRead>(
-    reader: R,
-    styles: &Styles,
-    rich: &[Option<Vec<RichRun>>],
-) -> Result<SheetLayout, String> {
+/// How many rows an autofilter covers, measured the way Excel measures it.
+///
+/// What the file stores is where the filter starts — very often its header row
+/// alone. Excel opens it over the rows below that continue the table: it walks
+/// down one row at a time from the row after the reference and stops at the
+/// first row with no value in any of the reference's columns. Only values
+/// count — a blank cell with a fill is still blank to it — and it never widens
+/// the columns or reaches back up.
+///
+/// Measured 2026-11-05 against Excel itself, on a WBS whose stored reference
+/// was `O4:ET4` and whose open filter was `O4:ET82`, plus ten probe workbooks
+/// for the edges.
+fn filter_rows(filled: &HashMap<u32, (u32, u32)>, filter: &AutoFilter) -> u32 {
+    // A blank row ends the table. A reference that already spans one keeps the
+    // rows it names and does not reach the data below it.
+    let end_col = filter.col + filter.cols;
+    let mut row = filter.row + filter.rows;
+    while let Some((first, last)) = filled.get(&row) {
+        if *first < end_col && *last >= filter.col {
+            row += 1;
+        } else {
+            break;
+        }
+    }
+    row - filter.row
+}
+
+fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRun>>]) -> Result<SheetLayout, String> {
     let mut xml = XmlReader::from_reader(reader);
     let mut layout = SheetLayout::empty();
     let mut buf = Vec::new();
@@ -3144,6 +3115,12 @@ fn parse_sheet<R: BufRead>(
     // shared-string index in that value, not by the text it spells out.
     let mut rich_cell: Option<(u32, u32)> = None;
     let mut in_cell_value = false;
+    // Rows holding a value, and the columns each contains one in. Excel widens
+    // an autofilter's range over them once the sheet has been read; a row with
+    // no entry here is one with nothing in it at all.
+    let mut filled_rows: HashMap<u32, (u32, u32)> = HashMap::new();
+    // Whether the text streaming past is an inline string's own content.
+    let mut in_cell_text = false;
 
     // The rule being read, and which of its `<formula1>`/`<formula2>` the text
     // now belongs to — the formulas are element text, not attributes.
@@ -3156,27 +3133,27 @@ fn parse_sheet<R: BufRead>(
     let mut in_row_breaks = false;
     let mut in_col_breaks = false;
 
+    // The cell being read, and whether anything has said it holds a value.
+    let mut cell_place: Option<(u32, u32)> = None;
+    let mut cell_start = false;
+    let mut cell_value_seen = false;
+
     loop {
         buf.clear();
         match xml.read_event_into(&mut buf) {
             Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
                 match element.local_name().as_ref() {
                     b"sheetFormatPr" => {
-                        declared_default_col = attr(&element, b"defaultColWidth")
-                            .and_then(|v| v.parse::<f64>().ok());
-                        base_col_width = attr(&element, b"baseColWidth")
-                            .and_then(|v| v.parse::<f64>().ok());
-                        declared_default_row = attr(&element, b"defaultRowHeight")
-                            .and_then(|v| v.parse::<f64>().ok());
+                        declared_default_col = attr(&element, b"defaultColWidth").and_then(|v| v.parse::<f64>().ok());
+                        base_col_width = attr(&element, b"baseColWidth").and_then(|v| v.parse::<f64>().ok());
+                        declared_default_row = attr(&element, b"defaultRowHeight").and_then(|v| v.parse::<f64>().ok());
                     }
                     // Which side of a group its summary row sits on. The
                     // defaults are below and right; Excel writes the attribute
                     // only when the author asked for the other side.
                     b"outlinePr" => {
-                        outline_summary_below =
-                            flag_attr(&element, b"summaryBelow").unwrap_or(true);
-                        outline_summary_right =
-                            flag_attr(&element, b"summaryRight").unwrap_or(true);
+                        outline_summary_below = flag_attr(&element, b"summaryBelow").unwrap_or(true);
+                        outline_summary_right = flag_attr(&element, b"summaryRight").unwrap_or(true);
                     }
                     b"sheetView" => {
                         // Absent means the default, which is on.
@@ -3185,14 +3162,10 @@ fn parse_sheet<R: BufRead>(
                         }
                         // Where the sheet is left: Excel opens it at this zoom
                         // and scrolled to this cell, not at 100% and A1.
-                        if let Some(value) = attr(&element, b"zoomScale")
-                            .and_then(|v| v.parse::<u16>().ok())
-                        {
+                        if let Some(value) = attr(&element, b"zoomScale").and_then(|v| v.parse::<u16>().ok()) {
                             layout.zoom_scale = Some(value);
                         }
-                        if let Some((row, col)) =
-                            attr(&element, b"topLeftCell").and_then(|cell| parse_cell(&cell))
-                        {
+                        if let Some((row, col)) = attr(&element, b"topLeftCell").and_then(|cell| parse_cell(&cell)) {
                             layout.view_top_left = Some([row, col]);
                         }
                     }
@@ -3282,26 +3255,19 @@ fn parse_sheet<R: BufRead>(
                     }
                     b"pageSetup" => {
                         let setup = &mut layout.page_setup;
-                        if let Some(v) = attr(&element, b"paperSize")
-                            .and_then(|v| v.parse::<u16>().ok())
-                        {
+                        if let Some(v) = attr(&element, b"paperSize").and_then(|v| v.parse::<u16>().ok()) {
                             setup.paper_size = v;
                         }
                         if let Some(v) = attr(&element, b"orientation") {
                             setup.landscape = v == "landscape";
                         }
-                        if let Some(v) = attr(&element, b"scale").and_then(|v| v.parse::<u16>().ok())
-                        {
+                        if let Some(v) = attr(&element, b"scale").and_then(|v| v.parse::<u16>().ok()) {
                             setup.scale = v;
                         }
-                        if let Some(v) = attr(&element, b"fitToWidth")
-                            .and_then(|v| v.parse::<u16>().ok())
-                        {
+                        if let Some(v) = attr(&element, b"fitToWidth").and_then(|v| v.parse::<u16>().ok()) {
                             setup.fit_to_width = v;
                         }
-                        if let Some(v) = attr(&element, b"fitToHeight")
-                            .and_then(|v| v.parse::<u16>().ok())
-                        {
+                        if let Some(v) = attr(&element, b"fitToHeight").and_then(|v| v.parse::<u16>().ok()) {
                             setup.fit_to_height = v;
                         }
                         setup.page_order_over_then_down =
@@ -3310,15 +3276,12 @@ fn parse_sheet<R: BufRead>(
                     // What turns `scale` off: fit-to-page lives on
                     // `<pageSetUpPr>` under `<sheetPr>`, not on `<pageSetup>`.
                     b"pageSetUpPr" => {
-                        layout.page_setup.fit_to_page =
-                            flag_attr(&element, b"fitToPage").unwrap_or(false);
+                        layout.page_setup.fit_to_page = flag_attr(&element, b"fitToPage").unwrap_or(false);
                     }
                     b"printOptions" => {
                         let options = &mut layout.page_setup.print_options;
-                        options.horizontal_centered =
-                            flag_attr(&element, b"horizontalCentered").unwrap_or(false);
-                        options.vertical_centered =
-                            flag_attr(&element, b"verticalCentered").unwrap_or(false);
+                        options.horizontal_centered = flag_attr(&element, b"horizontalCentered").unwrap_or(false);
+                        options.vertical_centered = flag_attr(&element, b"verticalCentered").unwrap_or(false);
                         options.headings = flag_attr(&element, b"headings").unwrap_or(false);
                         options.grid_lines = flag_attr(&element, b"gridLines").unwrap_or(false);
                     }
@@ -3330,9 +3293,7 @@ fn parse_sheet<R: BufRead>(
                     // already breaks.
                     b"brk" if in_row_breaks || in_col_breaks => {
                         if flag_attr(&element, b"man").unwrap_or(false) {
-                            if let Some(id) = attr(&element, b"id")
-                                .and_then(|v| v.parse::<u32>().ok())
-                            {
+                            if let Some(id) = attr(&element, b"id").and_then(|v| v.parse::<u32>().ok()) {
                                 let list = if in_row_breaks {
                                     &mut layout.page_setup.row_breaks
                                 } else {
@@ -3343,8 +3304,7 @@ fn parse_sheet<R: BufRead>(
                         }
                     }
                     b"col" => {
-                        let min = attr(&element, b"min")                            .and_then(|v| v.parse::<u32>().ok())
-                            .unwrap_or(1);
+                        let min = attr(&element, b"min").and_then(|v| v.parse::<u32>().ok()).unwrap_or(1);
                         let max = attr(&element, b"max")
                             .and_then(|v| v.parse::<u32>().ok())
                             .unwrap_or(min);
@@ -3371,9 +3331,7 @@ fn parse_sheet<R: BufRead>(
 
                         // A column run carries its default style in `style`,
                         // which is not the `s` a cell uses.
-                        if let Some(index) = attr(&element, b"style")
-                            .and_then(|v| v.parse::<usize>().ok())
-                        {
+                        if let Some(index) = attr(&element, b"style").and_then(|v| v.parse::<usize>().ok()) {
                             if let Some(style) = styles.cell_style(index, default_font_px) {
                                 let style = intern(&mut layout.styles, &mut style_ids, style);
                                 layout.col_styles.push(ColumnStyle {
@@ -3394,15 +3352,12 @@ fn parse_sheet<R: BufRead>(
                             }
                         }
 
-                        let Some(width) = attr(&element, b"width")
-                            .and_then(|v| v.parse::<f64>().ok())
-                        else {
+                        let Some(width) = attr(&element, b"width").and_then(|v| v.parse::<f64>().ok()) else {
                             continue;
                         };
                         // A bare `<col min="1" max="16384" width="8.43"/>` just
                         // restates the default; expanding it would be waste.
-                        let custom = attr(&element, b"customWidth")
-                            .is_some_and(|v| v == "1" || v == "true");
+                        let custom = attr(&element, b"customWidth").is_some_and(|v| v == "1" || v == "true");
                         if max - min + 1 > MAX_EXPANDED_COLUMNS && !custom {
                             continue;
                         }
@@ -3413,9 +3368,7 @@ fn parse_sheet<R: BufRead>(
                     b"row" => {
                         // Whatever is pending belongs to the row that just ended.
                         collect_runs(&mut layout, pending_row, &mut pending);
-                        let Some(row) =
-                            attr(&element, b"r").and_then(|v| v.parse::<u32>().ok())
-                        else {
+                        let Some(row) = attr(&element, b"r").and_then(|v| v.parse::<u32>().ok()) else {
                             continue;
                         };
                         if row == 0 {
@@ -3448,47 +3401,46 @@ fn parse_sheet<R: BufRead>(
                         // across 40 workbooks, none without it), so this only
                         // tells other writers' output apart.
                         if flag_attr(&element, b"customFormat").unwrap_or(false) {
-                            if let Some(index) = attr(&element, b"s")
-                                .and_then(|v| v.parse::<usize>().ok())
-                            {
+                            if let Some(index) = attr(&element, b"s").and_then(|v| v.parse::<usize>().ok()) {
                                 if let Some(style) = styles.cell_style(index, default_font_px) {
                                     let style = intern(&mut layout.styles, &mut style_ids, style);
                                     layout.row_styles.insert(row - 1, style);
                                 }
                             }
                         }
-                        if let Some(height) =
-                            attr(&element, b"ht").and_then(|v| v.parse::<f64>().ok())
-                        {
+                        if let Some(height) = attr(&element, b"ht").and_then(|v| v.parse::<f64>().ok()) {
                             layout.row_heights_px.insert(row - 1, points_to_px(height));
                         }
                         extent_rows = extent_rows.max(row);
                     }
                     // A cell's value: for a shared string it is the index into
                     // the table, which is what identifies the runs.
-                    b"v" => in_cell_value = rich_cell.is_some(),
+                    b"v" => {
+                        in_cell_value = rich_cell.is_some();
+                        cell_value_seen = true;
+                    }
+                    // Inline strings carry their text as element content.
+                    b"is" => in_cell_text = true,
                     b"c" => {
                         // Cell display values come from calamine; this pass only
                         // recovers the style, and only when it says something.
-                        let Some((row, col)) =
-                            attr(&element, b"r").and_then(|r| parse_cell(&r))
-                        else {
+                        let Some((row, col)) = attr(&element, b"r").and_then(|r| parse_cell(&r)) else {
                             continue;
                         };
+                        cell_place = Some((row, col));
+                        cell_value_seen = attr(&element, b"t").as_deref() == Some("str");
+                        cell_start = true;
                         // A shared-string cell names its string by number; the
                         // runs are looked up by that number when `<v>` arrives,
                         // because two cells may spell the same text with
                         // different runs.
-                        rich_cell = (attr(&element, b"t").as_deref() == Some("s"))
-                            .then_some((row, col));
+                        rich_cell = (attr(&element, b"t").as_deref() == Some("s")).then_some((row, col));
                         // The sheet's extent is where its cells are, styled or
                         // not: a conditional format has to reach an unstyled
                         // cell, and it is clamped to this extent.
                         extent_rows = extent_rows.max(row + 1);
                         extent_cols = extent_cols.max(col + 1);
-                        let Some(index) = attr(&element, b"s")
-                            .and_then(|v| v.parse::<usize>().ok())
-                        else {
+                        let Some(index) = attr(&element, b"s").and_then(|v| v.parse::<usize>().ok()) else {
                             continue;
                         };
                         let Some(style) = styles.cell_style(index, default_font_px) else {
@@ -3519,9 +3471,7 @@ fn parse_sheet<R: BufRead>(
                     b"customSheetViews" | b"extLst" => borrowed_filters += 1,
                     b"autoFilter" => {
                         if borrowed_filters == 0 {
-                            if let Some(rect) =
-                                attr(&element, b"ref").and_then(|r| parse_range(&r))
-                            {
+                            if let Some(rect) = attr(&element, b"ref").and_then(|r| parse_range(&r)) {
                                 layout.auto_filter = Some(AutoFilter {
                                     row: rect.row,
                                     col: rect.col,
@@ -3550,9 +3500,7 @@ fn parse_sheet<R: BufRead>(
                         // file saying Excel draws no drop-down on that column
                         // — a merged header's covered columns are written that
                         // way, so only the region's right edge carries one.
-                        if let (Some(offset), Some(filter)) =
-                            (offset, layout.auto_filter.as_mut())
-                        {
+                        if let (Some(offset), Some(filter)) = (offset, layout.auto_filter.as_mut()) {
                             let shown = match attr(&element, b"showButton") {
                                 Some(value) => value != "0" && value != "false",
                                 None => true,
@@ -3569,9 +3517,7 @@ fn parse_sheet<R: BufRead>(
                         // list. What it keeps is the file's own cached `hidden`
                         // answer; the column is recorded only so the filter
                         // button draws Excel's funnel instead of its caret.
-                        if let (Some(offset), Some(filter)) =
-                            (filter_col, layout.auto_filter.as_mut())
-                        {
+                        if let (Some(offset), Some(filter)) = (filter_col, layout.auto_filter.as_mut()) {
                             let column = filter.col + offset;
                             if !filter.custom.contains(&column) {
                                 filter.custom.push(column);
@@ -3583,28 +3529,17 @@ fn parse_sheet<R: BufRead>(
                         // was saved with that column filtered.
                         if let (Some(offset), Some(value)) = (filter_col, attr(&element, b"val")) {
                             if let Some(filter) = layout.auto_filter.as_mut() {
-                                filter
-                                    .applied
-                                    .entry(filter.col + offset)
-                                    .or_default()
-                                    .push(value);
+                                filter.applied.entry(filter.col + offset).or_default().push(value);
                             }
                         }
                     }
                     b"dataValidation" => {
-                        let flag = |name: &[u8]| {
-                            attr(&element, name).is_some_and(|v| v == "1" || v == "true")
-                        };
+                        let flag = |name: &[u8]| attr(&element, name).is_some_and(|v| v == "1" || v == "true");
                         validation = Some(DataValidation {
                             ranges: attr(&element, b"sqref")
-                                .map(|refs| {
-                                    refs.split_whitespace()
-                                        .filter_map(parse_range)
-                                        .collect()
-                                })
+                                .map(|refs| refs.split_whitespace().filter_map(parse_range).collect())
                                 .unwrap_or_default(),
-                            kind: attr(&element, b"type")
-                                .unwrap_or_else(|| "none".to_owned()),
+                            kind: attr(&element, b"type").unwrap_or_else(|| "none".to_owned()),
                             formula1: None,
                             formula2: None,
                             allow_blank: flag(b"allowBlank"),
@@ -3630,7 +3565,22 @@ fn parse_sheet<R: BufRead>(
                     b"rowBreaks" => in_row_breaks = false,
                     b"colBreaks" => in_col_breaks = false,
                     b"v" => in_cell_value = false,
-                    b"c" => rich_cell = None,
+                    b"is" => in_cell_text = false,
+                    b"c" => {
+                        rich_cell = None;
+                        // A cell only widens the autofilter's range when it
+                        // holds something; the style alone does not count.
+                        if cell_start && cell_value_seen {
+                            if let Some((row, col)) = cell_place {
+                                let span = filled_rows.entry(row).or_insert((col, col));
+                                span.0 = span.0.min(col);
+                                span.1 = span.1.max(col);
+                            }
+                        }
+                        cell_place = None;
+                        cell_start = false;
+                        cell_value_seen = false;
+                    }
                     b"formula1" | b"formula2" => {
                         // The text arrives in pieces when the file escapes its
                         // characters as entity references, so it is trimmed
@@ -3651,22 +3601,13 @@ fn parse_sheet<R: BufRead>(
                             layout.validations.push(rule);
                         }
                     }
-                    b"customSheetViews" | b"extLst" => {
-                        borrowed_filters = borrowed_filters.saturating_sub(1)
-                    }
+                    b"customSheetViews" | b"extLst" => borrowed_filters = borrowed_filters.saturating_sub(1),
                     _ => {}
                 }
             }
             Ok(Event::Text(text)) if in_cell_value => {
-                if let (Some((row, col)), Ok(value)) =
-                    (rich_cell, text.xml_content(XmlVersion::default()))
-                {
-                    if let Some(Some(runs)) = value
-                        .trim()
-                        .parse::<usize>()
-                        .ok()
-                        .and_then(|index| rich.get(index))
-                    {
+                if let (Some((row, col)), Ok(value)) = (rich_cell, text.xml_content(XmlVersion::default())) {
+                    if let Some(Some(runs)) = value.trim().parse::<usize>().ok().and_then(|index| rich.get(index)) {
                         layout.rich_cells.push(RichCell {
                             row,
                             col,
@@ -3676,10 +3617,10 @@ fn parse_sheet<R: BufRead>(
                 }
                 in_cell_value = false;
             }
+            // An inline string's text is its cell's content.
+            Ok(Event::Text(_)) if in_cell_text => cell_value_seen = true,
             Ok(Event::Text(text)) if formula_slot.is_some() => {
-                if let (Some(rule), Ok(content)) =
-                    (validation.as_mut(), text.xml_content(XmlVersion::default()))
-                {
+                if let (Some(rule), Ok(content)) = (validation.as_mut(), text.xml_content(XmlVersion::default())) {
                     let slot = if formula_slot == Some(1) {
                         &mut rule.formula1
                     } else {
@@ -3714,8 +3655,7 @@ fn parse_sheet<R: BufRead>(
         .or(base_col_width)
         .unwrap_or(STOCK_COL_WIDTH_CHARS)
         .max(1.0);
-    layout.default_row_height_px =
-        points_to_px(declared_default_row.unwrap_or(STOCK_ROW_HEIGHT_PT).max(1.0));
+    layout.default_row_height_px = points_to_px(declared_default_row.unwrap_or(STOCK_ROW_HEIGHT_PT).max(1.0));
 
     layout.rows = extent_rows.min(MAX_SHEET_ROWS);
     layout.cols = extent_cols.min(MAX_SHEET_COLS);
@@ -3737,6 +3677,18 @@ fn parse_sheet<R: BufRead>(
 
     // The last row is ended by the end of the sheet rather than by a `<row>`.
     collect_runs(&mut layout, pending_row, &mut pending);
+
+    // Excel stores an autofilter's anchor, not its extent: the reference is
+    // often the header row alone (`O4:ET4`) with the table below it, and what
+    // the filter really covers is worked out when the file is opened. Leaving
+    // it at one row made the drop-down count nothing and the filter hide
+    // nothing.
+    if let Some(filter) = layout.auto_filter.as_mut() {
+        filter.rows = filter_rows(&filled_rows, filter);
+        // Excel's used range grows with the filter it opens: a stored header
+        // row alone still shades and jumps to the table below.
+        layout.rows = layout.rows.max(filter.row + filter.rows);
+    }
 
     // The workbook's first font entry is the "Normal" style, so it is what
     // every unstyled cell inherits.
@@ -3837,8 +3789,7 @@ fn scan(xml: &str, element: &[u8]) -> Vec<HashMap<String, String>> {
                             .flatten()
                             .map(|attribute| {
                                 (
-                                    String::from_utf8_lossy(attribute.key.local_name().as_ref())
-                                        .to_lowercase(),
+                                    String::from_utf8_lossy(attribute.key.local_name().as_ref()).to_lowercase(),
                                     String::from_utf8_lossy(&attribute.value).into_owned(),
                                 )
                             })
@@ -3869,9 +3820,7 @@ mod tests {
                 colors.push_str(&format!("<rgbColor rgb=\"00{:06X}\"/>", i));
             }
         }
-        let xml = format!(
-            "<styleSheet><colors><indexedColors>{colors}</indexedColors></colors></styleSheet>"
-        );
+        let xml = format!("<styleSheet><colors><indexedColors>{colors}</indexedColors></colors></styleSheet>");
         let indexed = indexed_palette(&xml);
         assert_eq!(indexed[8].as_deref(), Some("#ABCDEF"));
         assert_eq!(indexed[9].as_deref(), Some("#000001"));
@@ -3899,10 +3848,7 @@ mod tests {
     }
 
     fn sample_path() -> &'static str {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../samples/sample-design.xlsx"
-        )
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../samples/sample-design.xlsx")
     }
 
     fn sample(sheet: &str) -> Option<SheetLayout> {
@@ -4013,10 +3959,7 @@ mod tests {
     fn reads_the_autofilter_range_and_applied_values() {
         let Some(layout) = sample("Query") else { return };
         let filter = layout.auto_filter.expect("autofilter should be present");
-        assert_eq!(
-            (filter.row, filter.col, filter.rows, filter.cols),
-            (0, 0, 401, 5)
-        );
+        assert_eq!((filter.row, filter.col, filter.rows, filter.cols), (0, 0, 401, 5));
         // colId is relative to the filter range and must be rebased.
         assert_eq!(
             filter.applied.get(&4).map(Vec::as_slice),
@@ -4049,9 +3992,8 @@ mod tests {
     /// skipping it left every one of them a whole unit too far right.
     #[test]
     fn reads_the_indent_level_of_an_alignment() {
-        let mut reader = XmlReader::from_str(
-            r#"<alignment horizontal="right" vertical="center" indent="1" shrinkToFit="1"/>"#,
-        );
+        let mut reader =
+            XmlReader::from_str(r#"<alignment horizontal="right" vertical="center" indent="1" shrinkToFit="1"/>"#);
         let mut buf = Vec::new();
         let mut align = Align::default();
         loop {
@@ -4228,7 +4170,10 @@ mod tests {
         assert!(solid.pattern.is_none());
 
         let up = styles.cell_style(3, 14.67).unwrap().pattern.unwrap();
-        assert_eq!((up.kind, up.fg.as_str(), up.bg.as_str()), ("lightUp", "#FF0000", "#FFFF00"));
+        assert_eq!(
+            (up.kind, up.fg.as_str(), up.bg.as_str()),
+            ("lightUp", "#FF0000", "#FFFF00")
+        );
         let down = styles.cell_style(4, 14.67).unwrap().pattern.unwrap();
         assert_eq!(down.kind, "lightDown");
     }
@@ -4270,14 +4215,8 @@ mod tests {
         </styleSheet>"#;
         let styles = parse_styles(xml, Palette::EMPTY);
         assert!(styles.cell_style(0, 14.67).is_none());
-        assert_eq!(
-            styles.cell_style(1, 14.67).unwrap().vert_align,
-            Some("superscript")
-        );
-        assert_eq!(
-            styles.cell_style(2, 14.67).unwrap().vert_align,
-            Some("subscript")
-        );
+        assert_eq!(styles.cell_style(1, 14.67).unwrap().vert_align, Some("superscript"));
+        assert_eq!(styles.cell_style(2, 14.67).unwrap().vert_align, Some("subscript"));
 
         // A run says the same thing in its own `<rPr>`.
         let xml = r#"<sst><si><r><t>X</t></r><r><rPr><vertAlign val="superscript"/><sz val="11"/></rPr><t>2</t></r></si></sst>"#;
@@ -4305,10 +4244,56 @@ mod tests {
         // Row 1 names a style but `customFormat` is off, so Excel applies none.
         assert_eq!(layout.row_styles.get(&0), None);
         let style = layout.row_styles.get(&1).expect("row 2 is styled");
-        assert_eq!(
-            layout.styles[*style as usize].fill.as_deref(),
-            Some("#FFFF00")
-        );
+        assert_eq!(layout.styles[*style as usize].fill.as_deref(), Some("#FFFF00"));
+    }
+
+    /// Excel writes an autofilter over its header row and opens it over the
+    /// rows that continue the table. A WBS stored `O4:ET4` for a table ending
+    /// at row 82; read as one row, the drop-down counted nothing and the
+    /// filter hid nothing.
+    #[test]
+    fn a_header_only_autofilter_reaches_the_table_below_it() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet><autoFilter ref="A1:C1"/><sheetData>
+            <row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row>
+            <row r="2"><c r="A2"><v>1</v></c></row>
+            <row r="3"><c r="B3"><v>2</v></c></row>
+            <row r="4"><c r="C4" s="0"/></row>
+        </sheetData></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        // Row 4 is styled but holds no value, and a fill alone does not carry
+        // the range past it. The used range still reaches the row Excel shades.
+        assert_eq!(layout.auto_filter.expect("filter").rows, 3);
+        assert_eq!(layout.rows, 4);
+    }
+
+    #[test]
+    fn an_autofilter_does_not_reach_across_a_blank_row() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet><autoFilter ref="A1:C1"/><sheetData>
+            <row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row>
+            <row r="2"><c r="A2"><v>1</v></c></row>
+            <row r="5"><c r="E5" t="inlineStr"><is><t>note</t></is></c></row>
+        </sheetData></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        // A value beside the blank row, outside the filter's columns, does not
+        // keep the walk going.
+        assert_eq!(layout.auto_filter.expect("filter").rows, 2);
+    }
+
+    #[test]
+    fn a_stored_autofilter_range_reaches_past_a_blank_row_inside_it() {
+        let cache = Cache::default();
+        let xml = br#"<worksheet><autoFilter ref="A1:C2"/><sheetData>
+            <row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row>
+            <row r="2"><c r="A2"><v>1</v></c></row>
+            <row r="6"><c r="A6"><v>2</v></c></row>
+        </sheetData></worksheet>"#;
+        let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
+        // The range ends at row 2 and the walk starts there; rows 3 to 5 are
+        // blank, so it stops at the reference's own end rather than reaching
+        // row 6. Excel only continues while the rows run on without a gap.
+        assert_eq!(layout.auto_filter.expect("filter").rows, 2);
     }
 
     #[test]
@@ -4352,10 +4337,7 @@ mod tests {
         // left a lone quote, and the in-cell dropdown then offered nothing.
         let xml = br#"<worksheet><dataValidations><dataValidation type="list" sqref="B1"><formula1>"&#23550;&#35937;,&#23550;&#35937;&#22806;"</formula1></dataValidation></dataValidations><sheetData/></worksheet>"#;
         let layout = parse_sheet(&xml[..], &cache.styles, &[]).expect("layout");
-        assert_eq!(
-            layout.validations[0].formula1.as_deref(),
-            Some("\"対象,対象外\"")
-        );
+        assert_eq!(layout.validations[0].formula1.as_deref(), Some("\"対象,対象外\""));
     }
 
     #[test]
@@ -4498,11 +4480,7 @@ mod tests {
         </styleSheet>"#;
         let styles = parse_styles(xml, Palette::EMPTY);
         let default_font_px = points_to_font_px(11.0);
-        let style = |index: usize| {
-            styles
-                .cell_style(index, default_font_px)
-                .expect("a styled entry")
-        };
+        let style = |index: usize| styles.cell_style(index, default_font_px).expect("a styled entry");
 
         // Both declined, so both come from the named style.
         let borrowed = style(1);
@@ -4554,11 +4532,7 @@ mod tests {
         </styleSheet>"#;
         let styles = parse_styles(xml, Palette::EMPTY);
         let default_font_px = points_to_font_px(11.0);
-        let style = |index: usize| {
-            styles
-                .cell_style(index, default_font_px)
-                .expect("a styled entry")
-        };
+        let style = |index: usize| styles.cell_style(index, default_font_px).expect("a styled entry");
 
         let italic = style(1);
         assert!(italic.italic);
@@ -4606,11 +4580,7 @@ mod tests {
         </styleSheet>"#;
         let styles = parse_styles(xml, Palette::EMPTY);
         let default_font_px = points_to_font_px(11.0);
-        let style = |index: usize| {
-            styles
-                .cell_style(index, default_font_px)
-                .expect("a styled entry")
-        };
+        let style = |index: usize| styles.cell_style(index, default_font_px).expect("a styled entry");
 
         let single = style(1);
         assert_eq!(single.underline, Some("single"));
@@ -5039,10 +5009,7 @@ mod tests {
 
         // An rPr that turns both off has to survive as a decision of its own:
         // dropped, the run would inherit a bold, underlined cell's formatting.
-        let off = runs[3]
-            .as_ref()
-            .and_then(|list| list[0].font.clone())
-            .expect("kept");
+        let off = runs[3].as_ref().and_then(|list| list[0].font.clone()).expect("kept");
         assert_eq!(off.bold, Some(false));
         assert_eq!(off.underline, Some("none"));
 
@@ -5087,8 +5054,7 @@ mod tests {
         let Ok(path) = std::env::var("SHEETLENS_XLSX") else {
             return;
         };
-        let sheet =
-            std::env::var("SHEETLENS_SHEET").unwrap_or_else(|_| "Spec".to_string());
+        let sheet = std::env::var("SHEETLENS_SHEET").unwrap_or_else(|_| "Spec".to_string());
         let layout = read_cached(&mut Cache::default(), &path, &sheet).expect("layout");
 
         let deepest = layout.cell_runs.keys().max().map(|row| row + 1).unwrap_or(0);
@@ -5155,9 +5121,18 @@ mod tests {
                     let what: Vec<&str> = [
                         run.font.as_ref().and_then(|f| f.family.as_deref()),
                         run.font.as_ref().and_then(|f| f.underline),
-                        run.font.as_ref().is_some_and(|f| f.bold == Some(true)).then_some("bold"),
-                        run.font.as_ref().is_some_and(|f| f.italic == Some(true)).then_some("italic"),
-                        run.font.as_ref().is_some_and(|f| f.strike == Some(true)).then_some("strike"),
+                        run.font
+                            .as_ref()
+                            .is_some_and(|f| f.bold == Some(true))
+                            .then_some("bold"),
+                        run.font
+                            .as_ref()
+                            .is_some_and(|f| f.italic == Some(true))
+                            .then_some("italic"),
+                        run.font
+                            .as_ref()
+                            .is_some_and(|f| f.strike == Some(true))
+                            .then_some("strike"),
                     ]
                     .into_iter()
                     .flatten()
@@ -5183,10 +5158,7 @@ mod tests {
         assert_eq!((rect.row, rect.col, rect.rows, rect.cols), (0, 0, 1, 3));
 
         let single = parse_range("$B$7").unwrap();
-        assert_eq!(
-            (single.row, single.col, single.rows, single.cols),
-            (6, 1, 1, 1)
-        );
+        assert_eq!((single.row, single.col, single.rows, single.cols), (6, 1, 1, 1));
 
         let block = parse_range("B5:B8").unwrap();
         assert_eq!((block.row, block.col, block.rows, block.cols), (4, 1, 4, 1));
