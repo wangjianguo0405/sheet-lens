@@ -16,9 +16,11 @@ export const DEFAULT_SHEET_PANELS: SheetPanels = { list: true, tabs: true };
 /** What the user last left showing, if they ever changed it. */
 export function initialSheetPanels(): SheetPanels {
   try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
-    if (typeof stored?.list === "boolean" && typeof stored?.tabs === "boolean") {
-      return { list: stored.list, tabs: stored.tabs };
+    const stored: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
+    if (!stored || typeof stored !== "object") return DEFAULT_SHEET_PANELS;
+    const { list, tabs } = stored as Partial<Record<keyof SheetPanels, unknown>>;
+    if (typeof list === "boolean" && typeof tabs === "boolean") {
+      return { list, tabs };
     }
   } catch {
     // A webview that refuses storage still gets the defaults.
