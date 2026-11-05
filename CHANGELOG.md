@@ -12,6 +12,13 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.18] - 2026-11-05
+
+### Fixed
+
+- The filter on a sheet opens over its whole table again: a workbook that stores only the header row as the filter's range used to leave the drop-down with nothing in it, and ticking a value hid no rows. The range now runs down the table the way Excel opens it
+- A filter button on a merged header reads the column its title sits in: the button is drawn at the right edge of the merged region, but the values belong to the left-most cell, so the list was empty and it filtered the wrong column
+
 ## [1.0.17] - 2026-11-02
 
 ### Fixed
