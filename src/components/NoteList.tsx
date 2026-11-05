@@ -38,9 +38,7 @@ export function NoteList({ path, sheet, onGo, onPreview }: NoteListProps) {
     sheetLayout(path, sheet)
       .then((layout) => {
         if (cancelled) return;
-        const sorted = [...(layout.notes ?? [])].sort(
-          (a, b) => a.row - b.row || a.col - b.col,
-        );
+        const sorted = [...(layout.notes ?? [])].sort((a, b) => a.row - b.row || a.col - b.col);
         setNotes(sorted);
       })
       .catch(() => {
@@ -88,9 +86,7 @@ export function NoteList({ path, sheet, onGo, onPreview }: NoteListProps) {
             );
           })}
           {notes?.length === 0 && (
-            <p className="px-2 py-3 text-[11px] text-muted-foreground">
-              {t("notes.empty")}
-            </p>
+            <p className="px-2 py-3 text-[11px] text-muted-foreground">{t("notes.empty")}</p>
           )}
         </div>
       </ScrollArea>

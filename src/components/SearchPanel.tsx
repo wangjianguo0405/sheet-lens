@@ -50,13 +50,7 @@ function remember(query: string) {
   if (recentQueries.length > RECENT_LIMIT) recentQueries.length = RECENT_LIMIT;
 }
 
-export function SearchPanel({
-  path,
-  sheet,
-  focusSignal,
-  onJump,
-  onClose,
-}: SearchPanelProps) {
+export function SearchPanel({ path, sheet, focusSignal, onJump, onClose }: SearchPanelProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -118,8 +112,7 @@ export function SearchPanel({
   /** Where in the list that is, or -1 for a cell this search no longer lists. */
   const at = current
     ? hits.findIndex(
-        (hit) =>
-          hit.sheet === current.sheet && hit.row === current.row && hit.col === current.col,
+        (hit) => hit.sheet === current.sheet && hit.row === current.row && hit.col === current.col,
       )
     : -1;
   /** That row, so the list follows the highlight rather than losing it. */
@@ -174,9 +167,7 @@ export function SearchPanel({
   const toggleClass = (on: boolean) =>
     cn(
       "rounded-sm px-1.5 py-0.5 text-[10px] transition-colors",
-      on
-        ? "bg-primary text-primary-foreground"
-        : "bg-muted text-muted-foreground hover:bg-accent",
+      on ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-accent",
     );
 
   /** Everything that moves the sheet to a hit goes through here. */
@@ -277,11 +268,7 @@ export function SearchPanel({
                 </DropdownMenuItem>
               ) : (
                 recent.map((text) => (
-                  <DropdownMenuItem
-                    key={text}
-                    className="text-xs"
-                    onSelect={() => setQuery(text)}
-                  >
+                  <DropdownMenuItem key={text} className="text-xs" onSelect={() => setQuery(text)}>
                     <span className="truncate">{text}</span>
                   </DropdownMenuItem>
                 ))

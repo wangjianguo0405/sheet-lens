@@ -147,10 +147,7 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
         content, so the bar's grey is what fills whatever the two of them leave.
       */}
       <div
-        className={cn(
-          "relative flex min-w-0 flex-1 flex-col bg-background",
-          !expanded && "h-7",
-        )}
+        className={cn("relative flex min-w-0 flex-1 flex-col bg-background", !expanded && "h-7")}
       >
         {/*
           The two branches of the value are separate elements on purpose:
@@ -175,10 +172,7 @@ export function FormulaBar({ reference, value, onGo }: FormulaBarProps) {
         {/* Over the value's right edge, centred on its first line, and clear of
             the scrollbar underneath it. */}
         {expanded && (
-          <div
-            className="absolute top-0 right-0 flex h-7 items-center"
-            style={chevronRight}
-          >
+          <div className="absolute top-0 right-0 flex h-7 items-center" style={chevronRight}>
             {toggle}
           </div>
         )}

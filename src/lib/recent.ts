@@ -76,10 +76,7 @@ export function readMissingFiles(): string[] {
  * It opened, so whatever the list said about it before is no longer true.
  */
 export function rememberFile(path: string): string[] {
-  const next = [path, ...readRecentFiles().filter((other) => other !== path)].slice(
-    0,
-    KEEP,
-  );
+  const next = [path, ...readRecentFiles().filter((other) => other !== path)].slice(0, KEEP);
   writeList(STORAGE_KEY, next);
   writeList(
     MISSING_KEY,
@@ -122,10 +119,7 @@ export function readPinnedFiles(): string[] {
 
 /** Fixes `path` there, and hands back the list the page should show now. */
 export function pinFile(path: string): string[] {
-  const next = [
-    path,
-    ...readPinnedFiles().filter((other) => other !== path),
-  ];
+  const next = [path, ...readPinnedFiles().filter((other) => other !== path)];
   writeList(PINNED_KEY, next);
   return next;
 }
@@ -148,8 +142,7 @@ export function unpinFile(path: string): string[] {
  */
 export function folderKey(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, "");
-  const windows =
-    typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+  const windows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
   return windows ? trimmed.toLowerCase() : trimmed;
 }
 
@@ -161,10 +154,7 @@ export function readPinnedDirs(): string[] {
 /** Fixes `path` there, and hands back the list the page should show now. */
 export function pinDir(path: string): string[] {
   const key = folderKey(path);
-  const next = [
-    path,
-    ...readPinnedDirs().filter((other) => folderKey(other) !== key),
-  ];
+  const next = [path, ...readPinnedDirs().filter((other) => folderKey(other) !== key)];
   writeList(PINNED_DIRS_KEY, next);
   return next;
 }

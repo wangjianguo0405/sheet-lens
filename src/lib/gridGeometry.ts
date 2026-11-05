@@ -101,31 +101,46 @@ export interface Decoration {
 }
 
 const MEIRYO: Decoration = {
-  underline: 0.1, underlineThickness: 0.05,
-  double: [0.028, 0.15], doubleThickness: 0.06,
-  strike: 0.372, strikeThickness: 0.053,
+  underline: 0.1,
+  underlineThickness: 0.05,
+  double: [0.028, 0.15],
+  doubleThickness: 0.06,
+  strike: 0.372,
+  strikeThickness: 0.053,
 };
 const MS_PGOTHIC: Decoration = {
-  underline: 0.1033, underlineThickness: 0.035,
-  double: [0.018, 0.1], doubleThickness: 0.04,
-  strike: 0.2583, strikeThickness: 0.05,
+  underline: 0.1033,
+  underlineThickness: 0.035,
+  double: [0.018, 0.1],
+  doubleThickness: 0.04,
+  strike: 0.2583,
+  strikeThickness: 0.05,
 };
 const YU_GOTHIC: Decoration = {
-  underline: 0.1, underlineThickness: 0.05,
-  double: [0.1, 0.2], doubleThickness: 0.05,
-  strike: 0.4183, strikeThickness: 0.0467,
+  underline: 0.1,
+  underlineThickness: 0.05,
+  double: [0.1, 0.2],
+  doubleThickness: 0.05,
+  strike: 0.4183,
+  strikeThickness: 0.0467,
 };
 const CALIBRI: Decoration = {
-  underline: 0.1133, underlineThickness: 0.065,
-  double: [0.0367, 0.1917], doubleThickness: 0.0767,
-  strike: 0.2499, strikeThickness: 0.065,
+  underline: 0.1133,
+  underlineThickness: 0.065,
+  double: [0.0367, 0.1917],
+  doubleThickness: 0.0767,
+  strike: 0.2499,
+  strikeThickness: 0.065,
 };
 
 /** The four families' median, for one the table does not know. */
 export const DECORATION_FALLBACK: Decoration = {
-  underline: 0.104, underlineThickness: 0.05,
-  double: [0.03, 0.15], doubleThickness: 0.055,
-  strike: 0.324, strikeThickness: 0.054,
+  underline: 0.104,
+  underlineThickness: 0.05,
+  double: [0.03, 0.15],
+  doubleThickness: 0.055,
+  strike: 0.324,
+  strikeThickness: 0.054,
 };
 
 /**
@@ -248,10 +263,7 @@ export function spanAt(offsets: Float64Array, index: number): number {
   return offsets[index + 1] - offsets[index];
 }
 
-export function buildMetrics(
-  count: number,
-  sizeOf: (index: number) => number,
-): Metrics {
+export function buildMetrics(count: number, sizeOf: (index: number) => number): Metrics {
   const offsets = new Float64Array(count + 1);
   let acc = 0;
   for (let i = 0; i < count; i += 1) {
@@ -374,11 +386,7 @@ export function horizontalOf(
 ): "left" | "center" | "centerContinuous" | "right" | "justify" | "distributed" {
   return (
     style?.horizontal ??
-    (kind === "number" || kind === "date"
-      ? "right"
-      : kind === "bool"
-        ? "center"
-        : "left")
+    (kind === "number" || kind === "date" ? "right" : kind === "bool" ? "center" : "left")
   );
 }
 
@@ -422,10 +430,7 @@ export function indentPadding(
  *
  * `rank` folds 1–3 into one number in Excel's own precedence order.
  */
-export function heavier(
-  a: BorderEdge | null,
-  b: BorderEdge | null,
-): BorderEdge | null {
+export function heavier(a: BorderEdge | null, b: BorderEdge | null): BorderEdge | null {
   if (!a) return b;
   if (!b) return a;
   return a.rank > b.rank ? a : b;
@@ -445,7 +450,6 @@ export interface BoxEdges {
  * paint pass produced. Callers only read it.
  */
 const NO_EDGES: BoxEdges = { top: null, right: null, bottom: null, left: null };
-
 
 /**
  * Which sides a box paints, and how a shared edge is resolved — the canvas
@@ -488,7 +492,8 @@ export function resolvedEdges(
   const above = row > 0 && col < maxCols ? (styleAt(row - 1, col)?.border ?? null) : null;
   const under = below < maxRows && col < maxCols ? (styleAt(below, col)?.border ?? null) : null;
   const beside = col > 0 && row < maxRows ? (styleAt(row, col - 1)?.border ?? null) : null;
-  const beyond = rightOf < maxCols && row < maxRows ? (styleAt(row, rightOf)?.border ?? null) : null;
+  const beyond =
+    rightOf < maxCols && row < maxRows ? (styleAt(row, rightOf)?.border ?? null) : null;
 
   const top = interior?.top ? null : heavier(own?.top ?? null, above?.bottom ?? null);
   const right = interior?.right ? null : heavier(own?.right ?? null, beyond?.left ?? null);
@@ -521,9 +526,7 @@ export function toOverrides(
   return out;
 }
 
-export function toFilters(
-  applied: Record<string, string[]> | undefined,
-): Map<number, string[]> {
+export function toFilters(applied: Record<string, string[]> | undefined): Map<number, string[]> {
   const out = new Map<number, string[]>();
   if (!applied) return out;
   for (const [key, values] of Object.entries(applied)) {

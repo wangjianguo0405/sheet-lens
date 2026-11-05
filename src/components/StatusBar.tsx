@@ -6,14 +6,7 @@ import { Hint } from "@/components/Hint";
 import type { SelectionSize } from "@/lib/selection";
 import { cn } from "@/lib/utils";
 import type { ViewMode } from "@/lib/viewMode";
-import {
-  DEFAULT_ZOOM,
-  MAX_ZOOM,
-  MIN_ZOOM,
-  ZOOM_STOPS,
-  stepZoom,
-  zoomIndex,
-} from "@/lib/zoom";
+import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, ZOOM_STOPS, stepZoom, zoomIndex } from "@/lib/zoom";
 
 interface StatusBarProps {
   fileName: string | null;

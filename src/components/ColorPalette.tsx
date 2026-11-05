@@ -58,8 +58,7 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
   const [recent] = useState(readRecentColors);
   const Item = variant === "dropdown" ? DropdownMenuItem : ContextMenuItem;
   const Label = variant === "dropdown" ? DropdownMenuLabel : ContextMenuLabel;
-  const Rule =
-    variant === "dropdown" ? DropdownMenuSeparator : ContextMenuSeparator;
+  const Rule = variant === "dropdown" ? DropdownMenuSeparator : ContextMenuSeparator;
 
   // Keys are positions, not colours: a theme tint can land on the same hex as
   // one of the standard colours, and two children may not share a key.
@@ -163,10 +162,7 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
    * a slack edge beside it.
    */
   const swatchRow = (slots: ReactNode[], key: number) => (
-    <div
-      key={key}
-      className="grid w-max grid-cols-[repeat(10,22px)] gap-[3px] px-1.5"
-    >
+    <div key={key} className="grid w-max grid-cols-[repeat(10,22px)] gap-[3px] px-1.5">
       {slots}
     </div>
   );
@@ -192,9 +188,7 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
       {swatchRow(
         [
           ...recent.map((fill, at) => swatch(fill, `recent ${at}`)),
-          ...Array.from({ length: RECENT_SHOWN - recent.length }, (_, at) =>
-            emptySlot(at),
-          ),
+          ...Array.from({ length: RECENT_SHOWN - recent.length }, (_, at) => emptySlot(at)),
         ],
         -2,
       )}

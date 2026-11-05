@@ -115,9 +115,7 @@ pub fn load(path: &str) -> Result<Book, String> {
     let states = layout::sheet_states(path);
 
     for name in names {
-        let range = workbook
-            .worksheet_range(&name)
-            .map_err(|e| format!("{name}: {e}"))?;
+        let range = workbook.worksheet_range(&name).map_err(|e| format!("{name}: {e}"))?;
         let (rows, cols) = range.get_size();
         let origin = range.start().unwrap_or((0, 0));
         infos.push(SheetInfo {
@@ -173,14 +171,7 @@ impl Book {
 
 impl Book {
     /// A window of cells, addressed by zero-based offset from the sheet's top-left.
-    pub fn cells(
-        &self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-        rows: u32,
-        cols: u32,
-    ) -> Result<Vec<Vec<Cell>>, String> {
+    pub fn cells(&self, sheet: &str, row: u32, col: u32, rows: u32, cols: u32) -> Result<Vec<Vec<Cell>>, String> {
         let height_width = self
             .sheets
             .get(sheet)
@@ -195,12 +186,8 @@ impl Book {
         // from A1 to the first used cell — invisible on a sheet that starts at
         // A1, but a document whose content begins at B2 came out a row up and
         // a column left of its own styling.
-        let row_end = row
-            .saturating_add(rows)
-            .min(origin_row.saturating_add(height as u32));
-        let col_end = col
-            .saturating_add(cols)
-            .min(origin_col.saturating_add(width as u32));
+        let row_end = row.saturating_add(rows).min(origin_row.saturating_add(height as u32));
+        let col_end = col.saturating_add(cols).min(origin_col.saturating_add(width as u32));
 
         // The number format lives in the layout, which the grid loads before
         // it asks for any cells.
@@ -296,13 +283,7 @@ impl Book {
     /// `None` means there was nothing ahead at all, which Excel answers with the
     /// sheet's last row or column — a number only the caller knows, since the
     /// stored range stops at the last cell the file mentions.
-    pub fn edge_cell(
-        &self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-        dir: &str,
-    ) -> Result<Option<CellPos>, String> {
+    pub fn edge_cell(&self, sheet: &str, row: u32, col: u32, dir: &str) -> Result<Option<CellPos>, String> {
         let stored = self
             .sheets
             .get(sheet)
@@ -420,9 +401,7 @@ impl Book {
             return Ok(Vec::new());
         }
         let start = first_row.max(origin_row);
-        let end = last_row
-            .saturating_add(1)
-            .min(origin_row.saturating_add(height as u32));
+        let end = last_row.saturating_add(1).min(origin_row.saturating_add(height as u32));
         let needle = query.map(str::to_lowercase);
         let wanted: Vec<(u32, HashSet<String>)> = criteria
             .iter()
@@ -482,19 +461,12 @@ impl Book {
         let (origin_row, _) = data.origin;
         // Absolute coordinates, as the grid names them — see `cells`.
         let start = first_row.max(origin_row);
-        let end = last_row
-            .saturating_add(1)
-            .min(origin_row.saturating_add(height as u32));
+        let end = last_row.saturating_add(1).min(origin_row.saturating_add(height as u32));
 
         // Excel's filter does not distinguish case, so neither do we.
         let wanted: Vec<(u32, HashSet<String>)> = criteria
             .iter()
-            .map(|(col, values)| {
-                (
-                    *col,
-                    values.iter().map(|value| value.to_lowercase()).collect(),
-                )
-            })
+            .map(|(col, values)| (*col, values.iter().map(|value| value.to_lowercase()).collect()))
             .collect();
 
         let mut out = Vec::new();
@@ -553,7 +525,8 @@ impl Book {
         Ok(out)
     }
 
-    pub fn search(&self, sheet: Option<&str>, matcher: &Matcher) -> Vec<Hit> {        let mut hits = Vec::new();
+    pub fn search(&self, sheet: Option<&str>, matcher: &Matcher) -> Vec<Hit> {
+        let mut hits = Vec::new();
         let mut text = String::new();
 
         for info in &self.info.sheets {
@@ -703,17 +676,13 @@ mod tests {
     use super::*;
 
     fn sample() -> Option<Book> {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../samples/sample-design.xlsx"
-        );
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../samples/sample-design.xlsx");
         if !Path::new(path).exists() {
             eprintln!("skipping: {path} not found");
             return None;
         }
         Some(load(path).expect("sample workbook should load"))
     }
-
 
     /// Where the time goes between clicking a sheet and seeing it.
     #[test]
@@ -747,11 +716,7 @@ mod tests {
             let started = std::time::Instant::now();
             let json = serde_json::to_string(&block).expect("json");
             let serialise = started.elapsed();
-            let filled = block
-                .iter()
-                .flatten()
-                .filter(|cell| !cell.text.is_empty())
-                .count();
+            let filled = block.iter().flatten().filter(|cell| !cell.text.is_empty()).count();
             println!(
                 "cells r{row:<3} c{col} : {built:?} build, {serialise:?} json, {} lines, {filled} filled, payload {} KB",
                 block.len(),
@@ -771,8 +736,7 @@ mod tests {
                 let style = layout
                     .style_index(row as u32, col as u32)
                     .and_then(|index| layout.styles.get(index as usize));
-                let draws = !cell.text.is_empty()
-                    || style.is_some_and(|s| s.fill.is_some() || s.border.is_some());
+                let draws = !cell.text.is_empty() || style.is_some_and(|s| s.fill.is_some() || s.border.is_some());
                 if !draws {
                     blank += 1;
                 }
@@ -839,13 +803,15 @@ mod tests {
             let mut grid: Vec<Vec<Cell>> = cells;
             grid.resize(rows as usize, Vec::new());
             for line in grid.iter_mut() {
-                line.resize(cols as usize, Cell { kind: "empty", text: String::new() });
+                line.resize(
+                    cols as usize,
+                    Cell {
+                        kind: "empty",
+                        text: String::new(),
+                    },
+                );
             }
-            eprintln!(
-                "{}: {rows}×{cols}, {} shapes",
-                info.name,
-                layout.drawings.len()
-            );
+            eprintln!("{}: {rows}×{cols}, {} shapes", info.name, layout.drawings.len());
             sheets.insert(
                 info.name.clone(),
                 serde_json::json!({ "layout": layout, "cells": grid }),
@@ -904,13 +870,21 @@ mod tests {
                 if region.col > 0 {
                     for r in region.row..region.row + region.rows {
                         if let Some(empty) = blank(r, region.col - 1) {
-                            assert!(empty, "{sheet}: ({r},{}) before the region is not blank", region.col - 1);
+                            assert!(
+                                empty,
+                                "{sheet}: ({r},{}) before the region is not blank",
+                                region.col - 1
+                            );
                         }
                     }
                 }
                 for c in region.col..region.col + region.cols {
                     if let Some(empty) = blank(region.row + region.rows, c) {
-                        assert!(empty, "{sheet}: ({},{c}) below the region is not blank", region.row + region.rows);
+                        assert!(
+                            empty,
+                            "{sheet}: ({},{c}) below the region is not blank",
+                            region.row + region.rows
+                        );
                     }
                 }
             }
@@ -998,15 +972,7 @@ mod tests {
     /// blank row splitting column A in two — the shapes Ctrl+arrow has to get
     /// right, including the blank area past the data it can be pressed from.
     fn gapped_sheet() -> Book {
-        let holds = [
-            (2u32, 0u32),
-            (3, 0),
-            (4, 0),
-            (6, 0),
-            (7, 0),
-            (8, 0),
-            (8, 3),
-        ];
+        let holds = [(2u32, 0u32), (3, 0), (4, 0), (6, 0), (7, 0), (8, 0), (8, 3)];
         let range: Range<Data> = Range::from_sparse(
             holds
                 .into_iter()
@@ -1059,10 +1025,7 @@ mod tests {
             for i in 0..6 {
                 out.push(from + (to - from) * i / 5);
             }
-            out.into_iter()
-                .filter(|v| *v >= 0)
-                .map(|v| v as u32)
-                .collect()
+            out.into_iter().filter(|v| *v >= 0).map(|v| v as u32).collect()
         };
         let rows = spread(origin_row as i64, end_row);
         let cols = spread(origin_col as i64, end_col);
@@ -1174,11 +1137,17 @@ mod tests {
             sheets: HashMap::from([
                 (
                     "表示".to_owned(),
-                    Sheet { range: range("さがす"), origin: (0, 0) },
+                    Sheet {
+                        range: range("さがす"),
+                        origin: (0, 0),
+                    },
                 ),
                 (
                     "非表示".to_owned(),
-                    Sheet { range: range("さがす"), origin: (0, 0) },
+                    Sheet {
+                        range: range("さがす"),
+                        origin: (0, 0),
+                    },
                 ),
             ]),
             layouts: HashMap::new(),
@@ -1204,9 +1173,7 @@ mod tests {
         assert_eq!(row, ["No", "テーブル", "カラム", "条件", "備考"]);
 
         // Column A of the same sheet is a run of numbers.
-        let column = book
-            .axis_values("Query", None, Some(0), 0, 4, 64)
-            .unwrap();
+        let column = book.axis_values("Query", None, Some(0), 0, 4, 64).unwrap();
         assert_eq!(column, ["No", "1", "2", "3", "4"]);
 
         assert!(book.axis_values("Query", None, None, 0, 4, 64).is_err());
@@ -1217,9 +1184,7 @@ mod tests {
         let Some(book) = sample() else { return };
 
         // The autofilter covers A1:E401, so data rows are 1..=400.
-        let values = book
-            .column_values("Query", 4, 1, 400, &[], None, 50)
-            .unwrap();
+        let values = book.column_values("Query", 4, 1, 400, &[], None, 50).unwrap();
         let flagged = values
             .iter()
             .find(|entry| entry.value == "要確認")
@@ -1227,9 +1192,7 @@ mod tests {
         // Every 11th row, 11..=396.
         assert_eq!(flagged.count, 36);
 
-        let filtered = book
-            .column_values("Query", 4, 1, 400, &[], Some("要確"), 50)
-            .unwrap();
+        let filtered = book.column_values("Query", 4, 1, 400, &[], Some("要確"), 50).unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].value, "要確認");
     }

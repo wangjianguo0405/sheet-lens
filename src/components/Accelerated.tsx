@@ -28,9 +28,7 @@ export function Accelerated({ label }: { label: string }) {
 /** Pressing an item's underlined letter picks it, as Excel's menus do. */
 export function pickByAccelerator(event: KeyboardEvent<HTMLElement>): void {
   if (event.altKey || event.ctrlKey || event.metaKey || event.key.length !== 1) return;
-  const item = event.currentTarget.querySelector(
-    `[data-accelerator="${event.key.toUpperCase()}"]`,
-  );
+  const item = event.currentTarget.querySelector(`[data-accelerator="${event.key.toUpperCase()}"]`);
   if (!item) return;
   event.preventDefault();
   (item as HTMLElement).click();

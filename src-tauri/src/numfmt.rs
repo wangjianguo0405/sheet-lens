@@ -126,13 +126,7 @@ fn contains_ignore_case(chars: &[char], needle: &str) -> bool {
     text.contains(needle)
 }
 
-fn field(
-    value: &NaiveDateTime,
-    letter: char,
-    width: usize,
-    minutes: bool,
-    twelve_hour: bool,
-) -> String {
+fn field(value: &NaiveDateTime, letter: char, width: usize, minutes: bool, twelve_hour: bool) -> String {
     match letter {
         'y' => {
             if width <= 2 {
@@ -190,8 +184,18 @@ fn field(
 
 fn month(month: u32, short: bool) -> String {
     const FULL: [&str; 12] = [
-        "January", "February", "March", "April", "May", "June", "July", "August", "September",
-        "October", "November", "December",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
     ];
     let name = FULL[(month.clamp(1, 12) - 1) as usize];
     if short {
@@ -203,7 +207,13 @@ fn month(month: u32, short: bool) -> String {
 
 fn weekday(value: &NaiveDateTime, short: bool) -> String {
     const NAMES: [&str; 7] = [
-        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
     ];
     let name = NAMES[value.weekday().num_days_from_monday() as usize];
     if short {
@@ -228,11 +238,7 @@ mod tests {
     }
 
     fn at(value: f64) -> Data {
-        Data::DateTime(ExcelDateTime::new(
-            value,
-            ExcelDateTimeType::DateTime,
-            false,
-        ))
+        Data::DateTime(ExcelDateTime::new(value, ExcelDateTimeType::DateTime, false))
     }
 
     #[test]

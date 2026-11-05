@@ -75,11 +75,7 @@ fn open_workbook(path: String, store: State<'_, Shared>) -> Result<WorkbookInfo,
     let info = book.info.clone();
     store.0.lock().unwrap().insert(path.clone(), book);
 
-    let names: Vec<String> = info
-        .sheets
-        .iter()
-        .map(|sheet| sheet.name.clone())
-        .collect();
+    let names: Vec<String> = info.sheets.iter().map(|sheet| sheet.name.clone()).collect();
     let shared = Arc::clone(&store);
     let warm = path.clone();
     std::thread::spawn(move || warm_layouts(shared, warm, names));
@@ -98,9 +94,7 @@ fn get_cells(
     store: State<'_, Shared>,
 ) -> Result<Vec<Vec<Cell>>, String> {
     let books = store.0.lock().unwrap();
-    let book = books
-        .get(&path)
-        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
     book.cells(&sheet, row, col, rows, cols)
 }
 
@@ -114,19 +108,13 @@ fn search_workbook(
     store: State<'_, Shared>,
 ) -> Result<Vec<Hit>, String> {
     let books = store.0.lock().unwrap();
-    let book = books
-        .get(&path)
-        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
     let matcher = Matcher::new(&query, case_sensitive, whole_cell);
     Ok(book.search(sheet.as_deref(), &matcher))
 }
 
 #[tauri::command(async)]
-fn sheet_layout(
-    path: String,
-    sheet: String,
-    store: State<'_, Shared>,
-) -> Result<SheetLayout, String> {
+fn sheet_layout(path: String, sheet: String, store: State<'_, Shared>) -> Result<SheetLayout, String> {
     let mut books = store.0.lock().unwrap();
     let book = books
         .get_mut(&path)
@@ -159,9 +147,7 @@ fn column_values(
     store: State<'_, Shared>,
 ) -> Result<Vec<ValueCount>, String> {
     let books = store.0.lock().unwrap();
-    let book = books
-        .get(&path)
-        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
     let criteria: Vec<(u32, Vec<String>)> = criteria
         .into_iter()
         .map(|criterion| (criterion.col, criterion.values))
@@ -187,9 +173,7 @@ fn filter_rows(
     store: State<'_, Shared>,
 ) -> Result<Vec<u32>, String> {
     let books = store.0.lock().unwrap();
-    let book = books
-        .get(&path)
-        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
     let criteria: Vec<(u32, Vec<String>)> = criteria
         .into_iter()
         .map(|criterion| (criterion.col, criterion.values))
@@ -208,9 +192,7 @@ fn axis_values(
     store: State<'_, Shared>,
 ) -> Result<Vec<String>, String> {
     let books = store.0.lock().unwrap();
-    let book = books
-        .get(&path)
-        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
     book.axis_values(&sheet, row, col, from, to, MAX_AXIS_CELLS)
 }
 
@@ -223,9 +205,7 @@ fn current_region(
     store: State<'_, Shared>,
 ) -> Result<excel::Block, String> {
     let books = store.0.lock().unwrap();
-    let book = books
-        .get(&path)
-        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
     book.current_region(&sheet, row, col)
 }
 
@@ -243,9 +223,7 @@ fn edge_cell(
     store: State<'_, Shared>,
 ) -> Result<Option<excel::CellPos>, String> {
     let books = store.0.lock().unwrap();
-    let book = books
-        .get(&path)
-        .ok_or_else(|| format!("workbook not open: {path}"))?;
+    let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
     book.edge_cell(&sheet, row, col, &dir)
 }
 
@@ -264,8 +242,7 @@ fn close_workbook(path: String, store: State<'_, Shared>) {
 #[tauri::command(async)]
 fn read_media(path: String, parts: Vec<String>) -> Result<HashMap<String, String>, String> {
     let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-    let mut zip =
-        zip::ZipArchive::new(BufReader::new(file)).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipArchive::new(BufReader::new(file)).map_err(|e| e.to_string())?;
     let mut out = HashMap::with_capacity(parts.len());
     for part in parts {
         // A lookup in the archive's own directory, so a crafted name cannot
@@ -282,8 +259,8 @@ fn read_media(path: String, parts: Vec<String>) -> Result<HashMap<String, String
 }
 
 /// Standard base64, so the renderer can put the bytes straight into a `data:` URL.
-fn base64(bytes: &[u8]) -> String {    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
     for chunk in bytes.chunks(3) {
         let group = (u32::from(chunk[0]) << 16)

@@ -1,12 +1,18 @@
-import { memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { copyText } from "@/lib/clipboard";
 import { shapeFontStack } from "@/lib/canvasText";
-import {
-  shapeDebugEnabled,
-  subscribeShapeDebug,
-} from "@/lib/debugPanels";
+import { shapeDebugEnabled, subscribeShapeDebug } from "@/lib/debugPanels";
 import { readMedia, type Shape, type ShapeArrow, type ShapeStroke } from "@/lib/excel";
 import { SHAPE_PATTERN_TILES } from "@/lib/shapePatterns";
 import {
@@ -81,13 +87,11 @@ function arrowShape(arrow: ShapeArrow, length: number, half: number): ReactNode 
     case "oval":
       return <ellipse cx={length / 2} cy={half} rx={half} ry={half} />;
     case "diamond":
-      return <path d={`M 0 ${half} L ${length / 2} 0 L ${length} ${half} L ${length / 2} ${height} Z`} />;
-    case "stealth":
       return (
-        <path
-          d={`M 0 0 L ${length} ${half} L 0 ${height} L ${length * 0.6} ${half} Z`}
-        />
+        <path d={`M 0 ${half} L ${length / 2} 0 L ${length} ${half} L ${length / 2} ${height} Z`} />
       );
+    case "stealth":
+      return <path d={`M 0 0 L ${length} ${half} L 0 ${height} L ${length * 0.6} ${half} Z`} />;
     case "arrow":
       // An open head, drawn as a stroke rather than a filled area.
       return (
@@ -465,7 +469,10 @@ export const ShapeLayer = memo(function ShapeLayer({
   const patternId = (shape: Shape): string | null => {
     const pattern = shape.fill?.pattern;
     if (!pattern) return null;
-    return patterns.get(`${pattern.kind}|${pattern.fg ?? "#000000"}|${pattern.bg ?? "#FFFFFF"}`)?.id ?? null;
+    return (
+      patterns.get(`${pattern.kind}|${pattern.fg ?? "#000000"}|${pattern.bg ?? "#FFFFFF"}`)?.id ??
+      null
+    );
   };
 
   /**
@@ -618,11 +625,7 @@ export const ShapeLayer = memo(function ShapeLayer({
           const radial = fill.radial;
           if (!radial) {
             return (
-              <linearGradient
-                key={index}
-                id={gradientId(ids, index)}
-                {...linearAttrs(fill.angle)}
-              >
+              <linearGradient key={index} id={gradientId(ids, index)} {...linearAttrs(fill.angle)}>
                 {stops}
               </linearGradient>
             );
@@ -670,14 +673,7 @@ export const ShapeLayer = memo(function ShapeLayer({
             {SHAPE_PATTERN_TILES[pattern.kind].map((row, y) =>
               [...row].map((cell, x) =>
                 cell === "#" ? (
-                  <rect
-                    key={`${x}-${y}`}
-                    x={x}
-                    y={y}
-                    width={1}
-                    height={1}
-                    fill={pattern.fg}
-                  />
+                  <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={pattern.fg} />
                 ) : null,
               ),
             )}
@@ -737,8 +733,7 @@ export const ShapeLayer = memo(function ShapeLayer({
               `   insets l${l.toFixed(1)} t${top.toFixed(1)} r${r.toFixed(1)} b${b.toFixed(1)} → text ${(w - l - r).toFixed(1)}×${(h - top - b).toFixed(1)}`,
               `   wrap=${t.wrap} size=${t.sizePt}pt (${(t.sizePt * PT_TO_PX).toFixed(2)}px) align=${t.align} valign=${t.valign}`,
               ...t.paras.map(
-                (para, i) =>
-                  `   p${i}: ${para.map((run) => run.text).join("") || "(blank line)"}`,
+                (para, i) => `   p${i}: ${para.map((run) => run.text).join("") || "(blank line)"}`,
               ),
             );
           }
@@ -789,11 +784,8 @@ export const ShapeLayer = memo(function ShapeLayer({
           : "none";
         /** The preset's own paths for this box, or its outline until we have them. */
         /** The shape's own paths, else the preset's, else its outline. */
-        const paths =
-          (shape.custom ? resolveCustom(shape.custom, gw, gh) : null) ??
-          resolvePreset(shape.kind, gw, gh, shape.adjust) ?? [
-            boxOutline(gw, gh),
-          ];
+        const paths = (shape.custom ? resolveCustom(shape.custom, gw, gh) : null) ??
+          resolvePreset(shape.kind, gw, gh, shape.adjust) ?? [boxOutline(gw, gh)];
 
         const image = shape.media ? media.get(shape.media) : undefined;
         const mime = shape.media ? mimeOf(shape.media) : null;
@@ -881,8 +873,7 @@ export const ShapeLayer = memo(function ShapeLayer({
           </g>
         );
       })}
-      {shapeDebug && facts &&
-        createPortal(<ShapeDebug rows={debugRows} />, document.body)}
+      {shapeDebug && facts && createPortal(<ShapeDebug rows={debugRows} />, document.body)}
     </svg>
   );
 });

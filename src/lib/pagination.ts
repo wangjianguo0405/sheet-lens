@@ -70,9 +70,7 @@ function printable(setup: PageSetup, scale: number) {
     // documents this was checked against. Nothing in the file explains it, and
     // it does not scale with the paper (Letter, Legal and A3 each want a
     // different number), so it stays a measured constant rather than a rule.
-    height:
-      (height - (setup.margins.top + setup.margins.bottom) * PX_PER_IN + PAGE_SLACK) /
-      scale,
+    height: (height - (setup.margins.top + setup.margins.bottom) * PX_PER_IN + PAGE_SLACK) / scale,
   };
 }
 
@@ -103,17 +101,13 @@ function titleSize(
  * on A4 landscape, where the arithmetic lands at 12.5 columns and Excel keeps
  * 12 — a floor, not a rounding.
  */
-function cutColumns(
-  setup: PageSetup,
-  area: MergeRect,
-  cols: Metrics,
-  content: number,
-): PageLine[] {
+function cutColumns(setup: PageSetup, area: MergeRect, cols: Metrics, content: number): PageLine[] {
   const lines: PageLine[] = [];
   const last = area.col + area.cols - 1;
   const manual = new Set(setup.colBreaks);
-  const title = titleSize(setup.printTitles?.cols, (index) =>
-    offsetAt(cols.offsets, index + 1) - offsetAt(cols.offsets, index),
+  const title = titleSize(
+    setup.printTitles?.cols,
+    (index) => offsetAt(cols.offsets, index + 1) - offsetAt(cols.offsets, index),
   );
   // The first page holds the title columns as part of its own content; every
   // page after that has them repeated at the left, so they come back out of
@@ -188,8 +182,7 @@ function cutRows(
     // A hidden row — or one a filter took out — takes no page space, and its
     // absence must not put a break where the next visible row starts.
     if (display < 0 || display >= displays) continue;
-    const height =
-      offsetAt(rows.offsets, display + 1) - offsetAt(rows.offsets, display);
+    const height = offsetAt(rows.offsets, display + 1) - offsetAt(rows.offsets, display);
     if (used > 0 && used + height > content + height / 4 + EPSILON) {
       add(offsetAt(rows.offsets, display), false);
       used = title;
@@ -204,7 +197,14 @@ function cutRows(
 }
 
 /** How many pages the area takes at a scale, for the fit-to-page search. */
-function pageCount(scale: number, setup: PageSetup, area: MergeRect, cols: Metrics, rows: Metrics, displayOfRow: (row: number) => number) {
+function pageCount(
+  scale: number,
+  setup: PageSetup,
+  area: MergeRect,
+  cols: Metrics,
+  rows: Metrics,
+  displayOfRow: (row: number) => number,
+) {
   const page = printable(setup, scale);
   return {
     wide: cutColumns(setup, area, cols, page.width).length + 1,

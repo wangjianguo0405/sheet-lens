@@ -85,9 +85,7 @@ let probeContext: CanvasRenderingContext2D | null | undefined;
  */
 function probe(): CanvasRenderingContext2D | null {
   if (probeContext === undefined) {
-    probeContext = document
-      .createElement("canvas")
-      .getContext("2d", { willReadFrequently: true });
+    probeContext = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
   }
   return probeContext;
 }
@@ -126,9 +124,7 @@ export function withAlpha(color: Rgba, alpha: number): Rgba {
 
 /** Reads a custom property off the document root, trimmed. */
 function readVar(name: string): string {
-  return getComputedStyle(document.documentElement)
-    .getPropertyValue(name)
-    .trim();
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
 let cached: CanvasTheme | null = null;
@@ -161,9 +157,7 @@ export function canvasTheme(): CanvasTheme {
   }
 
   const borderInk = rgbaByToken.border;
-  resolved.gridline = borderInk
-    ? rgba(withAlpha(borderInk, GRIDLINE_ALPHA))
-    : FALLBACK.gridline;
+  resolved.gridline = borderInk ? rgba(withAlpha(borderInk, GRIDLINE_ALPHA)) : FALLBACK.gridline;
   resolved.freezeLine = FALLBACK.freezeLine;
 
   cached = resolved as CanvasTheme;

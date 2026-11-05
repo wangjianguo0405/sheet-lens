@@ -55,11 +55,7 @@ pub struct Release {
 /// client reads. The release also carries a `notesLocales` map beside it, which
 /// the plugin does not model — so it reaches us untouched in `raw_json`, and
 /// nothing here has to fetch or parse the manifest a second time.
-fn localised_notes(
-    raw: &serde_json::Value,
-    english: Option<&str>,
-    locale: &str,
-) -> Option<String> {
+fn localised_notes(raw: &serde_json::Value, english: Option<&str>, locale: &str) -> Option<String> {
     raw.get("notesLocales")
         .and_then(|locales| locales.get(locale))
         .and_then(serde_json::Value::as_str)
@@ -81,15 +77,16 @@ const PROGRESS_EVENT: &str = "update-progress";
 
 /// The folder holding the running executable, if this is a portable install.
 fn portable_dir() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe()
-        .map_err(|error| format!("Could not locate the running executable: {error}"))?;
+    let exe = std::env::current_exe().map_err(|error| format!("Could not locate the running executable: {error}"))?;
     let dir = exe
         .parent()
         .ok_or_else(|| "The running executable has no parent directory.".to_string())?;
     if !dir.join(MARKER).is_file() {
-        return Err("This copy of SheetLens is not a portable install and cannot update itself. \
+        return Err(
+            "This copy of SheetLens is not a portable install and cannot update itself. \
                     Download a new build instead."
-            .to_string());
+                .to_string(),
+        );
     }
     Ok(dir.to_path_buf())
 }
@@ -116,8 +113,7 @@ fn extract_executable(archive: &[u8], announced_version: &str) -> Result<Vec<u8>
         entry
             .read_to_string(&mut text)
             .map_err(|error| format!("Could not read the update manifest: {error}"))?;
-        serde_json::from_str(&text)
-            .map_err(|error| format!("The update manifest is malformed: {error}"))?
+        serde_json::from_str(&text).map_err(|error| format!("The update manifest is malformed: {error}"))?
     };
 
     if payload.schema != PAYLOAD_SCHEMA {
@@ -160,8 +156,7 @@ fn extract_executable(archive: &[u8], announced_version: &str) -> Result<Vec<u8>
 /// Whether an archive entry is one of the folder's documents rather than its
 /// payload: the three READMEs, the three changelogs, and the licence.
 fn is_document(name: &str) -> bool {
-    name == "LICENSE"
-        || (name.ends_with(".md") && (name.starts_with("README") || name.starts_with("CHANGELOG")))
+    name == "LICENSE" || (name.ends_with(".md") && (name.starts_with("README") || name.starts_with("CHANGELOG")))
 }
 
 /// The documents an archive carries, as they would land in the install folder.
@@ -411,10 +406,7 @@ pub fn update_status(app: AppHandle) -> Status {
 }
 
 #[tauri::command]
-pub async fn update_check(
-    app: AppHandle,
-    locale: String,
-) -> Result<Option<Release>, String> {
+pub async fn update_check(app: AppHandle, locale: String) -> Result<Option<Release>, String> {
     let updater = app
         .updater()
         .map_err(|error| format!("Could not start the updater: {error}"))?;
@@ -495,15 +487,14 @@ pub fn update_restart(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        documents_in, extract_executable, is_document, localised_notes, manifest_in,
-        PAYLOAD_EXECUTABLE, PAYLOAD_MANIFEST,
+        documents_in, extract_executable, is_document, localised_notes, manifest_in, PAYLOAD_EXECUTABLE,
+        PAYLOAD_MANIFEST,
     };
     use std::io::{Cursor, Write};
 
     fn archive(manifest: serde_json::Value, executable: &[u8]) -> Vec<u8> {
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let options =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file(PAYLOAD_MANIFEST, options).unwrap();
         zip.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
         zip.start_file(PAYLOAD_EXECUTABLE, options).unwrap();
@@ -519,8 +510,7 @@ mod tests {
     /// the documents the folder is meant to explain itself with.
     fn release_archive(stamp: &str) -> Vec<u8> {
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let options =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file(PAYLOAD_MANIFEST, options).unwrap();
         zip.write_all(&serde_json::to_vec(&manifest("0.3.0", super::arch_label())).unwrap())
             .unwrap();
@@ -596,8 +586,7 @@ mod tests {
         // a manifest of its own invention — one that would claim a version
         // nothing had checked.
         let mut bare = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let options =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         bare.start_file(PAYLOAD_EXECUTABLE, options).unwrap();
         bare.write_all(b"MZpayload").unwrap();
         assert!(manifest_in(&bare.finish().unwrap().into_inner()).is_none());
@@ -635,8 +624,7 @@ mod tests {
     #[test]
     fn rejects_an_archive_with_no_manifest() {
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let options =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file(PAYLOAD_EXECUTABLE, options).unwrap();
         zip.write_all(b"MZpayload").unwrap();
         let bytes = zip.finish().unwrap().into_inner();

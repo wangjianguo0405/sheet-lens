@@ -340,10 +340,7 @@ impl Grid {
     }
 
     fn row_height(&self, row: u32) -> f64 {
-        self.row_heights
-            .get(&row)
-            .copied()
-            .unwrap_or(self.default_row_height)
+        self.row_heights.get(&row).copied().unwrap_or(self.default_row_height)
     }
 
     fn row_start(&self, row: u32) -> f64 {
@@ -929,8 +926,7 @@ impl<'a> Parser<'a> {
             }
             b"fillToRect" if self.gradient_path.is_some() => {
                 if let Some(radial) = self.gradient_path.as_mut() {
-                    let inset =
-                        |name: &[u8]| num_attr(element, name).unwrap_or(0.0) / 100_000.0;
+                    let inset = |name: &[u8]| num_attr(element, name).unwrap_or(0.0) / 100_000.0;
                     radial.focus = [inset(b"l"), inset(b"t"), inset(b"r"), inset(b"b")];
                 }
             }
@@ -940,15 +936,12 @@ impl<'a> Parser<'a> {
                         w: num_attr(element, b"w").unwrap_or(0.0),
                         h: num_attr(element, b"h").unwrap_or(0.0),
                         fill: attr(element, b"fill"),
-                        stroke: attr(element, b"stroke")
-                            .map(|value| value == "1" || value == "true"),
+                        stroke: attr(element, b"stroke").map(|value| value == "1" || value == "true"),
                         commands: Vec::new(),
                     });
                 }
             }
-            b"moveTo" | b"lnTo" | b"cubicBezTo" | b"quadBezTo" | b"close"
-                if parent == b"path" =>
-            {
+            b"moveTo" | b"lnTo" | b"cubicBezTo" | b"quadBezTo" | b"close" if parent == b"path" => {
                 self.custom_command(name);
             }
             b"arcTo" if parent == b"path" => {
@@ -962,11 +955,7 @@ impl<'a> Parser<'a> {
                     command.arc = Some(arc);
                 }
             }
-            b"pt" if matches!(
-                parent.as_slice(),
-                b"moveTo" | b"lnTo" | b"cubicBezTo" | b"quadBezTo"
-            ) =>
-            {
+            b"pt" if matches!(parent.as_slice(), b"moveTo" | b"lnTo" | b"cubicBezTo" | b"quadBezTo") => {
                 let point = [
                     attr(element, b"x").unwrap_or_else(|| "0".to_owned()),
                     attr(element, b"y").unwrap_or_else(|| "0".to_owned()),
@@ -1086,9 +1075,8 @@ impl<'a> Parser<'a> {
                     .to_owned(),
                 );
                 self.text_wrap = Some(attr(element, b"wrap").as_deref() != Some("none"));
-                let inset = |name: &[u8], index: usize| {
-                    emu_to_px(num_attr(element, name).unwrap_or(DEFAULT_INSETS_EMU[index]))
-                };
+                let inset =
+                    |name: &[u8], index: usize| emu_to_px(num_attr(element, name).unwrap_or(DEFAULT_INSETS_EMU[index]));
                 self.text_insets = Some([
                     inset(b"lIns", 0),
                     inset(b"tIns", 1),
@@ -1099,11 +1087,8 @@ impl<'a> Parser<'a> {
             b"p" => {
                 self.paras.push(Vec::new());
                 self.para_rtl.push(self.list_style_rtl.unwrap_or(false));
-                self.para_align.push(
-                    self.list_style_align
-                        .clone()
-                        .unwrap_or_else(|| "left".to_owned()),
-                );
+                self.para_align
+                    .push(self.list_style_align.clone().unwrap_or_else(|| "left".to_owned()));
             }
             b"pPr" => {
                 if let Some(align) = attr(element, b"algn") {
@@ -1186,8 +1171,7 @@ impl<'a> Parser<'a> {
                 let face = self.font_name(attr(element, b"typeface"));
                 let panose = attr(element, b"panose");
                 let charset = num_attr(element, b"charset").map(|value| value as i32);
-                let pitch = num_attr(element, b"pitchFamily")
-                    .map(|value| value.clamp(0.0, 255.0) as u32);
+                let pitch = num_attr(element, b"pitchFamily").map(|value| value.clamp(0.0, 255.0) as u32);
                 if let Some(run) = self.run.as_mut() {
                     run.family = face;
                     if panose.is_some() {
@@ -1356,10 +1340,7 @@ impl<'a> Parser<'a> {
     /// `grpSpPr` has been read.
     fn push_group(&mut self) {
         let (frame, anchor) = match self.groups.last() {
-            Some(parent) => (
-                parent.child_frame(self.group_off, self.group_ext),
-                parent.anchor,
-            ),
+            Some(parent) => (parent.child_frame(self.group_off, self.group_ext), parent.anchor),
             None => ([0.0, 0.0, 1.0, 1.0], self.resolve_box()),
         };
         self.groups.push(GroupXform {
@@ -1385,14 +1366,14 @@ impl<'a> Parser<'a> {
             Some(group) => {
                 let frame = group.child_frame(self.sp_off, self.sp_ext);
                 shape.group = Some(GroupFrame {
-                    from_col: group.anchor.0.0,
-                    from_x: group.anchor.0.1,
-                    from_row: group.anchor.0.2,
-                    from_y: group.anchor.0.3,
-                    to_col: group.anchor.1.0,
-                    to_x: group.anchor.1.1,
-                    to_row: group.anchor.1.2,
-                    to_y: group.anchor.1.3,
+                    from_col: group.anchor.0 .0,
+                    from_x: group.anchor.0 .1,
+                    from_row: group.anchor.0 .2,
+                    from_y: group.anchor.0 .3,
+                    to_col: group.anchor.1 .0,
+                    to_x: group.anchor.1 .1,
+                    to_row: group.anchor.1 .2,
+                    to_y: group.anchor.1 .3,
                     fx: frame[0],
                     fy: frame[1],
                     fw: frame[2],
@@ -1400,18 +1381,15 @@ impl<'a> Parser<'a> {
                 });
                 // Only a fallback: the renderer resolves `group` against the
                 // real column widths, and these are the parser's approximation.
-                let left = self.grid.col_start(group.anchor.0.0) + group.anchor.0.1;
-                let top = self.grid.row_start(group.anchor.0.2) + group.anchor.0.3;
-                let width = self.grid.col_start(group.anchor.1.0) + group.anchor.1.1 - left;
-                let height = self.grid.row_start(group.anchor.1.2) + group.anchor.1.3 - top;
+                let left = self.grid.col_start(group.anchor.0 .0) + group.anchor.0 .1;
+                let top = self.grid.row_start(group.anchor.0 .2) + group.anchor.0 .3;
+                let width = self.grid.col_start(group.anchor.1 .0) + group.anchor.1 .1 - left;
+                let height = self.grid.row_start(group.anchor.1 .2) + group.anchor.1 .3 - top;
                 let (from_col, from_x) = self.grid.col_at(left + frame[0] * width);
                 let (from_row, from_y) = self.grid.row_at(top + frame[1] * height);
                 let (to_col, to_x) = self.grid.col_at(left + (frame[0] + frame[2]) * width);
                 let (to_row, to_y) = self.grid.row_at(top + (frame[1] + frame[3]) * height);
-                (
-                    (from_col, from_x, from_row, from_y),
-                    (to_col, to_x, to_row, to_y),
-                )
+                ((from_col, from_x, from_row, from_y), (to_col, to_x, to_row, to_y))
             }
             None => self.resolve_box(),
         };
@@ -1431,9 +1409,11 @@ impl<'a> Parser<'a> {
         shape.fill = match self.fill.take() {
             Some(explicit) => explicit,
             // `idx="0"` means "no fill" in the style's own vocabulary.
-            None => self.refs.fill.as_ref().and_then(|(index, fill)| {
-                (*index > 0).then(|| fill.clone())
-            }),
+            None => self
+                .refs
+                .fill
+                .as_ref()
+                .and_then(|(index, fill)| (*index > 0).then(|| fill.clone())),
         };
         if self.shape_group_fill {
             shape.fill = self.groups.last().and_then(|group| group.fill.clone());
@@ -1454,10 +1434,7 @@ impl<'a> Parser<'a> {
         // The shape's default is its first paragraph's; a shape whose
         // paragraphs agree needs only that one value.
         let mut aligns = std::mem::take(&mut self.para_align);
-        let align = aligns
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "left".to_owned());
+        let align = aligns.first().cloned().unwrap_or_else(|| "left".to_owned());
         if aligns.iter().all(|value| value == &align) {
             aligns.clear();
         }
@@ -1476,9 +1453,7 @@ impl<'a> Parser<'a> {
                 paras,
                 valign: self.text_valign.clone().unwrap_or_else(|| "top".to_owned()),
                 wrap: self.text_wrap.unwrap_or(true),
-                insets: self
-                    .text_insets
-                    .unwrap_or(DEFAULT_INSETS_EMU.map(emu_to_px)),
+                insets: self.text_insets.unwrap_or(DEFAULT_INSETS_EMU.map(emu_to_px)),
                 family: self.text_family.take(),
                 panose: self.text_panose.take(),
                 charset: self.text_charset.take(),
@@ -1512,12 +1487,7 @@ impl<'a> Parser<'a> {
         if let Some(to) = self.to {
             return (
                 (start_col, start_col_off, start_row, start_row_off),
-                (
-                    to.col,
-                    emu_to_px(to.col_off),
-                    to.row,
-                    emu_to_px(to.row_off),
-                ),
+                (to.col, emu_to_px(to.col_off), to.row, emu_to_px(to.row_off)),
             );
         }
 
@@ -1676,7 +1646,8 @@ fn read_arrow(element: &BytesStart) -> Option<Arrow> {
     })
 }
 
-fn is_true(element: &BytesStart, name: &[u8]) -> bool {    attr(element, name).is_some_and(|value| value == "1" || value == "true")
+fn is_true(element: &BytesStart, name: &[u8]) -> bool {
+    attr(element, name).is_some_and(|value| value == "1" || value == "true")
 }
 
 /// A boolean attribute, distinguishing "absent" from an explicit `0` — a run
@@ -1731,11 +1702,7 @@ fn channel(hex: &str, index: usize) -> u8 {
 
 /// Multiplies every channel, which is what `<a:shade>` does.
 fn scaled(hex: &str, factor: f64) -> String {
-    let byte = |index: usize| {
-        (f64::from(channel(hex, index)) * factor)
-            .round()
-            .clamp(0.0, 255.0) as u8
-    };
+    let byte = |index: usize| (f64::from(channel(hex, index)) * factor).round().clamp(0.0, 255.0) as u8;
     format!("#{:02X}{:02X}{:02X}", byte(0), byte(1), byte(2))
 }
 
@@ -1819,10 +1786,7 @@ mod tests {
         assert_eq!((shape.from_row, shape.from_y), (2, 10.0));
         assert_eq!((shape.to_col, shape.to_x), (2, 2.0));
         assert_eq!((shape.to_row, shape.to_y), (3, 3.0));
-        assert_eq!(
-            shape.fill,
-            Some(solid("#FF0000"))
-        );
+        assert_eq!(shape.fill, Some(solid("#FF0000")));
         // An explicit `noFill` line beats the style's `lnRef`.
         assert!(shape.line.is_none());
         let text = shape.text.as_ref().expect("text");
@@ -1855,10 +1819,7 @@ mod tests {
         assert_eq!(shape.kind, "borderCallout2");
         // The file's own units, hundred-thousandths: the preset formulas divide.
         assert_eq!(shape.adjust, vec![18750.0]);
-        assert_eq!(
-            shape.fill,
-            Some(solid("#4472C4"))
-        );
+        assert_eq!(shape.fill, Some(solid("#4472C4")));
         let line = shape.line.as_ref().expect("outline");
         assert_eq!(line.color, "#223962");
         // `lnRef idx="2"` takes the second entry of the theme's line widths.
@@ -2040,7 +2001,15 @@ mod tests {
         assert_eq!(second.fill.as_deref(), Some("none"));
         assert_eq!(second.stroke, Some(false));
         let arc = second.commands[1].arc.as_ref().expect("arc");
-        assert_eq!(arc, &["40".to_owned(), "40".to_owned(), "10800000".to_owned(), "10800000".to_owned()]);
+        assert_eq!(
+            arc,
+            &[
+                "40".to_owned(),
+                "40".to_owned(),
+                "10800000".to_owned(),
+                "10800000".to_owned()
+            ]
+        );
     }
 
     /// A line without a colour takes the style refs' black — the callout's own
@@ -2150,12 +2119,7 @@ mod tests {
         // A linear gradient carries no path of its own.
         let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs></a:gsLst><a:lin ang="0"/></a:gradFill></xdr:spPr></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
         let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
-        assert!(shapes[0]
-            .fill
-            .as_ref()
-            .expect("a linear gradient")
-            .radial
-            .is_none());
+        assert!(shapes[0].fill.as_ref().expect("a linear gradient").radial.is_none());
     }
 
     #[test]
@@ -2218,9 +2182,7 @@ mod tests {
                             text.valign,
                             text.paras
                                 .iter()
-                                .map(|para| {
-                                    para.iter().map(|run| run.text.as_str()).collect::<String>()
-                                })
+                                .map(|para| { para.iter().map(|run| run.text.as_str()).collect::<String>() })
                                 .collect::<Vec<_>>()
                                 .join(" / ")
                         )

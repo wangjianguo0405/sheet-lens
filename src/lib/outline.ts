@@ -61,7 +61,10 @@ export function withSessionOutline(
   const setRange = (
     facts: Map<number, { level: number; collapsed: boolean }>,
     [from, to]: [number, number],
-    apply: (current: { level: number; collapsed: boolean }) => { level: number; collapsed: boolean },
+    apply: (current: { level: number; collapsed: boolean }) => {
+      level: number;
+      collapsed: boolean;
+    },
   ) => {
     for (let line = Math.min(from, to); line <= Math.max(from, to); line += 1) {
       const current = facts.get(line) ?? { level: 0, collapsed: false };
@@ -188,9 +191,7 @@ export const OUTLINE_BUTTON_INK = "#646464";
 
 /** The room the gutter takes beside the row numbers or column letters. */
 export function outlineGutter(strips: number): number {
-  return strips <= 0
-    ? 0
-    : OUTLINE_PAD + strips * OUTLINE_STRIP_W + OUTLINE_TAIL;
+  return strips <= 0 ? 0 : OUTLINE_PAD + strips * OUTLINE_STRIP_W + OUTLINE_TAIL;
 }
 
 /** Left edge of strip `index` (0-based), within the gutter. */
@@ -298,20 +299,14 @@ export function buildLineOutline(
   };
 }
 
-export function rowOutline(outline: {
-  rows: OutlineRow[];
-  summaryBelow: boolean;
-}): LineOutline {
+export function rowOutline(outline: { rows: OutlineRow[]; summaryBelow: boolean }): LineOutline {
   return buildLineOutline(
     outline.rows.map((entry) => ({ line: entry.row, level: entry.level })),
     outline.summaryBelow,
   );
 }
 
-export function colOutline(outline: {
-  cols: OutlineCol[];
-  summaryRight: boolean;
-}): LineOutline {
+export function colOutline(outline: { cols: OutlineCol[]; summaryRight: boolean }): LineOutline {
   const facts: { line: number; level: number }[] = [];
   for (const run of outline.cols) {
     for (let col = run.from; col <= run.to; col += 1) {

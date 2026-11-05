@@ -21,13 +21,7 @@ interface GoToDialogProps {
   onGo: (sheet: string, row: number, col: number) => void;
 }
 
-export function GoToDialog({
-  open,
-  onOpenChange,
-  sheets,
-  currentSheet,
-  onGo,
-}: GoToDialogProps) {
+export function GoToDialog({ open, onOpenChange, sheets, currentSheet, onGo }: GoToDialogProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);

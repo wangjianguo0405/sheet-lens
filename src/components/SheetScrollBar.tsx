@@ -48,10 +48,7 @@ export function SheetScrollBar({ viewport }: SheetScrollBarProps) {
     if (!el || !bar) return null;
     const gridRange = el.scrollWidth - el.clientWidth;
     const barClient = bar.clientWidth;
-    const content = Math.max(
-      barClient,
-      Math.round((barClient * el.scrollWidth) / el.clientWidth),
-    );
+    const content = Math.max(barClient, Math.round((barClient * el.scrollWidth) / el.clientWidth));
     return { gridRange, barRange: content - barClient };
   }, [viewport]);
 
