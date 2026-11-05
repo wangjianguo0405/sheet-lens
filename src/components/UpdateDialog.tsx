@@ -66,12 +66,7 @@ function Notes({ text }: { text: string }) {
   );
 }
 
-export function UpdateDialog({
-  open,
-  onOpenChange,
-  status,
-  onAvailableChange,
-}: UpdateDialogProps) {
+export function UpdateDialog({ open, onOpenChange, status, onAvailableChange }: UpdateDialogProps) {
   const { t, i18n } = useTranslation();
   const [release, setRelease] = useState<Release | null>(null);
   const [phase, setPhase] = useState<Phase>("checking");
@@ -102,15 +97,17 @@ export function UpdateDialog({
     if (open) void check();
   }, [open, check]);
 
-  const install = async () => {
+  const install = () => {
+    void runInstall();
+  };
+
+  const runInstall = async () => {
     setPhase("installing");
     setError(null);
     setProgress(null);
     // Listened for before the command is invoked: the first chunks can land
     // before its promise resolves, and a listener added afterwards misses them.
-    const stopListening = await onUpdateProgress(setProgress).catch(
-      () => () => {},
-    );
+    const stopListening = await onUpdateProgress(setProgress).catch(() => () => {});
     try {
       await installUpdate();
       setPhase("restarting");
@@ -153,9 +150,7 @@ export function UpdateDialog({
         )}
 
         {phase === "ready" && !release && !error && (
-          <p className="text-xs text-muted-foreground">
-            {t("update.latest")}
-          </p>
+          <p className="text-xs text-muted-foreground">{t("update.latest")}</p>
         )}
 
         {phase === "installing" && (
@@ -183,9 +178,7 @@ export function UpdateDialog({
         )}
 
         {phase === "restarting" && (
-          <p className="text-xs text-muted-foreground">
-            {t("update.restarting")}
-          </p>
+          <p className="text-xs text-muted-foreground">{t("update.restarting")}</p>
         )}
 
         {error && (
