@@ -414,9 +414,7 @@ function spanOfArea(area: Area, rows: boolean): [number, number] | null {
     case "column":
       return rows ? null : [area.col, area.col + area.cols - 1];
     case "range":
-      return rows
-        ? [area.row, area.row + area.rows - 1]
-        : [area.col, area.col + area.cols - 1];
+      return rows ? [area.row, area.row + area.rows - 1] : [area.col, area.col + area.cols - 1];
   }
 }
 
@@ -600,13 +598,7 @@ async function computeVisibleRows(
     col,
     values,
   }));
-  return filteredRows(
-    path,
-    sheet,
-    filter.row + 1,
-    filter.row + filter.rows - 1,
-    criteria,
-  );
+  return filteredRows(path, sheet, filter.row + 1, filter.row + filter.rows - 1, criteria);
 }
 
 /**
@@ -778,7 +770,7 @@ function TabSplitBar({ band, style, value, zoom, reach, pane, onScroll }: TabSpl
         if (!el) return;
         if (Math.abs(el.scrollLeft - echoed.current) <= 1) return;
         if (barRange <= 0 || bandRange <= 0) return;
-        onScroll(band, (el.scrollLeft / barRange) * bandRange / (zoom / 100));
+        onScroll(band, ((el.scrollLeft / barRange) * bandRange) / (zoom / 100));
       }}
       className="absolute overflow-x-auto overflow-y-hidden"
       style={style}
@@ -835,10 +827,7 @@ function describePaint(timing: PaintTimings): string {
 }
 
 /** Whether a selection still has its anchor on the cell the cross was set to. */
-function sameCursor(
-  at: { row: number; col: number },
-  selection: Selection,
-): boolean {
+function sameCursor(at: { row: number; col: number }, selection: Selection): boolean {
   const anchor = selectionAnchor(selection);
   return anchor.row === at.row && anchor.col === at.col;
 }
@@ -1057,13 +1046,9 @@ export function CanvasGrid({
   /** The same box as state, for the split's scrollbars to lay themselves out. */
   const [box, setBox] = useState({ width: 0, height: 0 });
   /** The four bars a split shows: left/right horizontal, top/bottom vertical. */
-  const splitBarRefs = useRef(
-    new Map<"hLeft" | "hRight" | "vTop" | "vBottom", HTMLDivElement>(),
-  );
+  const splitBarRefs = useRef(new Map<"hLeft" | "hRight" | "vTop" | "vBottom", HTMLDivElement>());
   /** The pixel each bar was last put at, clamped by the browser if need be. */
-  const splitBarEcho = useRef(
-    new Map<"hLeft" | "hRight" | "vTop" | "vBottom", number>(),
-  );
+  const splitBarEcho = useRef(new Map<"hLeft" | "hRight" | "vTop" | "vBottom", number>());
   const dprRef = useRef(1);
 
   const [baseColW, setBaseColW] = useState(96);
@@ -1324,9 +1309,7 @@ export function CanvasGrid({
    * one, beats the workbook's: the ribbon can both add a filter the file does
    * not carry and take away one it does.
    */
-  const autoFilter = filterPane?.off
-    ? null
-    : (filterPane?.area ?? layout?.autoFilter ?? null);
+  const autoFilter = filterPane?.off ? null : (filterPane?.area ?? layout?.autoFilter ?? null);
 
   /** The frozen bands in force: what the reader set, or what the file says. */
   const frozenRowCount = frozen ? frozen.rows : (layout?.frozenRows ?? 0);
@@ -1337,10 +1320,7 @@ export function CanvasGrid({
    * hidden rows are already the file's own, so only the button's funnel and the
    * blue row numbers depend on this.
    */
-  const customFilterCols = useMemo(
-    () => new Set(autoFilter?.custom ?? []),
-    [autoFilter],
-  );
+  const customFilterCols = useMemo(() => new Set(autoFilter?.custom ?? []), [autoFilter]);
   /** The notes by cell, for the mark's paint and the hover box. */
   const notesByCell = useMemo(() => {
     const map = new Map<number, NoteCell>();
@@ -1355,9 +1335,9 @@ export function CanvasGrid({
    * that covers the cells under it can be moved aside, and nothing is written
    * back, so reopening the file puts everything back where it was.
    */
-  const [shapeMoves, setShapeMoves] = useState<
-    Map<string, Map<number, { x: number; y: number }>>
-  >(() => new Map());
+  const [shapeMoves, setShapeMoves] = useState<Map<string, Map<number, { x: number; y: number }>>>(
+    () => new Map(),
+  );
   const shapeMovesKey = `${path}|${sheet.name}`;
   const shapeOffsets = shapeMoves.get(shapeMovesKey);
   const moveShape = useCallback(
@@ -1416,6 +1396,26 @@ export function CanvasGrid({
     }
     return out;
   }, [autoFilter, sheetColsGuess]);
+
+  /**
+   * The column whose values a filter button filters.
+   *
+   * A merged header draws its button at the region's right edge, but the value
+   * lives in the region's top-left cell — the rest are empty. So a button on
+   * the last column of a merged title reads the first one, which is where
+   * Excel reads it too.
+   */
+  const filterDataCol = useCallback(
+    (buttonCol: number): number => {
+      if (!layout) return buttonCol;
+      for (const merge of layout.merges) {
+        if (merge.row > autoFilter!.row || autoFilter!.row >= merge.row + merge.rows) continue;
+        if (buttonCol >= merge.col && buttonCol < merge.col + merge.cols) return merge.col;
+      }
+      return buttonCol;
+    },
+    [layout, autoFilter],
+  );
 
   const outsidePrint = useCallback(
     (row: number, col: number): boolean => {
@@ -1503,8 +1503,7 @@ export function CanvasGrid({
   const hiddenRows = useMemo(() => {
     const set = new Set<number>();
     const filter = layout?.autoFilter ?? null;
-    const filtered =
-      filter !== null && Object.keys(filter.applied ?? {}).length > 0;
+    const filtered = filter !== null && Object.keys(filter.applied ?? {}).length > 0;
     const inside = (row: number) =>
       filter !== null && row >= filter.row && row < filter.row + filter.rows;
     for (const row of layout?.hiddenRows ?? []) {
@@ -1618,7 +1617,7 @@ export function CanvasGrid({
         if (hiddenRows.has(row)) return 0;
         return rowOverrides.get(row) ?? baseRowH;
       }),
-    [rowView, rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf, hiddenRows],
+    [rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf, hiddenRows],
   );
 
   /**
@@ -1640,9 +1639,7 @@ export function CanvasGrid({
         ? headerW + (cols.offsets[split.col] ?? 0) - subtractX
         : 0;
     const y =
-      split.row > 0 && displayRow > 0
-        ? headerH + (rows.offsets[displayRow] ?? 0) - subtractY
-        : 0;
+      split.row > 0 && displayRow > 0 ? headerH + (rows.offsets[displayRow] ?? 0) - subtractY : 0;
     if (x <= headerW && y <= headerH) return null;
     return { x, y };
   }, [split, displayOfRow, rows, cols, headerW, headerH, colCount]);
@@ -1763,8 +1760,7 @@ export function CanvasGrid({
      * only the two lines appear across them.
      */
     const splitRowDisplay = split.row > 0 ? displayOfRow(split.row) : -1;
-    const bottomTop =
-      splitRowDisplay >= 0 ? (rows.offsets[splitRowDisplay] ?? top) : top;
+    const bottomTop = splitRowDisplay >= 0 ? (rows.offsets[splitRowDisplay] ?? top) : top;
     const rightLeft = split.col > 0 ? (cols.offsets[split.col] ?? left) : left;
     setSplitBands({
       vTop: top,
@@ -1775,7 +1771,15 @@ export function CanvasGrid({
     // Excel's active pane after a split is the top-left one (measured), and it
     // is also the view unsplitting returns to.
     setSplitFocus("tl");
-  }, [split, path, sheet.name]);
+    // Deliberately not `selection`, `cols.offsets`/`rows.offsets` or
+    // `displayOfRow`: those change on every selection move and on every
+    // measured metric, and this effect is what *drops* a split. Re-running it
+    // on a selection would collapse the panes the reader just made. The
+    // dependency that matters is the split being set or cleared, which is
+    // `split` itself — `cols`/`rows` are here only to read their offsets at
+    // the moment it happens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [split, path, sheet.name, cols, rows]);
 
   /**
    * Restores the file's own View > Split (ECMA-376 §18.3.1.66). The twips are
@@ -1795,10 +1799,7 @@ export function CanvasGrid({
     let col = 0;
     let row = 0;
     if (saved.xTwips > 0) {
-      col = Math.max(
-        1,
-        Math.min(colCount - 1, indexAt(cols.offsets, toPx(saved.xTwips))),
-      );
+      col = Math.max(1, Math.min(colCount - 1, indexAt(cols.offsets, toPx(saved.xTwips))));
     }
     if (saved.yTwips > 0) {
       const display = Math.max(
@@ -1905,19 +1906,17 @@ export function CanvasGrid({
       },
     ];
     if (!tabsShown) {
-      bars.push(
-        {
-          key: "hLeft",
-          axis: "x",
-          style: {
-            left: 0,
-            bottom: 0,
-            width: Math.max(0, hasX ? splitGeometry.x : box.width),
-            height: bar,
-          },
-          content: contentW,
+      bars.push({
+        key: "hLeft",
+        axis: "x",
+        style: {
+          left: 0,
+          bottom: 0,
+          width: Math.max(0, hasX ? splitGeometry.x : box.width),
+          height: bar,
         },
-      );
+        content: contentW,
+      });
     }
     if (hasX && !tabsShown) {
       bars.push({
@@ -1971,8 +1970,7 @@ export function CanvasGrid({
   }, [splitBands, zoom]);
 
   const scrollSplitBar =
-    (key: "hLeft" | "hRight" | "vTop" | "vBottom") =>
-    (event: React.UIEvent<HTMLDivElement>) => {
+    (key: "hLeft" | "hRight" | "vTop" | "vBottom") => (event: React.UIEvent<HTMLDivElement>) => {
       const z = zoom / 100;
       const el = event.currentTarget;
       const horizontal = key === "hLeft" || key === "hRight";
@@ -2077,10 +2075,7 @@ export function CanvasGrid({
       }
       const top = anchor.top;
       const y = (event.clientY - rect.top) / z + top - headerH;
-      const display = Math.max(
-        1,
-        Math.min(displayRowCount - 1, indexAt(rows.offsets, y)),
-      );
+      const display = Math.max(1, Math.min(displayRowCount - 1, indexAt(rows.offsets, y)));
       const row = sheetRowOf(display);
       if (row > 0 && row !== split.row) {
         onSplitChange?.({ row, col: split.col });
@@ -2141,10 +2136,7 @@ export function CanvasGrid({
   }, [printArea, layout, cols, rows, displayOfRow]);
 
   /** What Page Break Preview writes in the middle of each page. */
-  const pageLabel = useCallback(
-    (number: number) => t("print.page", { n: number }),
-    [t],
-  );
+  const pageLabel = useCallback((number: number) => t("print.page", { n: number }), [t]);
 
   /**
    * The app's own font, for the page number. Excel draws it in the UI font
@@ -2154,9 +2146,8 @@ export function CanvasGrid({
    */
   const uiFont = useMemo(
     () =>
-      (typeof window === "undefined"
-        ? ""
-        : window.getComputedStyle(document.body).fontFamily) || "sans-serif",
+      (typeof window === "undefined" ? "" : window.getComputedStyle(document.body).fontFamily) ||
+      "sans-serif",
     [],
   );
 
@@ -2172,12 +2163,8 @@ export function CanvasGrid({
   const freeze = useMemo(() => {
     // A split and a frozen band are two answers to the same question; the
     // split wins for as long as it is on, as it does in Excel.
-    const frozenSheetRows = splitGeometry
-      ? 0
-      : Math.max(0, Math.min(frozenRowCount, rowCount));
-    const frozenSheetCols = splitGeometry
-      ? 0
-      : Math.max(0, Math.min(frozenColCount, colCount));
+    const frozenSheetRows = splitGeometry ? 0 : Math.max(0, Math.min(frozenRowCount, rowCount));
+    const frozenSheetCols = splitGeometry ? 0 : Math.max(0, Math.min(frozenColCount, colCount));
     let frozenDisplayRows = 0;
     if (frozenSheetRows > 0) {
       if (!rowView) {
@@ -2199,7 +2186,18 @@ export function CanvasGrid({
       height: frozenDisplayRows > 0 ? (rows.offsets[frozenDisplayRows] ?? 0) : 0,
       width: frozenSheetCols > 0 ? (cols.offsets[frozenSheetCols] ?? 0) : 0,
     };
-  }, [frozenRowCount, frozenColCount, splitGeometry, rowView, rowCount, colCount, displayRowCount, sheetRowOf, rows, cols]);
+  }, [
+    frozenRowCount,
+    frozenColCount,
+    splitGeometry,
+    rowView,
+    rowCount,
+    colCount,
+    displayRowCount,
+    sheetRowOf,
+    rows,
+    cols,
+  ]);
 
   /**
    * Excel's input prompt: a small yellow note beside the cell the cursor is on,
@@ -2231,7 +2229,6 @@ export function CanvasGrid({
     };
   }, [layout, selection]);
   promptInfoRef.current = promptInfo;
-
 
   /**
    * Where the sheet's own extent ends, in sheet pixels.
@@ -2353,8 +2350,7 @@ export function CanvasGrid({
    * the left of the drawing again to the right of the sheet.
    */
   const shapeColX = useCallback(
-    (col: number) =>
-      col >= 0 && col <= sheetColsGuess ? cols.offsets[col] : usedColsTotal,
+    (col: number) => (col >= 0 && col <= sheetColsGuess ? cols.offsets[col] : usedColsTotal),
     [cols, sheetColsGuess, usedColsTotal],
   );
 
@@ -2588,7 +2584,8 @@ export function CanvasGrid({
         onSelect(colsBetween(selection.anchor + step, selection.edge + step));
         return;
       }
-      if (extend) onSelect(rangeBetween(selection.kind === "range" ? selection.anchor : from, { row, col }));
+      if (extend)
+        onSelect(rangeBetween(selection.kind === "range" ? selection.anchor : from, { row, col }));
       else select(row, col);
     },
     [selection, path, sheet.name, sheet.rows, sheet.cols, layout, onSelect, select],
@@ -2642,9 +2639,7 @@ export function CanvasGrid({
    */
   useEffect(() => {
     onFiltered?.(
-      visibleRows && autoFilter
-        ? { shown: visibleRows.length, total: autoFilter.rows - 1 }
-        : null,
+      visibleRows && autoFilter ? { shown: visibleRows.length, total: autoFilter.rows - 1 } : null,
     );
   }, [visibleRows, autoFilter, onFiltered]);
 
@@ -2727,9 +2722,10 @@ export function CanvasGrid({
         // user cleared rather than one that was never set. The ribbon's own
         // decision comes first: an area it added starts with no criteria, and
         // clearing the file's takes them all away.
-        const filters = filterPane?.off || filterPane?.area
-          ? new Map<number, string[]>()
-          : (saved?.filters ?? toFilters(parsed.autoFilter?.applied));
+        const filters =
+          filterPane?.off || filterPane?.area
+            ? new Map<number, string[]>()
+            : (saved?.filters ?? toFilters(parsed.autoFilter?.applied));
         if (filters.size > 0) {
           setFilters(filters);
           computeVisibleRows(path, sheet.name, parsed.autoFilter, filters)
@@ -2787,6 +2783,10 @@ export function CanvasGrid({
     const view = bySheet.get(sheet.name) ?? { ...scrollRef.current };
     bySheet.set(sheet.name, { ...view, zoom });
     views.set(path, bySheet);
+    // Keyed on the zoom alone on purpose: moving to another sheet must not
+    // record the zoom it opens at under the new sheet's name — the seed above
+    // already did that, and re-running here would overwrite what was left.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoom]);
 
   /** Moves the scroller to a sheet-space offset, through the paint refs. */
@@ -2912,10 +2912,9 @@ export function CanvasGrid({
    * anything but the grid.
    */
   useEffect(() => {
-    const layers = [
-      pageLayerRef.current,
-      ...paneLayers.current.values(),
-    ].filter((layer): layer is HTMLDivElement => layer !== null);
+    const layers = [pageLayerRef.current, ...paneLayers.current.values()].filter(
+      (layer): layer is HTMLDivElement => layer !== null,
+    );
     if (layers.length === 0) return;
     const onWheel = (event: WheelEvent) => {
       const el = viewportRef.current;
@@ -3130,7 +3129,12 @@ export function CanvasGrid({
    * reported up as offsets rather than as anything DOM-shaped, because the cell
    * behind it belongs to the grid and not to the field.
    */
-  const selectedText = useCallback((): { row: number; col: number; from: number; to: number } | null => {
+  const selectedText = useCallback((): {
+    row: number;
+    col: number;
+    from: number;
+    to: number;
+  } | null => {
     const el = editorRef.current;
     const at = editingRef.current;
     if (!el || !at) return null;
@@ -3173,9 +3177,7 @@ export function CanvasGrid({
    * made and survives that close — the close is exactly what the colour is
    * about to act on. It goes when another cell is opened.
    */
-  const keptStretch = useRef<{ row: number; col: number; from: number; to: number } | null>(
-    null,
-  );
+  const keptStretch = useRef<{ row: number; col: number; from: number; to: number } | null>(null);
 
   /** Where the caret belongs once the field has been redrawn, or null. */
   const caretAfter = useRef<number | null>(null);
@@ -3309,6 +3311,10 @@ export function CanvasGrid({
     };
     document.addEventListener("pointerdown", onDown, true);
     return () => document.removeEventListener("pointerdown", onDown, true);
+    // The listener is only wanted while a cell is open — `selectedText` reads
+    // the selection as it stands at the moment of the press, which is what
+    // should be kept, not the one the effect closed over when it mounted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
   const handleScroll = useCallback(() => {
@@ -3442,11 +3448,7 @@ export function CanvasGrid({
       if (pane) {
         const at = activeArea(selection);
         const moving =
-          at.kind === "range"
-            ? at.edge
-            : at.kind === "cell"
-              ? { row: at.row, col: at.col }
-              : null;
+          at.kind === "range" ? at.edge : at.kind === "cell" ? { row: at.row, col: at.col } : null;
         const atRow =
           at.kind === "column" ? -1 : moving ? moving.row : at.kind === "row" ? at.edge : -1;
         const atCol =
@@ -3489,8 +3491,8 @@ export function CanvasGrid({
       return;
     }
 
-    let viewH = el.clientHeight;
-    let viewW = el.clientWidth;
+    const viewH = el.clientHeight;
+    const viewW = el.clientWidth;
 
     // A block follows its edge rather than its rectangle, which for one growing
     // leftward is the wrong corner: the edge is the end the pointer and the
@@ -3499,11 +3501,7 @@ export function CanvasGrid({
     // being looked at.
     const at = activeArea(selection);
     const moving =
-      at.kind === "range"
-        ? at.edge
-        : at.kind === "cell"
-          ? { row: at.row, col: at.col }
-          : null;
+      at.kind === "range" ? at.edge : at.kind === "cell" ? { row: at.row, col: at.col } : null;
     const atRow =
       at.kind === "column" ? -1 : moving ? moving.row : at.kind === "row" ? at.edge : -1;
     const atCol =
@@ -3530,8 +3528,7 @@ export function CanvasGrid({
     if (atCol >= 0 && atCol >= freeze.cols) {
       const frozen = freeze.width * factor;
       const left = (cols.offsets[atCol] ?? 0) * factor;
-      const right =
-        (headerW + (cols.offsets[Math.min(atCol + 1, sheetColsGuess)] ?? 0)) * factor;
+      const right = (headerW + (cols.offsets[Math.min(atCol + 1, sheetColsGuess)] ?? 0)) * factor;
       if (left < el.scrollLeft + frozen) el.scrollLeft = left - frozen;
       else if (right > el.scrollLeft + viewW) el.scrollLeft = right - viewW;
     }
@@ -3632,8 +3629,7 @@ export function CanvasGrid({
     // A split keeps a row free at the foot of the sheet for its two horizontal
     // bars — unless the tabs are on screen, where those bars live in the tab
     // row and the sheet runs to the bottom of the grid.
-    const height =
-      size.height / z - (splitGeometry && !tabsShown ? SPLIT_BAR_SPACE : 0);
+    const height = size.height / z - (splitGeometry && !tabsShown ? SPLIT_BAR_SPACE : 0);
 
     /**
      * The split panes, when there are any. Their ranges are added to the
@@ -3963,8 +3959,7 @@ export function CanvasGrid({
       mergeView: { shown: shownMerges, covered: coveredMerges, at: mergeIndex },
       centerRuns: { shown: shownRuns, covered: coveredRuns, at: runIndex },
       autoFilter,
-      filtering:
-        (visibleRows !== null && filters.size > 0) || customFilterCols.size > 0,
+      filtering: (visibleRows !== null && filters.size > 0) || customFilterCols.size > 0,
       printArea,
       pageBreaks: pagination,
       pageLabel,
@@ -3990,13 +3985,14 @@ export function CanvasGrid({
     sheet.name,
     sheet.rows,
     sheet.cols,
-    rowView,
     cols,
     rows,
     hiddenRows,
     hiddenCols,
     headerW,
     headerH,
+    // `rowHeaderW` below is derived from these two.
+    rowGutter,
     outlineRows,
     outlineCols,
     rowCount,
@@ -4006,7 +4002,6 @@ export function CanvasGrid({
     displayOfRow,
     cellAt,
     styleAt,
-    mergeAt,
     marks,
     fontFamily,
     fontSize,
@@ -4165,7 +4160,10 @@ export function CanvasGrid({
           });
         }
       }
-      const clipTo = (ctx: CanvasRenderingContext2D, clips: { x: number; y: number; w: number; h: number }[]) => {
+      const clipTo = (
+        ctx: CanvasRenderingContext2D,
+        clips: { x: number; y: number; w: number; h: number }[],
+      ) => {
         if (clips.length === 0) return;
         ctx.beginPath();
         for (const clip of clips) {
@@ -4323,15 +4321,16 @@ export function CanvasGrid({
           if (!info || display < 0 || splitLayout) {
             prompt.style.display = "none";
           } else {
-            const x = (view.cols.offsets[info.col] - (info.col < fc ? 0 : view.scrollLeft)) * view.zoom;
-            const y = (view.rows.offsets[display] - (display < fr ? 0 : view.scrollTop)) * view.zoom;
+            const x =
+              (view.cols.offsets[info.col] - (info.col < fc ? 0 : view.scrollLeft)) * view.zoom;
+            const y =
+              (view.rows.offsets[display] - (display < fr ? 0 : view.scrollTop)) * view.zoom;
             const w = spanAt(view.cols.offsets, info.col) * view.zoom;
             prompt.style.display = "";
             prompt.style.transform = "translate(0px, 0px)";
             const pw = prompt.offsetWidth;
             const ph = prompt.offsetHeight;
-            const left =
-              x + w + 2 + pw <= area.clientWidth ? x + w + 2 : Math.max(0, x - pw - 2);
+            const left = x + w + 2 + pw <= area.clientWidth ? x + w + 2 : Math.max(0, x - pw - 2);
             const top = Math.min(Math.max(0, y), Math.max(0, area.clientHeight - ph - 1));
             prompt.style.transform = `translate(${left}px, ${top}px)`;
           }
@@ -4417,8 +4416,7 @@ export function CanvasGrid({
               view.markAt(row, col) ??
               (view.outsidePrint(at.row, at.col) ? OUTSIDE_PRINT : (style?.fill ?? "#fff"));
             field.style.textAlign =
-              style?.horizontal === "center" ||
-              style?.horizontal === "centerContinuous"
+              style?.horizontal === "center" || style?.horizontal === "centerContinuous"
                 ? "center"
                 : style?.horizontal === "right"
                   ? "right"
@@ -4449,9 +4447,10 @@ export function CanvasGrid({
             const room = h * view.zoom - blockHeight;
             const vertical = style?.vertical ?? "bottom";
             field.style.lineHeight = `${lineHeight}px`;
-            field.style.paddingTop = `${
-              Math.max(0, vertical === "top" ? 0 : vertical === "middle" ? room / 2 : room)
-            }px`;
+            field.style.paddingTop = `${Math.max(
+              0,
+              vertical === "top" ? 0 : vertical === "middle" ? room / 2 : room,
+            )}px`;
           }
         }
       }
@@ -4534,8 +4533,21 @@ export function CanvasGrid({
         }
       }
     },
-    [buildView, ensureBlocks, printColX, printRowY, freeze, rowCount, colCount,
-     splitGeometry, splitBands, headerW, headerH, rows, cols],
+    [
+      buildView,
+      ensureBlocks,
+      printColX,
+      printRowY,
+      freeze,
+      rowCount,
+      colCount,
+      splitGeometry,
+      splitBands,
+      headerW,
+      headerH,
+      rows,
+      cols,
+    ],
   );
   const paintRef = useRef(paint);
   paintRef.current = paint;
@@ -4576,8 +4588,8 @@ export function CanvasGrid({
        */
       const hasX = splitGeometry !== null && splitGeometry.x > headerW;
       const hasY = splitGeometry !== null && splitGeometry.y > headerH;
-      const right = hasX && px >= (splitGeometry!.x + SPLIT_BAR) * z;
-      const bottom = hasY && py >= (splitGeometry!.y + SPLIT_BAR) * z;
+      const right = hasX && px >= (splitGeometry.x + SPLIT_BAR) * z;
+      const bottom = hasY && py >= (splitGeometry.y + SPLIT_BAR) * z;
       const pane: PaneId =
         hasX && hasY
           ? right
@@ -4605,14 +4617,14 @@ export function CanvasGrid({
        */
       const paneLayout =
         splitGeometry && splitBands
-          ? splitPanes(
+          ? (splitPanes(
               splitGeometry,
               sizeRef.current.width / z,
               sizeRef.current.height / z,
               splitBands,
               headerW,
               headerH,
-            ).find((one) => one.id === pane) ?? null
+            ).find((one) => one.id === pane) ?? null)
           : null;
       const paneLeft = paneScroll ? paneScroll.left * z : el.scrollLeft;
       const paneTop = paneScroll ? paneScroll.top * z : el.scrollTop;
@@ -4622,13 +4634,11 @@ export function CanvasGrid({
       const sheetX = (viewportX: number) =>
         splitGeometry
           ? (viewportX - originX + paneLeft) / z - headerW
-          : (viewportX + (viewportX < gutterW + frozenW ? 0 : el.scrollLeft)) / z -
-            headerW;
+          : (viewportX + (viewportX < gutterW + frozenW ? 0 : el.scrollLeft)) / z - headerW;
       const sheetY = (viewportY: number) =>
         splitGeometry
           ? (viewportY - originY + paneTop) / z - headerH
-          : (viewportY + (viewportY < gutterH + frozenH ? 0 : el.scrollTop)) / z -
-            headerH;
+          : (viewportY + (viewportY < gutterH + frozenH ? 0 : el.scrollTop)) / z - headerH;
 
       // The scroller's scrollbars are inside its border box but are not the
       // sheet. Hit-testing one as a cell started a block selection on the
@@ -4659,8 +4669,19 @@ export function CanvasGrid({
       if (row < 0) return null;
       return { kind: "cell", row, col: Math.min(colCount - 1, indexAt(cols.offsets, x)) };
     },
-    [cols, rows, colCount, rowCount, sheetRowOf, freeze, headerW, headerH,
-     splitGeometry, splitBands, splitFocus, bandOffset],
+    [
+      cols,
+      rows,
+      colCount,
+      rowCount,
+      sheetRowOf,
+      freeze,
+      headerW,
+      headerH,
+      splitGeometry,
+      splitBands,
+      bandOffset,
+    ],
   );
 
   /**
@@ -4720,8 +4741,7 @@ export function CanvasGrid({
             false,
           );
           const x = box.x * z;
-          const y =
-            (headerH + box.y) * z - (display < freeze.rows ? 0 : el.scrollTop);
+          const y = (headerH + box.y) * z - (display < freeze.rows ? 0 : el.scrollTop);
           if (px >= x && px < x + box.w * z && py >= y && py < y + box.h * z) {
             return { kind: "rowGroup", group };
           }
@@ -4737,8 +4757,7 @@ export function CanvasGrid({
             spanAt(cols.offsets, group.summary),
             true,
           );
-          const x =
-            (headerW + box.x) * z - (group.summary < freeze.cols ? 0 : el.scrollLeft);
+          const x = (headerW + box.x) * z - (group.summary < freeze.cols ? 0 : el.scrollLeft);
           const y = box.y * z;
           if (px >= x && px < x + box.w * z && py >= y && py < y + box.h * z) {
             return { kind: "colGroup", group };
@@ -4758,6 +4777,9 @@ export function CanvasGrid({
       freeze,
       headerW,
       headerH,
+      colGutter,
+      rowGutter,
+      rowHeaderW,
     ],
   );
 
@@ -4786,11 +4808,7 @@ export function CanvasGrid({
           }
           return false;
         })();
-    const lines = groupToggleLines(
-      group,
-      (line) => lineOutline.levels.get(line) ?? 0,
-      open,
-    );
+    const lines = groupToggleLines(group, (line) => lineOutline.levels.get(line) ?? 0, open);
     setHiddenOverride((prev) => {
       const map = new Map(isRows ? prev.rows : prev.cols);
       // Open now means the click closes it, so the line's new hidden state is
@@ -5204,7 +5222,17 @@ export function CanvasGrid({
       openValueList(rule, at.row, at.col, "pointer");
       return true;
     },
-    [selection, validationAtCell, displayOfRow, cols, rows, freeze, headerW, headerH, openValueList],
+    [
+      selection,
+      validationAtCell,
+      displayOfRow,
+      cols,
+      rows,
+      freeze,
+      headerW,
+      headerH,
+      openValueList,
+    ],
   );
 
   /**
@@ -5427,9 +5455,7 @@ export function CanvasGrid({
    */
   const autofitRows = (indices: number[]) => {
     const wanted = new Set(indices);
-    const tallest = new Map<number, number>(
-      indices.map((row) => [row, baseRowH]),
-    );
+    const tallest = new Map<number, number>(indices.map((row) => [row, baseRowH]));
     const mine = blockPrefix(path, sheet.name);
     for (const [key, block] of cache.current) {
       if (!key.startsWith(mine)) continue;
@@ -5503,22 +5529,20 @@ export function CanvasGrid({
         };
       }
       if (area.kind === "row") {
-        const text = (
-          await axisValues(path, sheet.name, { row: area.row }, 0, sheetCols - 1)
-        ).join("\t");
+        const text = (await axisValues(path, sheet.name, { row: area.row }, 0, sheetCols - 1)).join(
+          "\t",
+        );
         return { text, rect: { row: area.row, col: 0, rows: area.rows, cols: sheetCols } };
       }
       if (area.kind === "column") {
-        const text = (
-          await axisValues(path, sheet.name, { col: area.col }, 0, sheetRows - 1)
-        ).join("\n");
+        const text = (await axisValues(path, sheet.name, { col: area.col }, 0, sheetRows - 1)).join(
+          "\n",
+        );
         return { text, rect: { row: 0, col: area.col, rows: sheetRows, cols: area.cols } };
       }
       const block = await getCells(path, sheet.name, area.row, area.col, area.rows, area.cols);
       return {
-        text: block
-          .map((line) => line.map((cell) => cell?.text ?? "").join("\t"))
-          .join("\n"),
+        text: block.map((line) => line.map((cell) => cell?.text ?? "").join("\t")).join("\n"),
         rect: { row: area.row, col: area.col, rows: area.rows, cols: area.cols },
       };
     };
@@ -5566,9 +5590,7 @@ export function CanvasGrid({
     // repeated presses accumulate and a press back retrace.
     const anchor = selectionAnchor(selection);
     const shown: Selection =
-      selection.kind === "areas"
-        ? { kind: "cell", row: anchor.row, col: anchor.col }
-        : selection;
+      selection.kind === "areas" ? { kind: "cell", row: anchor.row, col: anchor.col } : selection;
     const edge = shown.kind === "range" ? shown.edge : anchor;
 
     // Ctrl belongs to the sheet rather than the cursor: Excel jumps to the two
@@ -5686,8 +5708,7 @@ export function CanvasGrid({
         );
         onSelect(rowsBetween(shown.anchor + step, shown.edge + step));
       };
-      const grow = (next: number) =>
-        onSelect(rowsBetween(shown.anchor, clampRow(next)));
+      const grow = (next: number) => onSelect(rowsBetween(shown.anchor, clampRow(next)));
       switch (event.key) {
         case "ArrowUp":
           if (event.shiftKey) grow(shown.edge - 1);
@@ -5730,8 +5751,7 @@ export function CanvasGrid({
         );
         onSelect(colsBetween(shown.anchor + step, shown.edge + step));
       };
-      const grow = (next: number) =>
-        onSelect(colsBetween(shown.anchor, clampCol(next)));
+      const grow = (next: number) => onSelect(colsBetween(shown.anchor, clampCol(next)));
       switch (event.key) {
         case "ArrowLeft":
           if (event.shiftKey) grow(shown.edge - 1);
@@ -5896,9 +5916,7 @@ export function CanvasGrid({
    */
   const rowsForResize = (row: number): number[] => {
     const covers =
-      selection.kind === "row" &&
-      row >= selection.row &&
-      row < selection.row + selection.rows;
+      selection.kind === "row" && row >= selection.row && row < selection.row + selection.rows;
     if (!covers) return [row];
     return Array.from({ length: selection.rows }, (_, offset) => selection.row + offset);
   };
@@ -5979,9 +5997,7 @@ export function CanvasGrid({
     // A cell in a frozen band does not scroll with the rest.
     const cellLeft =
       rect.left +
-      (headerW +
-        cols.offsets[note.col] -
-        (note.col < freeze.cols ? 0 : scrollRef.current.left)) *
+      (headerW + cols.offsets[note.col] - (note.col < freeze.cols ? 0 : scrollRef.current.left)) *
         z;
     const mergeEnd = merge === null ? undefined : cols.offsets[merge.col + merge.cols];
     const cellWidth =
@@ -5991,10 +6007,7 @@ export function CanvasGrid({
     const cellRight = cellLeft + cellWidth * z;
     const cellTop =
       rect.top +
-      (headerH +
-        rows.offsets[display] -
-        (display < freeze.rows ? 0 : scrollRef.current.top)) *
-        z;
+      (headerH + rows.offsets[display] - (display < freeze.rows ? 0 : scrollRef.current.top)) * z;
     const gapX = NOTE_BOX_GAP_PX * z;
     const right = cellRight + gapX;
     const flip = right + w > rect.left + el.clientWidth;
@@ -6020,17 +6033,15 @@ export function CanvasGrid({
       showNote(null);
       return;
     }
-    const note = notesByCell.get(
-      cellKey(sheetColsGuess, previewNote.row, previewNote.col),
-    );
+    const note = notesByCell.get(cellKey(sheetColsGuess, previewNote.row, previewNote.col));
     if (note) showNoteFor(note);
+    // `showNote`/`showNoteFor` are rebuilt every render and close over the
+    // note box's own state; depending on them would re-run this on every one of
+    // those renders. What actually decides the preview is the cell it is on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewNote, notesByCell, sheetColsGuess]);
 
-  const updateTooltip = (
-    hit: ReturnType<typeof hitAt>,
-    clientX: number,
-    clientY: number,
-  ) => {
+  const updateTooltip = (hit: ReturnType<typeof hitAt>, clientX: number, clientY: number) => {
     // A note's box is click-through, so a pointer over it is still "over" the
     // cell beneath — which would close the box the moment it was reached. Keep
     // it while the pointer is inside it, or in the strip between it and its
@@ -6063,11 +6074,7 @@ export function CanvasGrid({
     // hovering the anchor that carries the note.
     const merge = mergeAt(hit.row, hit.col);
     const note = notesByCell.get(
-      cellKey(
-        sheetColsGuess,
-        merge ? merge.row : hit.row,
-        merge ? merge.col : hit.col,
-      ),
+      cellKey(sheetColsGuess, merge ? merge.row : hit.row, merge ? merge.col : hit.col),
     );
     if (note) {
       scheduleNoteShow(note);
@@ -6087,15 +6094,11 @@ export function CanvasGrid({
       text,
       x:
         rect.left +
-        (headerW +
-          cols.offsets[hit.col] -
-          (hit.col < freeze.cols ? 0 : scrollRef.current.left)) *
+        (headerW + cols.offsets[hit.col] - (hit.col < freeze.cols ? 0 : scrollRef.current.left)) *
           z,
       y:
         rect.top +
-        (headerH +
-          rows.offsets[display] -
-          (display < freeze.rows ? 0 : scrollRef.current.top)) *
+        (headerH + rows.offsets[display] - (display < freeze.rows ? 0 : scrollRef.current.top)) *
           z +
         spanAt(rows.offsets, display) * z,
     });
@@ -6146,6 +6149,9 @@ export function CanvasGrid({
     if (!import.meta.env.DEV || !readoutOn) return null;
 
     const { row, col } = selectionAnchor(selection);
+    // Read so the memo recomputes when the paint counters below move: they
+    // live in a ref, which on its own is invisible to this dependency list.
+    void readoutTick;
     const display = displayOfRow(row);
     const style = styleAt(row, col);
     const value = cellAt(row, col);
@@ -6202,7 +6208,6 @@ export function CanvasGrid({
     showGrid,
     colOverrides,
     printArea,
-    // The paint counters live in a ref, so the memo needs this to notice them.
     readoutTick,
   ]);
 
@@ -6218,16 +6223,13 @@ export function CanvasGrid({
   const runs = editing
     ? (() => {
         const file =
-          layout?.richCells?.find(
-            (cell) => cell.row === editing.row && cell.col === editing.col,
-          )?.runs ?? null;
+          layout?.richCells?.find((cell) => cell.row === editing.row && cell.col === editing.col)
+            ?.runs ?? null;
         // The reader's own colours are laid over the file's, the same merge the
         // painter reads — otherwise the field draws the file's runs alone and a
         // stretch that was coloured on the sheet goes black the moment the cell
         // is opened.
-        const own = textColors?.get(
-          formatKey(sheet.name, editing.row, editing.col),
-        );
+        const own = textColors?.get(formatKey(sheet.name, editing.row, editing.col));
         if (!own) return file;
         const text = cellAt(editing.row, editing.col)?.text ?? "";
         return textRuns(file, own, text);
@@ -6238,8 +6240,7 @@ export function CanvasGrid({
    * The tab row's right bar starts at the split line, or at the tabs when the
    * line is behind them and there is no left bar to draw.
    */
-  const tabBarRightLeft =
-    tabBarLayout && tabBarLayout.left > 0 ? tabBarLayout.left + SPLIT_BAR : 0;
+  const tabBarRightLeft = tabBarLayout && tabBarLayout.left > 0 ? tabBarLayout.left + SPLIT_BAR : 0;
 
   /**
    * The left column band's visible width. Without a column split there is no
@@ -6248,8 +6249,7 @@ export function CanvasGrid({
    * nothing.
    */
   const tabBarLeftPane =
-    (splitGeometry && splitGeometry.x > headerW ? splitGeometry.x : box.width) *
-    (zoom / 100);
+    (splitGeometry && splitGeometry.x > headerW ? splitGeometry.x : box.width) * (zoom / 100);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -6445,33 +6445,39 @@ export function CanvasGrid({
           className="pointer-events-none absolute top-0 left-0 overflow-hidden"
         >
           {autoFilter &&
-            filterCols.map((col) => (
-              <div
-                key={col}
-                ref={(element) => {
-                  if (element) filterSlots.current.set(col, element);
-                  else filterSlots.current.delete(col);
-                }}
-                className="pointer-events-none absolute top-0 left-0"
-              >
-                <FilterButton
-                  path={path}
-                  sheet={sheet.name}
-                  col={col}
-                  firstRow={autoFilter.row + 1}
-                  lastRow={autoFilter.row + autoFilter.rows - 1}
-                  criteria={filterCriteria}
-                  selected={filters.get(col) ?? []}
-                  filtered={customFilterCols.has(col)}
-                  onApply={(values) => {
-                    const next = new Map(filters);
-                    if (values && values.length > 0) next.set(col, values);
-                    else next.delete(col);
-                    void applyFilters(next, autoFilter);
+            filterCols.map((col) => {
+              // The button sits where Excel draws it — the right edge of a
+              // merged title — but everything it says is read from the cell
+              // the title's text is actually in, the region's top-left.
+              const dataCol = filterDataCol(col);
+              return (
+                <div
+                  key={col}
+                  ref={(element) => {
+                    if (element) filterSlots.current.set(col, element);
+                    else filterSlots.current.delete(col);
                   }}
-                />
-              </div>
-            ))}
+                  className="pointer-events-none absolute top-0 left-0"
+                >
+                  <FilterButton
+                    path={path}
+                    sheet={sheet.name}
+                    col={dataCol}
+                    firstRow={autoFilter.row + 1}
+                    lastRow={autoFilter.row + autoFilter.rows - 1}
+                    criteria={filterCriteria}
+                    selected={filters.get(dataCol) ?? []}
+                    filtered={customFilterCols.has(dataCol)}
+                    onApply={(values) => {
+                      const next = new Map(filters);
+                      if (values && values.length > 0) next.set(dataCol, values);
+                      else next.delete(dataCol);
+                      void applyFilters(next, autoFilter);
+                    }}
+                  />
+                </div>
+              );
+            })}
 
           {/* The file's input prompt, beside the active cell. */}
           {promptInfo && !valueList && (
@@ -6531,10 +6537,7 @@ export function CanvasGrid({
             >
               {runs ? (
                 runs.map((run, index) => (
-                  <span
-                    key={index}
-                    style={run.color ? { color: run.color } : undefined}
-                  >
+                  <span key={index} style={run.color ? { color: run.color } : undefined}>
                     {run.text}
                   </span>
                 ))
@@ -6553,7 +6556,8 @@ export function CanvasGrid({
           it to the cell area is what keeps a shape anchored at row 0 from
           painting over the column headers.
         */}
-        {layout && layoutReady &&
+        {layout &&
+          layoutReady &&
           (shapePanes ?? [null]).map((pane) => (
             <div
               key={pane?.id ?? "all"}
@@ -6658,18 +6662,8 @@ export function CanvasGrid({
             const baseX = to.x - ux * 6;
             const baseY = to.y - uy * 6;
             return (
-              <svg
-                className="pointer-events-none fixed inset-0 z-40 h-full w-full"
-                aria-hidden
-              >
-                <line
-                  x1={from.x}
-                  y1={from.y}
-                  x2={baseX}
-                  y2={baseY}
-                  stroke="#000"
-                  strokeWidth={1}
-                />
+              <svg className="pointer-events-none fixed inset-0 z-40 h-full w-full" aria-hidden>
+                <line x1={from.x} y1={from.y} x2={baseX} y2={baseY} stroke="#000" strokeWidth={1} />
                 <polygon
                   points={`${to.x},${to.y} ${baseX - uy * 3},${baseY + ux * 3} ${baseX + uy * 3},${baseY - ux * 3}`}
                   fill="#000"
@@ -6702,9 +6696,7 @@ export function CanvasGrid({
               fontStyle: noteTip.note.font?.italic ? "italic" : undefined,
             }}
           >
-            <div className="whitespace-pre-wrap break-words">
-              {noteTip.note.text ?? ""}
-            </div>
+            <div className="whitespace-pre-wrap break-words">{noteTip.note.text ?? ""}</div>
           </div>
         )}
 
