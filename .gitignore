@@ -38,6 +38,7 @@ dev-harness/
 .aider*
 .claude/
 .cline/
+.codegraph/
 .codeium/
 .codex/
 .continue/
