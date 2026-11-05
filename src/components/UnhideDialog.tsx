@@ -64,13 +64,7 @@ interface UnhideDialogProps {
  * only narrows what is shown: a name picked before the query was typed stays
  * picked, and is part of what the button confirms.
  */
-export function UnhideDialog({
-  open,
-  onOpenChange,
-  sheets,
-  at,
-  onUnhide,
-}: UnhideDialogProps) {
+export function UnhideDialog({ open, onOpenChange, sheets, at, onUnhide }: UnhideDialogProps) {
   const { t } = useTranslation();
   /** In the order they were picked, so the last one becomes the current sheet. */
   const [picked, setPicked] = useState<string[]>([]);
@@ -88,9 +82,7 @@ export function UnhideDialog({
 
   const visible = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    return needle
-      ? sheets.filter((name) => name.toLocaleLowerCase().includes(needle))
-      : sheets;
+    return needle ? sheets.filter((name) => name.toLocaleLowerCase().includes(needle)) : sheets;
   }, [sheets, query]);
 
   const toggle = (name: string, shiftKey: boolean) => {
@@ -168,16 +160,12 @@ export function UnhideDialog({
               role="option"
               aria-selected={picked.includes(name)}
               onClick={(event) => toggle(name, event.shiftKey)}
-              onDoubleClick={() =>
-                confirm(picked.includes(name) ? undefined : name)
-              }
+              onDoubleClick={() => confirm(picked.includes(name) ? undefined : name)}
               className={cn(
                 "block w-full truncate px-2 text-left text-xs",
                 // The same blue a search hit is walked to in, so a list of
                 // names selects the same way in both panels.
-                picked.includes(name)
-                  ? "bg-[#0F6CBD] text-white"
-                  : "hover:bg-accent/40",
+                picked.includes(name) ? "bg-[#0F6CBD] text-white" : "hover:bg-accent/40",
               )}
               style={{ height: ROW_H, lineHeight: `${ROW_H}px` }}
             >
@@ -185,9 +173,7 @@ export function UnhideDialog({
             </button>
           ))}
           {visible.length === 0 && (
-            <p className="px-2 py-2 text-xs text-muted-foreground">
-              {t("sheets.none")}
-            </p>
+            <p className="px-2 py-2 text-xs text-muted-foreground">{t("sheets.none")}</p>
           )}
         </div>
 
