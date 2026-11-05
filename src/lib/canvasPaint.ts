@@ -733,12 +733,7 @@ function paintDiagonal(
  * `CopyPicture` — the mark is part of what Excel copies, and it scales with the
  * zoom like the cell it belongs to.
  */
-function paintNoteMark(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-): void {
+function paintNoteMark(ctx: CanvasRenderingContext2D, x: number, y: number, w: number): void {
   // One run per row rather than a path: the 45° hypotenuse then lands on whole
   // pixels, as Excel's does, instead of being spread over an antialiased edge.
   for (let row = 0; row < 6; row += 1) {
@@ -1034,8 +1029,7 @@ function paintTurnedText(
           : box.y + box.h - height;
     // General is centred here: a stacked column that hugged one edge of its
     // column read as a mistake next to Excel's own.
-    ctx.textAlign =
-      horizontal === "left" ? "left" : horizontal === "right" ? "right" : "center";
+    ctx.textAlign = horizontal === "left" ? "left" : horizontal === "right" ? "right" : "center";
     const x =
       horizontal === "left"
         ? box.x + TURN_INSET
@@ -1411,17 +1405,10 @@ function paintText(
         }
       }
       ctx.fillText(source, x, drawBaseline);
-      paintDecoration(
-        ctx,
-        cellDecoration,
-        left,
-        width,
-        drawBaseline,
-        piecePx(null),
-        base,
-        style,
-        { left: innerX, width: available },
-      );
+      paintDecoration(ctx, cellDecoration, left, width, drawBaseline, piecePx(null), base, style, {
+        left: innerX,
+        width: available,
+      });
       continue;
     }
 
@@ -1577,10 +1564,7 @@ function paintPageNumbers(
     // page cannot hold it. Height first, then the measured width.
     const size = Math.max(
       1,
-      Math.min(
-        PAGE_NUMBER_PX,
-        Math.floor((page.y1 - page.y0) * PAGE_NUMBER_FIT_ROOM),
-      ),
+      Math.min(PAGE_NUMBER_PX, Math.floor((page.y1 - page.y0) * PAGE_NUMBER_FIT_ROOM)),
     );
     if (size !== sized) {
       sized = size;
@@ -1689,8 +1673,7 @@ function paintPrintArea(
   const lastRow = view.displayOfRow(area.row + area.rows);
   const y0 = oy + (firstRow >= 0 ? (view.rows.offsets[firstRow] ?? 0) : 0);
   const y1 =
-    oy +
-    (lastRow >= 0 ? (view.rows.offsets[lastRow] ?? view.rows.total) : view.rows.total);
+    oy + (lastRow >= 0 ? (view.rows.offsets[lastRow] ?? view.rows.total) : view.rows.total);
 
   ctx.strokeStyle = PRINT_AREA_INK;
   ctx.lineWidth = PRINT_AREA_LINE;
@@ -1797,12 +1780,7 @@ export interface PaintStats {
  * out there belongs to a region, so the question is answered before the key is
  * built.
  */
-function inRegion(
-  view: GridView,
-  covered: Set<number>,
-  sheetRow: number,
-  col: number,
-): boolean {
+function inRegion(view: GridView, covered: Set<number>, sheetRow: number, col: number): boolean {
   if (col >= view.sheetCols) return false;
   return covered.has(cellKey(view.sheetCols, sheetRow, col));
 }
@@ -2095,11 +2073,7 @@ function paintSpanSurface(
   }
 }
 
-function paintSpanText(
-  ctx: CanvasRenderingContext2D,
-  view: GridView,
-  span: Span,
-): void {
+function paintSpanText(ctx: CanvasRenderingContext2D, view: GridView, span: Span): void {
   const text = span.text ?? view.cellAt(span.rect.row, span.rect.col)?.text ?? "";
   const pad = pads(view, span.style, span.kindOfCell);
   paintText(
@@ -2209,9 +2183,7 @@ function paintCellSurface(
     view.styleAt,
     { row: sheetRow, col, rows: 1, cols: 1 },
     { rows: view.sheetRows, cols: view.sheetCols },
-    run
-      ? { left: col > run.col, right: col < run.col + run.cols - 1 }
-      : undefined,
+    run ? { left: col > run.col, right: col < run.col + run.cols - 1 } : undefined,
   );
   if (view.showGrid) {
     if (!edges.right && !own && !pattern && !hasFill(view, sheetRow, col + 1)) {
@@ -2272,7 +2244,7 @@ function paintCellText(
     col < view.autoFilter.col + view.autoFilter.cols;
 
   let padLeft = CELL_PAD_LEFT;
-  let padRight = CELL_PAD_RIGHT;
+  let padRight: number;
   if (isFilterHeader) padRight = FILTER_HEADER_PAD_RIGHT;
   else {
     const pad = pads(view, style, cell?.kind);
@@ -2317,7 +2289,7 @@ function paintCellText(
     cell?.kind,
     padLeft,
     padRight,
-    key === null ? null : view.cellRich.get(key) ?? null,
+    key === null ? null : (view.cellRich.get(key) ?? null),
     isFilterHeader,
   );
   return true;
@@ -2529,12 +2501,7 @@ function paintRowGroup(
     }
   }
   const y = oy + view.rows.offsets[summary];
-  const box = groupButtonBox(
-    group.level - 1,
-    y,
-    spanAt(view.rows.offsets, summary),
-    false,
-  );
+  const box = groupButtonBox(group.level - 1, y, spanAt(view.rows.offsets, summary), false);
   paintOutlineButton(ctx, box.x, box.y, box.w, open);
 }
 
@@ -2568,12 +2535,7 @@ function paintColGroup(
     fill(ctx, capX, y, OUTLINE_LINE_W, OUTLINE_CAP, OUTLINE_LINE_COLOR);
   }
   const x = ox + view.cols.offsets[summary];
-  const box = groupButtonBox(
-    group.level - 1,
-    x,
-    spanAt(view.cols.offsets, summary),
-    true,
-  );
+  const box = groupButtonBox(group.level - 1, x, spanAt(view.cols.offsets, summary), true);
   paintOutlineButton(ctx, box.x, box.y, box.w, open);
 }
 
@@ -2694,12 +2656,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, view: GridView): voi
   // labels below get their own clips.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(
-    view.headerW,
-    view.headerH,
-    view.width - view.headerW,
-    view.height - view.headerH,
-  );
+  ctx.rect(view.headerW, view.headerH, view.width - view.headerW, view.height - view.headerH);
   ctx.clip();
 
   paintFocusCross(ctx, view, ox, oy);
@@ -2910,11 +2867,7 @@ function paintGutterLabels(
       view.autoFilter !== null &&
       sheetRow > view.autoFilter.row &&
       sheetRow < view.autoFilter.row + view.autoFilter.rows;
-    ctx.fillStyle = lit
-      ? ACCENT_INK
-      : filtering
-        ? FILTERED_INK
-        : view.theme.mutedForeground;
+    ctx.fillStyle = lit ? ACCENT_INK : filtering ? FILTERED_INK : view.theme.mutedForeground;
     ctx.fillText(String(sheetRow + 1), rowGutter + view.rowHeaderW / 2, y + h / 2);
   }
   ctx.restore();
