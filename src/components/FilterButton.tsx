@@ -5,11 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { columnValues, type FilterCriterion, type ValueCount } from "@/lib/excel";
 
@@ -172,32 +168,24 @@ export function FilterButton({
                 <span className="min-w-0 flex-1 truncate" title={option.value}>
                   {option.value || t("filter.blank")}
                 </span>
-                <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {option.count}
-                </span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">{option.count}</span>
               </label>
             ))}
 
             {options.length === 0 && !busy && (
-              <p className="px-2 py-3 text-[11px] text-muted-foreground">
-                {t("filter.noMatch")}
-              </p>
+              <p className="px-2 py-3 text-[11px] text-muted-foreground">{t("filter.noMatch")}</p>
             )}
           </div>
         </ScrollArea>
 
         {error && (
-          <p className="border-t border-border px-2 py-1 text-[10px] text-destructive">
-            {error}
-          </p>
+          <p className="border-t border-border px-2 py-1 text-[10px] text-destructive">{error}</p>
         )}
 
         <div className="flex items-center justify-between gap-2 border-t border-border p-1.5">
           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
             {busy && <Loader2 className="size-3 animate-spin" />}
-            {draft.size > 0
-              ? t("filter.selected", { count: draft.size })
-              : t("filter.allValues")}
+            {draft.size > 0 ? t("filter.selected", { count: draft.size }) : t("filter.allValues")}
           </span>
           <div className="flex items-center gap-1">
             <Button

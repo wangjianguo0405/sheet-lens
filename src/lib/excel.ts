@@ -108,14 +108,7 @@ export interface CellStyle {
    * `centerContinuous` is Excel's Center Across Selection, which the grid draws
    * as one block over the run of cells carrying it — not centred in one cell.
    */
-  horizontal:
-    | "left"
-    | "center"
-    | "centerContinuous"
-    | "right"
-    | "justify"
-    | "distributed"
-    | null;
+  horizontal: "left" | "center" | "centerContinuous" | "right" | "justify" | "distributed" | null;
   vertical: "top" | "middle" | "bottom" | null;
   /** Indent levels; one is three spaces of the cell's font (ECMA-376 §18.8.1). */
   indent: number;
@@ -408,7 +401,8 @@ export interface ShapeCustom {
   paths: ShapeCustomPath[];
 }
 
-export interface ShapeStroke {  color: string;
+export interface ShapeStroke {
+  color: string;
   alpha: number;
   /** Already in pixels. */
   width: number;
@@ -531,7 +525,8 @@ export interface SplitPane {
   topLeft?: [number, number];
 }
 
-export interface SheetLayout {  /**
+export interface SheetLayout {
+  /**
    * The sheet's real extent. calamine's range covers only cells that hold a
    * value, so it drops columns kept alive by styling or a merge.
    */
@@ -890,9 +885,6 @@ export function closeWorkbook(path: string): Promise<void> {
  * screenshots, and one call per picture meant fifty archive reads and fifty
  * round trips. Parts the workbook does not hold come back missing.
  */
-export function readMedia(
-  path: string,
-  parts: string[],
-): Promise<Record<string, string>> {
+export function readMedia(path: string, parts: string[]): Promise<Record<string, string>> {
   return invoke<Record<string, string>>("read_media", { path, parts });
 }
