@@ -22,10 +22,7 @@ const STACKS = new Map<string, string>();
  * the CJK fallbacks; one that does not inherits the workbook's family, and
  * behind that the same browsers-default chain the scroller declared.
  */
-export function cellFontStack(
-  cellFamily: string | null,
-  workbookFamily: string | null,
-): string {
+export function cellFontStack(cellFamily: string | null, workbookFamily: string | null): string {
   const key = `${cellFamily ?? ""}\u0000${workbookFamily ?? ""}`;
   const known = STACKS.get(key);
   if (known !== undefined) return known;
@@ -60,7 +57,12 @@ export function shapeFontStack(
   const generic = panoseGeneric(panose ?? null, pitch ?? null);
   // The file writes the Windows charset as a signed byte: -128 is ShiftJIS.
   const script = SCRIPT_FALLBACK.get(charset == null ? -1 : charset & 0xff) ?? "";
-  return `${faces.map((face) => `"${face}"`).join(", ")}, ${[generic, script, "system-ui", "sans-serif"]
+  return `${faces.map((face) => `"${face}"`).join(", ")}, ${[
+    generic,
+    script,
+    "system-ui",
+    "sans-serif",
+  ]
     .filter(Boolean)
     .join(", ")}`;
 }
@@ -106,12 +108,7 @@ function panoseGeneric(panose: string | null, pitch: number | null): string | nu
 
 const FONTS = new Map<string, string>();
 /** The CSS `font` shorthand for a stack. Weight and slant are left out when normal. */
-export function fontString(
-  stack: string,
-  sizePx: number,
-  bold: boolean,
-  italic = false,
-): string {
+export function fontString(stack: string, sizePx: number, bold: boolean, italic = false): string {
   const key = `${bold ? 1 : 0}${italic ? 1 : 0}\u0000${sizePx}\u0000${stack}`;
   const known = FONTS.get(key);
   if (known !== undefined) return known;
@@ -246,7 +243,6 @@ export function layoutLines(
       if (line !== "") {
         lines.push(line.replace(/\s+$/, ""));
         pos += line.length;
-        line = "";
       }
       // The chunk alone may still be too wide — break it mid-word, as
       // `break-words` does.

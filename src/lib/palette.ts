@@ -126,7 +126,7 @@ const RECENT_KEY = "sheetlens.recentColors";
  */
 export function readRecentColors(): string[] {
   try {
-    const stored = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    const stored: unknown = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
     if (!Array.isArray(stored)) return [];
     return stored.filter(isPaletteColor).slice(0, RECENT_SHOWN);
   } catch {
