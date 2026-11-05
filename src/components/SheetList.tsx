@@ -7,17 +7,11 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { copyText } from "@/lib/clipboard";
 import type { SheetInfo } from "@/lib/excel";
-import {
-  pinSheet,
-  readPinnedSheets,
-  setPinnedSheets,
-  unpinSheet,
-} from "@/lib/sheetPins";
+import { pinSheet, readPinnedSheets, setPinnedSheets, unpinSheet } from "@/lib/sheetPins";
 import { cn } from "@/lib/utils";
 
 /** A group's heading, the same type the start page puts over its own lists. */
-const HEAD =
-  "px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase";
+const HEAD = "px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase";
 
 interface SheetListProps {
   /** The workbook the list belongs to, which is what the fixes are kept by. */
@@ -176,7 +170,9 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
     const pinLabel = t(isPinned ? "sheets.unpin" : "sheets.pin", {
       name: sheet.name,
     });
-    const edge = dropAt?.name === sheet.name ? (dropAt.after ? "after" : "before") : null;
+    // A fixed sheet is drawn twice; only the fixed run takes the drop.
+    const edge =
+      inFixed && dropAt?.name === sheet.name ? (dropAt.after ? "after" : "before") : null;
     return (
       <div
         key={inFixed ? `fixed ${sheet.name}` : sheet.name}
@@ -298,9 +294,7 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
           </h2>
           {rest.map((sheet) => row(sheet, "list"))}
           {rest.length === 0 && fixed.length === 0 && (
-            <p className="px-2 py-4 text-xs text-muted-foreground">
-              {t("sheets.none")}
-            </p>
+            <p className="px-2 py-4 text-xs text-muted-foreground">{t("sheets.none")}</p>
           )}
         </div>
       </ScrollArea>
