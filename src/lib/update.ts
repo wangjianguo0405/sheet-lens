@@ -53,10 +53,6 @@ export interface UpdateProgress {
  * a length, so a listener may legitimately hear nothing at all — read a missing
  * event as "unknown", never as "stalled".
  */
-export function onUpdateProgress(
-  handler: (progress: UpdateProgress) => void,
-): Promise<UnlistenFn> {
-  return listen<UpdateProgress>("update-progress", (event) =>
-    handler(event.payload),
-  );
+export function onUpdateProgress(handler: (progress: UpdateProgress) => void): Promise<UnlistenFn> {
+  return listen<UpdateProgress>("update-progress", (event) => handler(event.payload));
 }

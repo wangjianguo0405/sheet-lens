@@ -37,11 +37,7 @@ import { initialFocusCell, storeFocusCell } from "@/lib/focusCell";
 import { initialFontColor, storeFontColor } from "@/lib/fontColor";
 import { initialMarkColor, markSelection, storeMarkColor } from "@/lib/marks";
 import type { Target } from "@/lib/column";
-import {
-  initialSheetPanels,
-  storeSheetPanels,
-  type SheetPanels,
-} from "@/lib/sheetPanels";
+import { initialSheetPanels, storeSheetPanels, type SheetPanels } from "@/lib/sheetPanels";
 import {
   folderKey,
   folderName,
@@ -244,9 +240,7 @@ export default function App() {
   const [frozenBands, setFrozenBands] = useState({ rows: 0, cols: 0 });
   const [filterOn, setFilterOn] = useState(false);
   /** What the grid actually shows, which can exceed calamine's range. */
-  const [extent, setExtent] = useState<{ rows: number; cols: number } | null>(
-    null,
-  );
+  const [extent, setExtent] = useState<{ rows: number; cols: number } | null>(null);
   /**
    * How many rows the active sheet's filter is hiding, or null when there is no
    * filter. The grid owns the filter, so it reports this up for the status bar
@@ -294,9 +288,7 @@ export default function App() {
   /** Which panel the left sidebar shows: the sheet list, or the sheet's notes. */
   const [sidebarTab, setSidebarTab] = useState<"sheets" | "notes">("sheets");
   /** The note the sidebar is pointing at, to be shown in the sheet. */
-  const [notePreview, setNotePreview] = useState<{ row: number; col: number } | null>(
-    null,
-  );
+  const [notePreview, setNotePreview] = useState<{ row: number; col: number } | null>(null);
   const handleNotePreview = useCallback(
     (note: { row: number; col: number } | null) => setNotePreview(note),
     [],
@@ -384,9 +376,7 @@ export default function App() {
   const selection = active?.cursors[active.sheet] ?? ORIGIN;
 
   /** What the sheet on screen is drawn in: its own switch, or the default. */
-  const view: ViewMode = active
-    ? (active.views[active.sheet] ?? active.defaultView)
-    : "normal";
+  const view: ViewMode = active ? (active.views[active.sheet] ?? active.defaultView) : "normal";
 
   /** Whether the sheet on screen is split, which brings its own scrollbars. */
   const splitOn = Boolean(active?.splitAt[active.sheet]);
@@ -464,7 +454,9 @@ export default function App() {
     [openPaths],
   );
 
-  const handleOpen = useCallback(() => pickWorkbooks(), [pickWorkbooks]);
+  const handleOpen = useCallback(() => {
+    void pickWorkbooks();
+  }, [pickWorkbooks]);
 
   /**
    * A folder off the start page's own column: the same picker, already inside
@@ -472,7 +464,9 @@ export default function App() {
    * same way, starting one step in.
    */
   const handleOpenInDirectory = useCallback(
-    (directory: string) => pickWorkbooks(directory),
+    (directory: string) => {
+      void pickWorkbooks(directory);
+    },
     [pickWorkbooks],
   );
 
@@ -777,10 +771,7 @@ export default function App() {
    * the field over the cell reports for whatever it has selected.
    */
   const applyTextColor = useCallback(
-    (
-      at: { row: number; col: number; from: number; to: number },
-      color: string | null,
-    ) => {
+    (at: { row: number; col: number; from: number; to: number }, color: string | null) => {
       if (!active) return;
       const key = formatKey(active.sheet, at.row, at.col);
       setTabs((prev) =>
@@ -897,12 +888,7 @@ export default function App() {
     }
     const at = selectionAnchor(active.cursors[active.sheet] ?? ORIGIN);
     try {
-      const block = await currentRegion(
-        active.info.path,
-        active.sheet,
-        at.row,
-        at.col,
-      );
+      const block = await currentRegion(active.info.path, active.sheet, at.row, at.col);
       const area: AutoFilter = {
         row: block.row,
         col: block.col,
@@ -964,9 +950,7 @@ export default function App() {
             const axis = activeArea(cursor).kind === "column" ? "cols" : "rows";
             const [from, to] = axis === "rows" ? [rowFrom, rowTo] : [colFrom, colTo];
             next.removed[axis].push([from, to]);
-            next.added[axis] = next.added[axis].filter(
-              ([start, end]) => end < from || start > to,
-            );
+            next.added[axis] = next.added[axis].filter(([start, end]) => end < from || start > to);
           }
           return {
             ...tab,
@@ -1027,9 +1011,7 @@ export default function App() {
       }
 
       if (mods.ctrl) {
-        const current = (sheetGroup?.names ?? [active.sheet]).filter((one) =>
-          order.includes(one),
-        );
+        const current = (sheetGroup?.names ?? [active.sheet]).filter((one) => order.includes(one));
         const names = new Set(current);
         if (names.has(name)) {
           // One sheet always stays selected; Excel does not let the group empty.
@@ -1074,15 +1056,11 @@ export default function App() {
           for (const name of hiding) sheetHidden.set(name, true);
           let sheet = tab.sheet;
           if (hiding.has(sheet)) {
-            const stillShown = new Set(
-              shownSheets({ ...tab, sheetHidden }).map((one) => one.name),
-            );
+            const stillShown = new Set(shownSheets({ ...tab, sheetHidden }).map((one) => one.name));
             const at = tab.info.sheets.findIndex((one) => one.name === sheet);
             const next =
               tab.info.sheets.slice(at + 1).find((one) => stillShown.has(one.name)) ??
-              [...tab.info.sheets.slice(0, at)]
-                .reverse()
-                .find((one) => stillShown.has(one.name));
+              [...tab.info.sheets.slice(0, at)].reverse().find((one) => stillShown.has(one.name));
             sheet = next?.name ?? sheet;
           }
           return { ...tab, sheetHidden, sheet };
@@ -1316,6 +1294,9 @@ export default function App() {
     return () => {
       cancelled = true;
     };
+    // Runs once at startup on purpose: it asks for the update notes in the
+    // language active then. Switching language must not re-run the check.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
@@ -1360,7 +1341,9 @@ export default function App() {
         const forward = !event.shiftKey;
         const next =
           at < 0
-            ? (forward ? tabs[0] : tabs[tabs.length - 1])
+            ? forward
+              ? tabs[0]
+              : tabs[tabs.length - 1]
             : tabs[(at + (forward ? 1 : -1) + tabs.length) % tabs.length];
         if (next) selectTab(next.info.path);
         return;
@@ -1468,9 +1451,7 @@ export default function App() {
    */
   const sheetBarRoom = useCallback(() => {
     const bar = sheetBarRef.current;
-    const strip = bar
-      ?.closest("[data-sheet-strip]")
-      ?.querySelector("[data-sheet]")?.parentElement;
+    const strip = bar?.closest("[data-sheet-strip]")?.querySelector("[data-sheet]")?.parentElement;
     // Neither can be missing while a drag is running — the handle that starts it
     // is in the same row — so the fallback is only here to keep the type honest.
     if (!bar || !strip) return Number.POSITIVE_INFINITY;
@@ -1502,8 +1483,7 @@ export default function App() {
       const delta = (event.clientX - drag.x) * direction;
       // The scrollbar's ceiling is whichever comes first: the width the row has
       // to give it, or the one configured for it.
-      const ceiling =
-        draggingPanel === "sheetBar" ? Math.min(max, sheetBarRoom()) : max;
+      const ceiling = draggingPanel === "sheetBar" ? Math.min(max, sheetBarRoom()) : max;
       resize(Math.min(ceiling, Math.max(min, drag.width + delta)));
     };
     const onUp = () => setDraggingPanel(null);
@@ -1602,11 +1582,7 @@ export default function App() {
             <span className="truncate" title={error}>
               {error}
             </span>
-            <button
-              type="button"
-              className="shrink-0 underline"
-              onClick={() => setError(null)}
-            >
+            <button type="button" className="shrink-0 underline" onClick={() => setError(null)}>
               {t("app.dismiss")}
             </button>
           </div>
@@ -1617,10 +1593,7 @@ export default function App() {
             <>
               {panels.list && (
                 <>
-                  <div
-                    className="flex min-h-0 shrink-0 flex-col"
-                    style={{ width: sheetListWidth }}
-                  >
+                  <div className="flex min-h-0 shrink-0 flex-col" style={{ width: sheetListWidth }}>
                     {/* Two panels share the sidebar; the grid is the same
                         either way, so the switch costs nothing. */}
                     <div className="flex shrink-0 border-b border-border bg-sidebar">
@@ -1752,34 +1725,34 @@ export default function App() {
                           className="relative min-w-0 flex-1 self-stretch"
                         />
                       ) : (
-                      <>
-                        {/* Excel's splitter, at the left end of the sheet's
+                        <>
+                          {/* Excel's splitter, at the left end of the sheet's
                             scrollbar: drag it and the scrollbar is longer or
                             shorter, the tabs taking what is left. Excel draws
                             it as a column of dots, so it can be found at all. */}
-                        <Hint label={t("app.dragToResize")}>
-                          <div
-                            role="separator"
-                            aria-orientation="vertical"
-                            aria-label={t("app.resizeSheetScrollBar")}
-                            onPointerDown={startSheetBarDrag}
-                            className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#107C41]/40 hover:text-foreground"
-                          >
-                            <EllipsisVertical className="size-3" />
-                          </div>
-                        </Hint>
-                        {/* A share of the row until it is dragged, so the length
+                          <Hint label={t("app.dragToResize")}>
+                            <div
+                              role="separator"
+                              aria-orientation="vertical"
+                              aria-label={t("app.resizeSheetScrollBar")}
+                              onPointerDown={startSheetBarDrag}
+                              className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#107C41]/40 hover:text-foreground"
+                            >
+                              <EllipsisVertical className="size-3" />
+                            </div>
+                          </Hint>
+                          {/* A share of the row until it is dragged, so the length
                             is the row's rather than a number chosen here. The
                             bar is centred in the row; only the engine knows how
                             tall it is, so `SheetScrollBar` measures that. */}
-                        <div
-                          ref={setSheetBarHost}
-                          className={`relative flex min-w-24 shrink items-center ${sheetBarWidth === null ? "w-1/3" : ""}`}
-                          style={sheetBarWidth === null ? undefined : { width: sheetBarWidth }}
-                        >
-                          {splitOn ? null : <SheetScrollBar viewport={viewport} />}
-                        </div>
-                      </>
+                          <div
+                            ref={setSheetBarHost}
+                            className={`relative flex min-w-24 shrink items-center ${sheetBarWidth === null ? "w-1/3" : ""}`}
+                            style={sheetBarWidth === null ? undefined : { width: sheetBarWidth }}
+                          >
+                            {splitOn ? null : <SheetScrollBar viewport={viewport} />}
+                          </div>
+                        </>
                       )
                     }
                   />
@@ -1811,9 +1784,7 @@ export default function App() {
               )}
             </>
           ) : active ? (
-            <p className="m-auto text-xs text-muted-foreground">
-              {t("app.noSheets")}
-            </p>
+            <p className="m-auto text-xs text-muted-foreground">{t("app.noSheets")}</p>
           ) : (
             <Welcome
               onOpen={handleOpen}
@@ -1831,11 +1802,7 @@ export default function App() {
           fileName={active?.info.fileName ?? null}
           sheetCount={active?.info.sheets.length ?? null}
           sheet={active?.sheet ?? null}
-          size={
-            extent
-              ? t("app.extent", { rows: extent.rows, cols: extent.cols })
-              : null
-          }
+          size={extent ? t("app.extent", { rows: extent.rows, cols: extent.cols }) : null}
           span={activeSheet ? selectionSize(selection) : null}
           filtered={active ? filtered : null}
           view={view}

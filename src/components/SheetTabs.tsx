@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Ellipsis,
-  Eye,
-  EyeOff,
-  Search,
-  X,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Ellipsis, Eye, EyeOff, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -104,8 +95,7 @@ function anchorOf(node: HTMLElement | null): UnhideAnchor | null {
  */
 function readableOn(color: string): string {
   const channel = (at: number) => parseInt(color.slice(at, at + 2), 16);
-  const luma =
-    0.299 * channel(1) + 0.587 * channel(3) + 0.114 * channel(5);
+  const luma = 0.299 * channel(1) + 0.587 * channel(3) + 0.114 * channel(5);
   return luma > 128 ? "#000000" : "#ffffff";
 }
 
@@ -180,9 +170,7 @@ export function SheetTabs({
    * from there is drawn once for the whole strip rather than once per tab, so
    * this is what says which tab it belongs to and where to put it.
    */
-  const [menu, setMenu] = useState<{ sheet: string; x: number; y: number } | null>(
-    null,
-  );
+  const [menu, setMenu] = useState<{ sheet: string; x: number; y: number } | null>(null);
   /**
    * Where a right-click on the tab arrows was made, since the sheet list opens
    * from the press rather than from the arrow's own box — the same footing the
@@ -224,9 +212,7 @@ export function SheetTabs({
       // cannot use. Counting them back here is what keeps them from promising
       // themselves room to exist: without it, tabs that fit perfectly well on
       // their own would count as overflowing for as long as the dots were up.
-      more:
-        (moreLeft.current?.offsetWidth ?? 0) +
-        (moreRight.current?.offsetWidth ?? 0),
+      more: (moreLeft.current?.offsetWidth ?? 0) + (moreRight.current?.offsetWidth ?? 0),
     });
   }, []);
 
@@ -248,9 +234,7 @@ export function SheetTabs({
    * elsewhere — Ctrl+PageDown, a search hit, Go To — scrolls its tab into view.
    */
   useEffect(() => {
-    const tab = strip.current?.querySelector<HTMLElement>(
-      `[data-sheet="${CSS.escape(active)}"]`,
-    );
+    const tab = strip.current?.querySelector<HTMLElement>(`[data-sheet="${CSS.escape(active)}"]`);
     tab?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [active, sheets]);
 
@@ -548,9 +532,7 @@ export function SheetTabs({
             type="button"
             aria-label={t("sheets.scrollLeft")}
             disabled={!overflowing || atStart}
-            onClick={(event) =>
-              event.ctrlKey || event.metaKey ? jump(-1) : step(-1)
-            }
+            onClick={(event) => (event.ctrlKey || event.metaKey ? jump(-1) : step(-1))}
             className={cn(arrowClass(overflowing && !atStart), "border-r")}
           >
             <ChevronLeft className="size-3.5" />
@@ -561,9 +543,7 @@ export function SheetTabs({
             type="button"
             aria-label={t("sheets.scrollRight")}
             disabled={!overflowing || atEnd}
-            onClick={(event) =>
-              event.ctrlKey || event.metaKey ? jump(1) : step(1)
-            }
+            onClick={(event) => (event.ctrlKey || event.metaKey ? jump(1) : step(1))}
             className={cn(arrowClass(overflowing && !atEnd), "border-r")}
           >
             <ChevronRight className="size-3.5" />
@@ -613,9 +593,7 @@ export function SheetTabs({
           "relative flex items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
           splitX == null ? "min-w-24 flex-1" : "flex-none",
         )}
-        style={
-          splitX == null ? undefined : { maxWidth: Math.max(0, splitX - stripLeft) }
-        }
+        style={splitX == null ? undefined : { maxWidth: Math.max(0, splitX - stripLeft) }}
       >
         {/*
           Where the tab being carried would land. The strip itself does not
@@ -646,9 +624,9 @@ export function SheetTabs({
             isActive
               ? "border-b-[#107C41] bg-background font-medium text-foreground"
               : isSelected
-                // Grouped with the active sheet: Excel keeps them looking
-                // selected, without the raised face the current one has.
-                ? "border-b-[#107C41]/40 bg-background text-foreground"
+                ? // Grouped with the active sheet: Excel keeps them looking
+                  // selected, without the raised face the current one has.
+                  "border-b-[#107C41]/40 bg-background text-foreground"
                 : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
             // A tab filled with its own colour has the grey the others take
             // on hover sitting behind an inline fill that wins, so it
@@ -790,9 +768,7 @@ export function SheetTabs({
           sideOffset={3}
           className="max-h-80 min-w-48"
         >
-          <DropdownMenuLabel className="text-[10px]">
-            {t("sheets.list")}
-          </DropdownMenuLabel>
+          <DropdownMenuLabel className="text-[10px]">{t("sheets.list")}</DropdownMenuLabel>
           <div className="mx-1 mb-1 flex items-center gap-1.5 border-b border-border px-1 pb-1">
             <Search className="size-3.5 shrink-0 text-muted-foreground" />
             <Input
@@ -840,19 +816,13 @@ export function SheetTabs({
             className="max-h-60 overflow-y-auto"
           >
             {listed.map((sheet) => (
-              <DropdownMenuRadioItem
-                key={sheet.name}
-                value={sheet.name}
-                className="text-xs"
-              >
+              <DropdownMenuRadioItem key={sheet.name} value={sheet.name} className="text-xs">
                 <span className="truncate">{sheet.name}</span>
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
           {listed.length === 0 && (
-            <p className="px-2 py-3 text-xs text-muted-foreground">
-              {t("sheets.none")}
-            </p>
+            <p className="px-2 py-3 text-xs text-muted-foreground">{t("sheets.none")}</p>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -916,9 +886,7 @@ export function SheetTabs({
             data-accelerator={acceleratorOf(t("sheets.hide"))}
             // Hiding everything on the strip would leave nothing to show, so
             // that is exactly when the command greys out.
-            disabled={
-              sheets.length <= (menu && selected.has(menu.sheet) ? selected.size : 1)
-            }
+            disabled={sheets.length <= (menu && selected.has(menu.sheet) ? selected.size : 1)}
             icon={<EyeOff />}
             onSelect={() => {
               if (menu !== null) onHide(menu.sheet);

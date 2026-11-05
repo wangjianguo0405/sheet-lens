@@ -19,8 +19,7 @@ pub fn list_fonts() -> Vec<String> {
 mod platform {
     use windows::Win32::Foundation::LPARAM;
     use windows::Win32::Graphics::Gdi::{
-        EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW,
-        TRUETYPE_FONTTYPE,
+        EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW, TRUETYPE_FONTTYPE,
     };
 
     pub fn families() -> Vec<String> {
@@ -85,9 +84,7 @@ mod tests {
     fn reads_as_a_list() {
         let names = super::list_fonts();
         assert!(names.len() > 10, "only {} families", names.len());
-        assert!(names
-            .iter()
-            .all(|name| !name.is_empty() && !name.starts_with('@')));
+        assert!(names.iter().all(|name| !name.is_empty() && !name.starts_with('@')));
         let mut sorted = names.clone();
         sorted.sort_by_cached_key(|name| name.to_lowercase());
         assert_eq!(names, sorted, "not sorted");

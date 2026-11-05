@@ -37,9 +37,7 @@ function storedLocale(): Locale | null {
  * Simplified is the only Chinese we carry.
  */
 function systemLocale(): Locale {
-  const tags = navigator.languages?.length
-    ? navigator.languages
-    : [navigator.language];
+  const tags = navigator.languages?.length ? navigator.languages : [navigator.language];
   for (const tag of tags) {
     const [language] = tag.toLowerCase().split("-");
     if (language === "zh") return "zh-CN";

@@ -1,9 +1,4 @@
-import {
-  Download,
-  FolderOpen,
-  Languages,
-  X,
-} from "lucide-react";
+import { Download, FolderOpen, Languages, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -79,11 +74,7 @@ export function Toolbar({
   const missing = new Set(missingFiles);
   const recent = (paths: string[]) =>
     paths.map((path) => (
-      <DropdownMenuItem
-        key={path}
-        className="text-xs"
-        onSelect={() => onOpenRecent(path)}
-      >
+      <DropdownMenuItem key={path} className="text-xs" onSelect={() => onOpenRecent(path)}>
         <span
           // Greyed, but not disabled: a file that has gone is often a file that
           // is coming back, and a click is how it gets another try.
@@ -134,11 +125,7 @@ export function Toolbar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className={MENU_WIDTH}>
-          <DropdownMenuItem
-            className="text-xs"
-            icon={<FolderOpen />}
-            onSelect={onOpen}
-          >
+          <DropdownMenuItem className="text-xs" icon={<FolderOpen />} onSelect={onOpen}>
             {t("toolbar.open")}
             <DropdownMenuShortcut>Ctrl+O</DropdownMenuShortcut>
           </DropdownMenuItem>
@@ -168,11 +155,7 @@ export function Toolbar({
           )}
 
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="text-xs"
-            disabled={!hasWorkbook}
-            onSelect={onCloseWorkbook}
-          >
+          <DropdownMenuItem className="text-xs" disabled={!hasWorkbook} onSelect={onCloseWorkbook}>
             {t("toolbar.close")}
             <DropdownMenuShortcut>Ctrl+W</DropdownMenuShortcut>
           </DropdownMenuItem>
@@ -181,13 +164,7 @@ export function Toolbar({
 
       <div className="ml-auto flex items-center gap-1">
         {canUpdate && (
-          <Hint
-            label={
-              updateAvailable
-                ? t("toolbar.updateAvailable")
-                : t("toolbar.checkUpdates")
-            }
-          >
+          <Hint label={updateAvailable ? t("toolbar.updateAvailable") : t("toolbar.checkUpdates")}>
             <Button
               size="sm"
               variant={updateAvailable ? "secondary" : "ghost"}
@@ -212,19 +189,13 @@ export function Toolbar({
             </DropdownMenuTrigger>
           </Hint>
           <DropdownMenuContent align="end" className="min-w-36">
-            <DropdownMenuLabel className="text-[10px]">
-              {t("toolbar.language")}
-            </DropdownMenuLabel>
+            <DropdownMenuLabel className="text-[10px]">{t("toolbar.language")}</DropdownMenuLabel>
             <DropdownMenuRadioGroup
               value={i18n.language}
               onValueChange={(value) => setLocale(value as Locale)}
             >
               {LOCALES.map((locale) => (
-                <DropdownMenuRadioItem
-                  key={locale}
-                  value={locale}
-                  className="text-xs"
-                >
+                <DropdownMenuRadioItem key={locale} value={locale} className="text-xs">
                   {t(`language.${locale}`)}
                 </DropdownMenuRadioItem>
               ))}

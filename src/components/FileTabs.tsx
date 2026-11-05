@@ -11,7 +11,14 @@ import {
   XCircle,
   XSquare,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -115,9 +122,7 @@ export function FileTabs({
    */
   const [bar, setBar] = useState({ view: 0, total: 0, more: 0 });
   /** The press that may yet become a drag, and which tab it is holding. */
-  const drag = useRef<{ path: string; index: number; x: number; moved: boolean } | null>(
-    null,
-  );
+  const drag = useRef<{ path: string; index: number; x: number; moved: boolean } | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
 
   const sync = useCallback(() => {
@@ -169,9 +174,7 @@ export function FileTabs({
    * dragged change places with the one under it rather than only at its edge.
    */
   const placeAt = (clientX: number) => {
-    const nodes = [
-      ...(strip.current?.querySelectorAll<HTMLElement>("[data-file-tab]") ?? []),
-    ];
+    const nodes = [...(strip.current?.querySelectorAll<HTMLElement>("[data-file-tab]") ?? [])];
     let place = 0;
     nodes.forEach((node, index) => {
       const rect = node.getBoundingClientRect();
@@ -275,11 +278,7 @@ export function FileTabs({
                   onAuxClick={middleClose(() => onClose(tab.path))}
                 >
                   <Hint label={tab.path}>
-                    <button
-                      type="button"
-                      className="truncate"
-                      onClick={() => onSelect(tab.path)}
-                    >
+                    <button type="button" className="truncate" onClick={() => onSelect(tab.path)}>
                       {tab.fileName}
                     </button>
                   </Hint>
@@ -323,7 +322,9 @@ export function FileTabs({
                       className="text-xs"
                       onSelect={() => {
                         void copyText(tab.fileName).then((ok) =>
-                          ok ? toast.success(t("toast.copied")) : toast.error(t("toast.copyFailed")),
+                          ok
+                            ? toast.success(t("toast.copied"))
+                            : toast.error(t("toast.copyFailed")),
                         );
                       }}
                     >
@@ -333,7 +334,9 @@ export function FileTabs({
                       className="text-xs"
                       onSelect={() => {
                         void copyText(tab.path).then((ok) =>
-                          ok ? toast.success(t("toast.copied")) : toast.error(t("toast.copyFailed")),
+                          ok
+                            ? toast.success(t("toast.copied"))
+                            : toast.error(t("toast.copyFailed")),
                         );
                       }}
                     >
@@ -376,14 +379,23 @@ export function FileTabs({
                     is the one command here with no undo behind it. A viewer's
                     menu is opened to get at the path or to read the file again
                     far more often than to shut it. */}
-                <ContextMenuItem className="text-xs" icon={<X />} onSelect={() => onClose(tab.path)}>
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<X />}
+                  onSelect={() => onClose(tab.path)}
+                >
                   {t("tabs.closeThis")}
                 </ContextMenuItem>
                 <ContextMenuItem
                   className="text-xs"
                   icon={<XSquare />}
                   disabled={others.length === 0}
-                  onSelect={() => onCloseMany(others.map((one) => one.path), tab.path)}
+                  onSelect={() =>
+                    onCloseMany(
+                      others.map((one) => one.path),
+                      tab.path,
+                    )
+                  }
                 >
                   {t("tabs.closeOthers")}
                 </ContextMenuItem>
@@ -391,7 +403,12 @@ export function FileTabs({
                   className="text-xs"
                   icon={<PanelRightClose />}
                   disabled={right.length === 0}
-                  onSelect={() => onCloseMany(right.map((one) => one.path), tab.path)}
+                  onSelect={() =>
+                    onCloseMany(
+                      right.map((one) => one.path),
+                      tab.path,
+                    )
+                  }
                 >
                   {t("tabs.closeRight")}
                 </ContextMenuItem>
@@ -436,7 +453,6 @@ export function FileTabs({
             </button>
           </div>
         )}
-
       </div>
 
       {/*
@@ -462,9 +478,7 @@ export function FileTabs({
             </DropdownMenuTrigger>
           </Hint>
           <DropdownMenuContent align="end" className="min-w-56">
-            <DropdownMenuLabel className="text-[10px]">
-              {t("tabs.list")}
-            </DropdownMenuLabel>
+            <DropdownMenuLabel className="text-[10px]">{t("tabs.list")}</DropdownMenuLabel>
             {tabs.map((tab) => (
               <Row
                 key={tab.path}

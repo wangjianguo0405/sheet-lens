@@ -57,10 +57,7 @@ export function setPinnedSheets(path: string, names: string[]): string[] {
 
 /** Fixes `name` in `path`, and hands back the names the list should show now. */
 export function pinSheet(path: string, name: string): string[] {
-  return setPinnedSheets(path, [
-    name,
-    ...readPinnedSheets(path).filter((other) => other !== name),
-  ]);
+  return setPinnedSheets(path, [name, ...readPinnedSheets(path).filter((other) => other !== name)]);
 }
 
 /** Unfixes it, and hands back what is left. The sheet itself is untouched. */

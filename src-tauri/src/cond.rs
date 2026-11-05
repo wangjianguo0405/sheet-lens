@@ -21,8 +21,8 @@ use quick_xml::Reader as XmlReader;
 use quick_xml::XmlVersion;
 
 use crate::layout::{
-    attr, color_edge, color_of, entity_text, intern, parse_cell, parse_range, set_edge, Cache,
-    CellBorder, CellStyle, MergeRect, Palette, SheetLayout, Side,
+    attr, color_edge, color_of, entity_text, intern, parse_cell, parse_range, set_edge, Cache, CellBorder, CellStyle,
+    MergeRect, Palette, SheetLayout, Side,
 };
 
 /// The most cells any one sheet's rules may be evaluated over. A rule written
@@ -140,18 +140,10 @@ enum Matcher {
     Duplicate { keep_duplicates: bool },
     /// `top10`: whether the cell's value is among the highest or lowest `rank`
     /// in the rule's range. `percent` makes `rank` a share of the count instead.
-    Top {
-        bottom: bool,
-        rank: u32,
-        percent: bool,
-    },
+    Top { bottom: bool, rank: u32, percent: bool },
     /// `aboveAverage` and its below/equal variants, optionally shifted by a
     /// number of standard deviations.
-    Average {
-        above: bool,
-        equal: bool,
-        deviations: u32,
-    },
+    Average { above: bool, equal: bool, deviations: u32 },
     /// A colour scale or a data bar covers its whole range.
     Always,
     /// `timePeriod`: the cell's date falls inside one of Excel's named windows,
@@ -242,24 +234,18 @@ pub fn rules(xml: &str, palette: Palette) -> Vec<Rule> {
                     if let Some(current) = current.as_mut() {
                         // The attribute's default, per the schema: a file that
                         // sets the family Excel calls the default writes none.
-                        current.family = Some(
-                            attr(&element, b"iconSet")
-                                .unwrap_or_else(|| "3TrafficLights1".to_owned()),
-                        );
+                        current.family =
+                            Some(attr(&element, b"iconSet").unwrap_or_else(|| "3TrafficLights1".to_owned()));
                         current.reverse = flag(attr(&element, b"reverse"));
                     }
                 }
                 b"cfvo" if collecting.is_some() => {
-                    if let (Some(point), Some(current)) =
-                        (scale_point(&element), current.as_mut())
-                    {
+                    if let (Some(point), Some(current)) = (scale_point(&element), current.as_mut()) {
                         current.points.push(point);
                     }
                 }
                 b"color" if collecting.is_some() => {
-                    if let (Some(color), Some(current)) =
-                        (color_of(&element, palette), current.as_mut())
-                    {
+                    if let (Some(color), Some(current)) = (color_of(&element, palette), current.as_mut()) {
                         current.colors.push(color);
                     }
                 }
@@ -349,16 +335,8 @@ enum Kind {
     CellIs(CellOp),
     Text(TextTest, String),
     Duplicate(bool),
-    Top {
-        bottom: bool,
-        rank: u32,
-        percent: bool,
-    },
-    Average {
-        above: bool,
-        equal: bool,
-        deviations: u32,
-    },
+    Top { bottom: bool, rank: u32, percent: bool },
+    Average { above: bool, equal: bool, deviations: u32 },
     TimePeriod(TimePeriod),
     ColorScale,
     DataBar,
@@ -408,9 +386,7 @@ impl TimePeriod {
         let last_month = NaiveDate::from_ymd_opt(before.year(), before.month(), 1).unwrap();
         let after = first_of_month + Duration::days(32);
         let next_month = NaiveDate::from_ymd_opt(after.year(), after.month(), 1).unwrap();
-        let month = |first: NaiveDate| {
-            date.year() == first.year() && date.month() == first.month()
-        };
+        let month = |first: NaiveDate| date.year() == first.year() && date.month() == first.month();
         match self {
             Self::Yesterday => date == today - Duration::days(1),
             Self::Today => date == today,
@@ -467,44 +443,33 @@ fn pending_rule(element: &quick_xml::events::BytesStart) -> Option<Pending> {
         Some("uniqueValues") => Kind::Duplicate(false),
         Some("top10") => Kind::Top {
             bottom: flag(attr(element, b"bottom")),
-            rank: attr(element, b"rank")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(10),
+            rank: attr(element, b"rank").and_then(|v| v.parse().ok()).unwrap_or(10),
             percent: flag(attr(element, b"percent")),
         },
         Some("aboveAverage") => Kind::Average {
             // Absent means above, which is what Excel writes for a rule it
             // created above the average.
-            above: !attr(element, b"aboveAverage")
-                .is_some_and(|v| v == "0" || v == "false"),
+            above: !attr(element, b"aboveAverage").is_some_and(|v| v == "0" || v == "false"),
             equal: flag(attr(element, b"equalAverage")),
             deviations: attr(element, b"stdDev")
                 .and_then(|v| v.parse::<i32>().ok())
                 .map(i32::unsigned_abs)
                 .unwrap_or(0),
         },
-        Some("timePeriod") => Kind::TimePeriod(TimePeriod::parse(
-            &attr(element, b"timePeriod")?,
-        )?),
+        Some("timePeriod") => Kind::TimePeriod(TimePeriod::parse(&attr(element, b"timePeriod")?)?),
         Some("colorScale") => Kind::ColorScale,
         Some("dataBar") => Kind::DataBar,
         Some("iconSet") => Kind::IconSet,
         _ => return None,
     };
-    if patch.is_none()
-        && !matches!(
-            kind,
-            Kind::ColorScale | Kind::DataBar | Kind::IconSet
-        )
-    {
+    if patch.is_none() && !matches!(kind, Kind::ColorScale | Kind::DataBar | Kind::IconSet) {
         return None;
     }
     Some(Pending {
         priority: attr(element, b"priority")
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(u32::MAX),
-        stop_if_true: attr(element, b"stopIfTrue")
-            .is_some_and(|v| v == "1" || v == "true"),
+        stop_if_true: attr(element, b"stopIfTrue").is_some_and(|v| v == "1" || v == "true"),
         patch,
         kind,
         formulas: Vec::new(),
@@ -538,16 +503,10 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
         Kind::CellIs(op) => {
             let first = Formula::parse(pending.formulas.first()?)?;
             let second = match op {
-                CellOp::Between | CellOp::NotBetween => {
-                    Some(Formula::parse(pending.formulas.get(1)?)?)
-                }
+                CellOp::Between | CellOp::NotBetween => Some(Formula::parse(pending.formulas.get(1)?)?),
                 _ => None,
             };
-            Matcher::CellIs {
-                op: *op,
-                first,
-                second,
-            }
+            Matcher::CellIs { op: *op, first, second }
         }
         Kind::Text(test, needle) => Matcher::Text {
             test: *test,
@@ -556,11 +515,7 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
         Kind::Duplicate(keep_duplicates) => Matcher::Duplicate {
             keep_duplicates: *keep_duplicates,
         },
-        Kind::Top {
-            bottom,
-            rank,
-            percent,
-        } => Matcher::Top {
+        Kind::Top { bottom, rank, percent } => Matcher::Top {
             bottom: *bottom,
             rank: *rank,
             percent: *percent,
@@ -588,8 +543,7 @@ fn finish(pending: Pending, sqref: &[MergeRect]) -> Option<Rule> {
             })
         }
         Kind::DataBar => {
-            let [min, max]: [ScalePoint; 2] =
-                pending.points.clone().try_into().ok()?;
+            let [min, max]: [ScalePoint; 2] = pending.points.clone().try_into().ok()?;
             Paint::DataBar(DataBar {
                 color: pending.colors.first()?.clone(),
                 negative_color: None,
@@ -657,36 +611,33 @@ fn x14_bars(xml: &str, palette: Palette) -> Vec<(String, X14Settings)> {
         buf.clear();
         let event = reader.read_event_into(&mut buf);
         match event {
-            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
-                match element.local_name().as_ref() {
-                    b"conditionalFormattings" => inside = true,
-                    b"conditionalFormatting" if inside => {
-                        id = None;
-                        is_bar = false;
-                        settings = X14Settings::default();
-                    }
-                    b"cfRule" if inside => {
-                        id = attr(&element, b"id");
-                        is_bar = attr(&element, b"type").as_deref() == Some("dataBar");
-                    }
-                    b"dataBar" if inside && is_bar => {
-                        settings.axis = Some(match attr(&element, b"axisPosition").as_deref() {
-                            Some("none") => Axis::None,
-                            Some("middle") => Axis::Middle,
-                            _ => Axis::Auto,
-                        });
-                        settings.negative_same_as_positive =
-                            flag(attr(&element, b"negativeBarColorSameAsPositive"));
-                    }
-                    b"negativeFillColor" if inside && is_bar => {
-                        settings.negative_color = color_of(&element, palette);
-                    }
-                    b"axisColor" if inside && is_bar => {
-                        settings.axis_color = color_of(&element, palette);
-                    }
-                    _ => {}
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => match element.local_name().as_ref() {
+                b"conditionalFormattings" => inside = true,
+                b"conditionalFormatting" if inside => {
+                    id = None;
+                    is_bar = false;
+                    settings = X14Settings::default();
                 }
-            }
+                b"cfRule" if inside => {
+                    id = attr(&element, b"id");
+                    is_bar = attr(&element, b"type").as_deref() == Some("dataBar");
+                }
+                b"dataBar" if inside && is_bar => {
+                    settings.axis = Some(match attr(&element, b"axisPosition").as_deref() {
+                        Some("none") => Axis::None,
+                        Some("middle") => Axis::Middle,
+                        _ => Axis::Auto,
+                    });
+                    settings.negative_same_as_positive = flag(attr(&element, b"negativeBarColorSameAsPositive"));
+                }
+                b"negativeFillColor" if inside && is_bar => {
+                    settings.negative_color = color_of(&element, palette);
+                }
+                b"axisColor" if inside && is_bar => {
+                    settings.axis_color = color_of(&element, palette);
+                }
+                _ => {}
+            },
             Ok(Event::End(element)) => match element.local_name().as_ref() {
                 b"conditionalFormatting" if inside => {
                     if is_bar {
@@ -776,12 +727,7 @@ impl Rule {
     /// How often each value appears across the rule's own ranges, for the
     /// duplicate and unique rules. Blank cells are left out: Excel counts
     /// neither, and an empty cell is in neither set.
-    fn value_counts(
-        &self,
-        values: &HashMap<(u32, u32), Value>,
-        rows: u32,
-        cols: u32,
-    ) -> HashMap<ValueKey, usize> {
+    fn value_counts(&self, values: &HashMap<(u32, u32), Value>, rows: u32, cols: u32) -> HashMap<ValueKey, usize> {
         let mut out: HashMap<ValueKey, usize> = HashMap::new();
         for rect in &self.ranges {
             let end_row = rect.row.saturating_add(rect.rows).min(rows);
@@ -803,12 +749,7 @@ impl Rule {
     /// The numbers in the rule's own ranges, ascending. A colour scale and a
     /// data bar both measure a cell against this: the ends of the range, a
     /// percentile of it, or a fixed position in it.
-    fn numbers(
-        &self,
-        values: &HashMap<(u32, u32), Value>,
-        rows: u32,
-        cols: u32,
-    ) -> Vec<f64> {
+    fn numbers(&self, values: &HashMap<(u32, u32), Value>, rows: u32, cols: u32) -> Vec<f64> {
         let mut out = Vec::new();
         for rect in &self.ranges {
             let end_row = rect.row.saturating_add(rect.rows).min(rows);
@@ -902,9 +843,7 @@ impl DataBar {
             // `cond-negdefault.xlsx`, whose negative bar fades from #D8D8D8 to
             // #000000 at the axis. Falling back to the positive colour, as this
             // used to, painted a blue bar on the wrong side.
-            self.negative_color
-                .clone()
-                .unwrap_or_else(|| "#000000".to_owned())
+            self.negative_color.clone().unwrap_or_else(|| "#000000".to_owned())
         } else {
             self.color.clone()
         };
@@ -980,12 +919,7 @@ fn mix(from: &str, to: &str, t: f64) -> String {
         let b = channel(to, range);
         (a + (b - a) * t).round().clamp(0.0, 255.0) as u8
     };
-    format!(
-        "#{:02X}{:02X}{:02X}",
-        blend(1..3),
-        blend(3..5),
-        blend(5..7)
-    )
+    format!("#{:02X}{:02X}{:02X}", blend(1..3), blend(3..5), blend(5..7))
 }
 
 /// Reads the workbook's `<dxfs>`.
@@ -1002,16 +936,13 @@ pub fn dxfs(xml: &str, palette: Palette) -> Vec<Patch> {
     let mut fg: Option<String> = None;
     let mut bg: Option<String> = None;
 
-    let finish = |patch: Option<Patch>,
-                  pattern_type: Option<String>,
-                  fg: Option<String>,
-                  bg: Option<String>|
-     -> Option<Patch> {
-        patch.map(|mut patch| {
-            patch.fill = dxf_fill(pattern_type.as_deref(), fg, bg);
-            patch
-        })
-    };
+    let finish =
+        |patch: Option<Patch>, pattern_type: Option<String>, fg: Option<String>, bg: Option<String>| -> Option<Patch> {
+            patch.map(|mut patch| {
+                patch.fill = dxf_fill(pattern_type.as_deref(), fg, bg);
+                patch
+            })
+        };
 
     loop {
         buf.clear();
@@ -1075,12 +1006,7 @@ pub fn dxfs(xml: &str, palette: Palette) -> Vec<Patch> {
             Ok(Event::End(element)) => match element.local_name().as_ref() {
                 b"dxfs" => in_dxfs = false,
                 b"dxf" if in_dxfs => {
-                    if let Some(done) = finish(
-                        patch.take(),
-                        pattern_type.take(),
-                        fg.take(),
-                        bg.take(),
-                    ) {
+                    if let Some(done) = finish(patch.take(), pattern_type.take(), fg.take(), bg.take()) {
                         out.push(done);
                     }
                 }
@@ -1187,9 +1113,7 @@ fn values(xml: &str, columns: &HashSet<u32>, shared: &[String]) -> HashMap<(u32,
                     }
                 }
             }
-            Ok(Event::GeneralRef(reference))
-                if cell.is_some() && (in_value || in_inline) && !in_phonetic =>
-            {
+            Ok(Event::GeneralRef(reference)) if cell.is_some() && (in_value || in_inline) && !in_phonetic => {
                 if let Some(ch) = entity_text(&reference) {
                     if in_value {
                         cached.push(ch);
@@ -1285,12 +1209,7 @@ pub fn apply(xml: &str, cache: &Cache, layout: &mut SheetLayout) {
 }
 
 /// Folds every rule's patch onto the cells it matches.
-fn fold(
-    layout: &mut SheetLayout,
-    patches: &[Patch],
-    rules: &[Rule],
-    values: &HashMap<(u32, u32), Value>,
-) {
+fn fold(layout: &mut SheetLayout, patches: &[Patch], rules: &[Rule], values: &HashMap<(u32, u32), Value>) {
     let mut ordered: Vec<&Rule> = rules
         .iter()
         .filter(|rule| match rule.paint {
@@ -1319,9 +1238,7 @@ fn fold(
         .iter()
         .map(|rule| match &rule.matcher {
             // The rules that measure a cell against its whole range.
-            Matcher::Top { .. } | Matcher::Average { .. } => {
-                Some(rule.numbers(values, layout.rows, layout.cols))
-            }
+            Matcher::Top { .. } | Matcher::Average { .. } => Some(rule.numbers(values, layout.rows, layout.cols)),
             _ => match &rule.paint {
                 Paint::ColorScale(_) | Paint::DataBar(_) | Paint::IconSet(_) => {
                     Some(rule.numbers(values, layout.rows, layout.cols))
@@ -1623,10 +1540,7 @@ struct Context<'a> {
 impl Context<'_> {
     /// The value of the cell the rule is being asked about.
     fn value(&self) -> Value {
-        self.values
-            .get(&(self.row, self.col))
-            .cloned()
-            .unwrap_or(Value::Blank)
+        self.values.get(&(self.row, self.col)).cloned().unwrap_or(Value::Blank)
     }
 }
 
@@ -1659,12 +1573,7 @@ impl ValueKey {
 impl Matcher {
     /// Whether the rule fires for the cell `context` names. `duplicates` is the
     /// multiset of the rule's own range, built once per rule.
-    fn matches(
-        &self,
-        context: &Context,
-        duplicates: Option<&HashMap<ValueKey, usize>>,
-        numbers: &[f64],
-    ) -> bool {
+    fn matches(&self, context: &Context, duplicates: Option<&HashMap<ValueKey, usize>>, numbers: &[f64]) -> bool {
         match self {
             Matcher::Expression(formula) => formula.eval(context) == Some(Value::Bool(true)),
             Matcher::CellIs { op, first, second } => {
@@ -1683,8 +1592,7 @@ impl Matcher {
                     CellOp::Less => order(&first).is_some_and(|order| order.is_lt()),
                     CellOp::LessOrEqual => order(&first).is_some_and(|order| order.is_le()),
                     CellOp::Between | CellOp::NotBetween => {
-                        let Some(second) = second.as_ref().and_then(|second| second.eval(context))
-                        else {
+                        let Some(second) = second.as_ref().and_then(|second| second.eval(context)) else {
                             return false;
                         };
                         let inside = order(&first).is_some_and(|order| order.is_ge())
@@ -1714,21 +1622,14 @@ impl Matcher {
                 let Some(key) = ValueKey::of(&value) else {
                     return false;
                 };
-                let count = duplicates
-                    .and_then(|counts| counts.get(&key))
-                    .copied()
-                    .unwrap_or(0);
+                let count = duplicates.and_then(|counts| counts.get(&key)).copied().unwrap_or(0);
                 if *keep_duplicates {
                     count > 1
                 } else {
                     count == 1
                 }
             }
-            Matcher::Top {
-                bottom,
-                rank,
-                percent,
-            } => {
+            Matcher::Top { bottom, rank, percent } => {
                 let Value::Number(value) = context.value() else {
                     return false;
                 };
@@ -1846,9 +1747,7 @@ impl Formula {
     /// the cell it is evaluated for.
     fn columns(&self, width: u32, out: &mut HashSet<u32>) {
         match self {
-            Formula::Cell {
-                col, col_absolute, ..
-            } => {
+            Formula::Cell { col, col_absolute, .. } => {
                 if *col_absolute {
                     if *col >= 0 {
                         out.insert(*col as u32);
@@ -1888,13 +1787,7 @@ impl Formula {
             } => {
                 let row = address(*row, *row_absolute, context.row, context.anchor_row)?;
                 let col = address(*col, *col_absolute, context.col, context.anchor_col)?;
-                Some(
-                    context
-                        .values
-                        .get(&(row, col))
-                        .cloned()
-                        .unwrap_or(Value::Blank),
-                )
+                Some(context.values.get(&(row, col)).cloned().unwrap_or(Value::Blank))
             }
             Formula::Negate(inner) => Some(Value::Number(-number(&inner.eval(context)?)?)),
             Formula::Binary(op, left, right) => binary(*op, left.eval(context)?, right.eval(context)?),
@@ -2043,9 +1936,7 @@ fn compare(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
     match (a, b) {
         (Value::Text(a), Value::Text(b)) => Some(a.to_uppercase().cmp(&b.to_uppercase())),
         (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
-        (Value::Bool(a), Value::Number(b)) | (Value::Number(b), Value::Bool(a)) => {
-            (*a as u8 as f64).partial_cmp(b)
-        }
+        (Value::Bool(a), Value::Number(b)) | (Value::Number(b), Value::Bool(a)) => (*a as u8 as f64).partial_cmp(b),
         (Value::Number(a), Value::Number(b)) => a.partial_cmp(b),
         (Value::Blank, Value::Blank) => Some(std::cmp::Ordering::Equal),
         (Value::Blank, Value::Text(b)) => Some("".cmp(b.as_str())),
@@ -2167,10 +2058,7 @@ fn tokenize(source: &str) -> Option<Vec<Token>> {
         }
         if ch.is_ascii_alphabetic() || ch == '_' {
             let start = at;
-            while chars
-                .get(at)
-                .is_some_and(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-            {
+            while chars.get(at).is_some_and(|ch| ch.is_ascii_alphanumeric() || *ch == '_') {
                 at += 1;
             }
             out.push(Token::Name(chars[start..at].iter().collect::<String>().to_uppercase()));
@@ -2247,7 +2135,9 @@ fn reference(chars: &[char], at: usize) -> Option<(Token, usize)> {
     if cursor == digits || chars.get(cursor) == Some(&'(') {
         return None;
     }
-    let letters: String = chars[letters..if row_absolute { digits - 1 } else { digits }].iter().collect();
+    let letters: String = chars[letters..if row_absolute { digits - 1 } else { digits }]
+        .iter()
+        .collect();
     let row: i64 = chars[digits..cursor].iter().collect::<String>().parse().ok()?;
     if row < 1 {
         return None;
@@ -2463,10 +2353,7 @@ mod tests {
         let xml = r#"<worksheet><conditionalFormatting sqref="A1:A3"><cfRule type="timePeriod" timePeriod="thisWeek" dxfId="0" priority="1"/></conditionalFormatting></worksheet>"#;
         let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 1);
-        assert!(matches!(
-            rules[0].matcher,
-            Matcher::TimePeriod(TimePeriod::ThisWeek)
-        ));
+        assert!(matches!(rules[0].matcher, Matcher::TimePeriod(TimePeriod::ThisWeek)));
     }
 
     fn patch() -> Patch {
@@ -2512,13 +2399,7 @@ mod tests {
         fires_with(rule, row, col, cells, &[])
     }
 
-    fn fires_with(
-        rule: &Rule,
-        row: u32,
-        col: u32,
-        cells: &[((u32, u32), Value)],
-        numbers: &[f64],
-    ) -> bool {
+    fn fires_with(rule: &Rule, row: u32, col: u32, cells: &[((u32, u32), Value)], numbers: &[f64]) -> bool {
         let values: HashMap<(u32, u32), Value> = cells.iter().cloned().collect();
         let context = Context {
             row,
@@ -2539,14 +2420,7 @@ mod tests {
     /// judgement column says the row is out of scope. `B8:N161`, so the corner a
     /// relative reference is measured from is B8.
     fn judgement_row(row: u32, cells: &[((u32, u32), Value)]) -> Option<Value> {
-        eval_at(
-            r#"OR(AND($G8="対象外",$H8<>"対象"),$H8="対象外")"#,
-            row,
-            1,
-            7,
-            1,
-            cells,
-        )
+        eval_at(r#"OR(AND($G8="対象外",$H8<>"対象"),$H8="対象外")"#, row, 1, 7, 1, cells)
     }
 
     #[test]
@@ -2790,47 +2664,15 @@ mod tests {
         let rules = rules(xml, Palette::EMPTY);
         assert_eq!(rules.len(), 3);
         let numbers: Vec<f64> = (1..=10).map(|n| n as f64 * 10.0).collect();
-        let top3 = |value: f64| {
-            fires_with(
-                &rules[0],
-                0,
-                0,
-                &[((0, 0), Value::Number(value))],
-                &numbers,
-            )
-        };
+        let top3 = |value: f64| fires_with(&rules[0], 0, 0, &[((0, 0), Value::Number(value))], &numbers);
         assert!(top3(100.0));
         assert!(top3(80.0));
         assert!(!top3(70.0));
-        assert!(fires_with(
-            &rules[1],
-            0,
-            1,
-            &[((0, 1), Value::Number(20.0))],
-            &numbers
-        ));
-        assert!(!fires_with(
-            &rules[1],
-            0,
-            1,
-            &[((0, 1), Value::Number(30.0))],
-            &numbers
-        ));
+        assert!(fires_with(&rules[1], 0, 1, &[((0, 1), Value::Number(20.0))], &numbers));
+        assert!(!fires_with(&rules[1], 0, 1, &[((0, 1), Value::Number(30.0))], &numbers));
         // Twenty per cent of ten values is the top two.
-        assert!(fires_with(
-            &rules[2],
-            0,
-            2,
-            &[((0, 2), Value::Number(90.0))],
-            &numbers
-        ));
-        assert!(!fires_with(
-            &rules[2],
-            0,
-            2,
-            &[((0, 2), Value::Number(80.0))],
-            &numbers
-        ));
+        assert!(fires_with(&rules[2], 0, 2, &[((0, 2), Value::Number(90.0))], &numbers));
+        assert!(!fires_with(&rules[2], 0, 2, &[((0, 2), Value::Number(80.0))], &numbers));
     }
 
     #[test]
@@ -2843,32 +2685,12 @@ mod tests {
         assert_eq!(rules.len(), 2);
         // 10 through 100: the mean is 55.
         let numbers: Vec<f64> = (1..=10).map(|n| n as f64 * 10.0).collect();
-        let above = |value: f64| {
-            fires_with(
-                &rules[0],
-                0,
-                0,
-                &[((0, 0), Value::Number(value))],
-                &numbers,
-            )
-        };
+        let above = |value: f64| fires_with(&rules[0], 0, 0, &[((0, 0), Value::Number(value))], &numbers);
         assert!(above(60.0));
         // Strictly above, unless `equalAverage` says otherwise.
         assert!(!above(55.0));
-        assert!(fires_with(
-            &rules[1],
-            0,
-            1,
-            &[((0, 1), Value::Number(55.0))],
-            &numbers
-        ));
-        assert!(!fires_with(
-            &rules[1],
-            0,
-            1,
-            &[((0, 1), Value::Number(60.0))],
-            &numbers
-        ));
+        assert!(fires_with(&rules[1], 0, 1, &[((0, 1), Value::Number(55.0))], &numbers));
+        assert!(!fires_with(&rules[1], 0, 1, &[((0, 1), Value::Number(60.0))], &numbers));
     }
 
     #[test]
@@ -2937,10 +2759,7 @@ mod tests {
         assert_eq!(judgement_row(9, &row), Some(Value::Bool(true)));
         // A blank H is not "対象", which is what the second half of the rule
         // leans on.
-        assert_eq!(
-            eval_at(r#"$H8<>"対象""#, 7, 1, 7, 1, &row),
-            Some(Value::Bool(true))
-        );
+        assert_eq!(eval_at(r#"$H8<>"対象""#, 7, 1, 7, 1, &row), Some(Value::Bool(true)));
         // A reference that lands off the sheet has no answer, so the rule does
         // not fire rather than matching a cell that is not there.
         assert_eq!(eval_at("$A1", 3, 1, 7, 1, &row), None);
@@ -2948,14 +2767,8 @@ mod tests {
 
     #[test]
     fn an_out_of_scope_row_fires_and_an_in_scope_one_does_not() {
-        assert_eq!(
-            judgement_row(7, &[((7, 6), text("対象外"))]),
-            Some(Value::Bool(true))
-        );
-        assert_eq!(
-            judgement_row(7, &[((7, 6), text("対象"))]),
-            Some(Value::Bool(false))
-        );
+        assert_eq!(judgement_row(7, &[((7, 6), text("対象外"))]), Some(Value::Bool(true)));
+        assert_eq!(judgement_row(7, &[((7, 6), text("対象"))]), Some(Value::Bool(false)));
         // H can name the row out of scope on its own.
         assert_eq!(
             judgement_row(7, &[((7, 6), text("対象")), ((7, 7), text("対象外"))]),
@@ -2978,10 +2791,7 @@ mod tests {
 
     #[test]
     fn arithmetic_functions_and_concatenation() {
-        assert_eq!(
-            eval("MOD(ROW(),43)=5", 47, 1, &[]),
-            Some(Value::Bool(true))
-        );
+        assert_eq!(eval("MOD(ROW(),43)=5", 47, 1, &[]), Some(Value::Bool(true)));
         assert_eq!(eval("ROW()", 46, 1, &[]), Some(Value::Number(47.0)));
         assert_eq!(eval(r#""a"&1"#, 0, 0, &[]), Some(text("a1")));
         assert_eq!(eval(r#"UPPER("abc")&"-2""#, 0, 0, &[]), Some(text("ABC-2")));
@@ -3001,10 +2811,7 @@ mod tests {
         );
         // A cell that had no style of its own still becomes a run, and two
         // neighbours that end up alike stay one.
-        assert_eq!(
-            rebuild_row(&[], &[(4, 9), (5, 9), (7, 8)]),
-            vec![[4, 5, 9], [7, 7, 8]]
-        );
+        assert_eq!(rebuild_row(&[], &[(4, 9), (5, 9), (7, 8)]), vec![[4, 5, 9], [7, 7, 8]]);
     }
 
     #[test]
@@ -3017,9 +2824,8 @@ mod tests {
             r#"<conditionalFormatting sqref="A1:C4"><cfRule type="expression" dxfId="0" priority="1"><formula>$A1&gt;=2</formula></cfRule></conditionalFormatting>"#,
             Palette::EMPTY,
         );
-        let values: HashMap<(u32, u32), Value> = (0..4)
-            .map(|row| ((row, 0), Value::Number(row as f64 + 1.0)))
-            .collect();
+        let values: HashMap<(u32, u32), Value> =
+            (0..4).map(|row| ((row, 0), Value::Number(row as f64 + 1.0))).collect();
         fold(&mut layout, &[patch()], &rules, &values);
 
         let fill = |row: u32| {

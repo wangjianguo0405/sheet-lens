@@ -79,7 +79,8 @@ export const PLAIN_STYLE: CellStyle = {
   border: null,
 };
 
-export function formatKey(sheet: string, row: number, col: number): string {  // A NUL between the sheet and the cell, as the marks key theirs: a sheet name
+export function formatKey(sheet: string, row: number, col: number): string {
+  // A NUL between the sheet and the cell, as the marks key theirs: a sheet name
   // may hold a colon, and the pair has to be unambiguous without one.
   return `${sheet}\u0000${row}:${col}`;
 }

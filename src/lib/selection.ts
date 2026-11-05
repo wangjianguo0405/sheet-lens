@@ -64,12 +64,7 @@ export function activeArea(selection: Selection): Area {
  * the region it has just selected, so `rangeBetween`, which always puts the edge
  * at the far end, cannot express it.
  */
-export function rangeOver(
-  row: number,
-  col: number,
-  rows: number,
-  cols: number,
-): Area {
+export function rangeOver(row: number, col: number, rows: number, cols: number): Area {
   return {
     kind: "range",
     row,
@@ -173,8 +168,7 @@ export function selectionCovers(selection: Selection, row: number, col: number):
  */
 export function selectionBandCovers(selection: Selection, row: number, col: number): boolean {
   return areasOf(selection).some(
-    (area) =>
-      (area.kind === "row" || area.kind === "column") && areaCovers(area, row, col),
+    (area) => (area.kind === "row" || area.kind === "column") && areaCovers(area, row, col),
   );
 }
 
@@ -236,10 +230,7 @@ function areaRef(area: Area): string {
     case "range": {
       const first = cellRef(area.row, area.col);
       if (area.rows === 1 && area.cols === 1) return first;
-      const last = cellRef(
-        area.row + area.rows - 1,
-        area.col + area.cols - 1,
-      );
+      const last = cellRef(area.row + area.rows - 1, area.col + area.cols - 1);
       return `${first}:${last}`;
     }
   }

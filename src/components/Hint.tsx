@@ -14,13 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
  * element already shows — a truncated file name, a cell's note — is not a hint
  * and stays on the element.
  */
-export function Hint({
-  label,
-  children,
-}: {
-  label: ReactNode;
-  children: ReactElement;
-}) {
+export function Hint({ label, children }: { label: ReactNode; children: ReactElement }) {
   if (label === null || label === undefined || label === "") return children;
   return (
     <Tooltip>

@@ -124,12 +124,8 @@ function Row({
           {/* Where it is, as well as what it is called: two workbooks of the
               same name in two folders are told apart by nothing else. The folder
               is the part that gives way when the row runs out. */}
-          <span className="min-w-0 truncate group-hover:underline">
-            {fileName(path)}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-muted-foreground">
-            {folderName(path)}
-          </span>
+          <span className="min-w-0 truncate group-hover:underline">{fileName(path)}</span>
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">{folderName(path)}</span>
         </button>
       </Hint>
       <Hint label={label}>
@@ -191,18 +187,11 @@ function DirRow({
         >
           <Folder className="size-3.5 shrink-0" />
           <span className="min-w-0 truncate group-hover:underline">{name}</span>
-          <span className="min-w-0 flex-1 truncate text-muted-foreground">
-            {folderName(path)}
-          </span>
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">{folderName(path)}</span>
         </button>
       </Hint>
       <Hint label={label}>
-        <button
-          type="button"
-          onClick={() => onToggle(path)}
-          aria-label={label}
-          className={ACTION}
-        >
+        <button type="button" onClick={() => onToggle(path)} aria-label={label} className={ACTION}>
           {fixed ? <PinOff className="size-3" /> : <Pin className="size-3" />}
         </button>
       </Hint>
@@ -316,9 +305,7 @@ export function Welcome({
     setPinnedFiles(pinned.has(path) ? unpinFile(path) : pinFile(path));
 
   const togglePinnedDir = (path: string) =>
-    setPinnedDirs(
-      pinnedDirKeys.has(folderKey(path)) ? unpinDir(path) : pinDir(path),
-    );
+    setPinnedDirs(pinnedDirKeys.has(folderKey(path)) ? unpinDir(path) : pinDir(path));
 
   /**
    * Drops a folder and the workbooks in it. The lists themselves are written
@@ -474,9 +461,7 @@ export function Welcome({
             holds it apart from the two lists, and its own three columns keep a
             list this long from running down the window. */}
         <section className="min-w-0 shrink-0 border-t border-border pt-4">
-          <h2 className={HEAD}>
-            {t("welcome.shortcuts")}
-          </h2>
+          <h2 className={HEAD}>{t("welcome.shortcuts")}</h2>
           <div className="mt-1.5 grid gap-x-8 md:grid-cols-3">
             {groups.map((group, index) => (
               <ul key={index} className="space-y-1">
@@ -487,9 +472,7 @@ export function Welcome({
                         <span key={combo} className="flex items-center gap-1">
                           {/* Two keys that do the same thing read as one entry:
                               PageUp or PageDown, Ctrl+Home or Ctrl+End. */}
-                          {position > 0 && (
-                            <span className="text-muted-foreground/60">/</span>
-                          )}
+                          {position > 0 && <span className="text-muted-foreground/60">/</span>}
                           <Keys combo={combo} />
                         </span>
                       ))}

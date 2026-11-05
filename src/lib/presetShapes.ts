@@ -203,7 +203,8 @@ function evaluate(tokens: string[], at: number, vars: Map<string, number>): [num
       const [scale, i] = operand(at + 1);
       const [angle, j] = operand(i);
       const turn = angle * ANGLE;
-      const trig = operator === "sin" ? Math.sin(turn) : operator === "cos" ? Math.cos(turn) : Math.tan(turn);
+      const trig =
+        operator === "sin" ? Math.sin(turn) : operator === "cos" ? Math.cos(turn) : Math.tan(turn);
       return [scale * trig, j];
     }
     // An arc tangent: `at2` is the angle of (a, b) in the same 1/60000 units.
@@ -389,9 +390,7 @@ export function resolveCustom(custom: ShapeCustom, w: number, h: number): Preset
           break;
         case "quadBezTo":
           if (p1) {
-            d += `Q${round(x(p0[0]))} ${round(y(p0[1]))} ${round(x(p1[0]))} ${round(
-              y(p1[1]),
-            )}`;
+            d += `Q${round(x(p0[0]))} ${round(y(p0[1]))} ${round(x(p1[0]))} ${round(y(p1[1]))}`;
           }
           break;
         case "arcTo": {

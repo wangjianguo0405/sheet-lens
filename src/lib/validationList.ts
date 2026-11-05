@@ -27,7 +27,7 @@ export async function validationListItems(
   for (let depth = 0; depth < 4 && text; depth += 1) {
     const bare = text.startsWith("=") ? text.slice(1).trim() : text;
     text = bare;
-    if (bare.startsWith("\"")) break;
+    if (bare.startsWith('"')) break;
     const target = definedName(names, bare);
     if (!target || target === bare || seen.has(target)) break;
     seen.add(target);
@@ -35,8 +35,8 @@ export async function validationListItems(
   }
 
   if (!text) return [];
-  if (text.startsWith("\"")) {
-    const inner = text.slice(1, text.endsWith("\"") ? -1 : undefined).replace(/""/g, "\"");
+  if (text.startsWith('"')) {
+    const inner = text.slice(1, text.endsWith('"') ? -1 : undefined).replace(/""/g, '"');
     return inner
       .split(",")
       .map((item) => item.trim())

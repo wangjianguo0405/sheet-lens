@@ -97,13 +97,7 @@ interface RibbonProps {
  * Excel's group names do, and a rule between groups is what tells one from the
  * next — without it a row of small icons reads as one undifferentiated strip.
  */
-function Group({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex shrink-0 flex-col justify-between gap-1 border-l border-border px-2 first:border-l-0 first:pl-0">
       <div className="flex items-center gap-0.5">{children}</div>
@@ -115,7 +109,8 @@ function Group({
 }
 
 /** A ribbon button that reads as pressed, for the toggles among them. */
-function Toggle({  pressed,
+function Toggle({
+  pressed,
   onClick,
   title,
   children,
@@ -146,13 +141,7 @@ function Toggle({  pressed,
  * size does not overwrite a half-typed number; the choice lands on Enter or on
  * leaving the box, and the box then takes the size in force again.
  */
-function SizeBox({
-  sizePx,
-  onPick,
-}: {
-  sizePx: number;
-  onPick: (sizePx: number) => void;
-}) {
+function SizeBox({ sizePx, onPick }: { sizePx: number; onPick: (sizePx: number) => void }) {
   const points = Math.round(((sizePx * 3) / 4) * 10) / 10;
   const [draft, setDraft] = useState(String(points));
   useEffect(() => setDraft(String(points)), [points]);
@@ -246,18 +235,14 @@ export function Ribbon({
         <Toggle
           pressed={sidebarOpen}
           onClick={onToggleSidebar}
-          title={
-            sidebarOpen ? t("toolbar.hideSheetList") : t("toolbar.showSheetList")
-          }
+          title={sidebarOpen ? t("toolbar.hideSheetList") : t("toolbar.showSheetList")}
         >
           <PanelLeft className="size-3.5" />
         </Toggle>
         <Toggle
           pressed={sheetTabsOpen}
           onClick={onToggleSheetTabs}
-          title={
-            sheetTabsOpen ? t("toolbar.hideSheetTabs") : t("toolbar.showSheetTabs")
-          }
+          title={sheetTabsOpen ? t("toolbar.hideSheetTabs") : t("toolbar.showSheetTabs")}
         >
           <PanelBottom className="size-3.5" />
         </Toggle>
@@ -318,10 +303,7 @@ export function Ribbon({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <SizeBox
-          sizePx={activeStyle?.sizePx ?? 12}
-          onPick={(sizePx) => onFormat({ sizePx })}
-        />
+        <SizeBox sizePx={activeStyle?.sizePx ?? 12} onPick={(sizePx) => onFormat({ sizePx })} />
 
         <Toggle
           pressed={style?.bold ?? false}
@@ -478,11 +460,7 @@ export function Ribbon({
           <DropdownMenu>
             <Hint label={t("toolbar.fill")}>
               <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 rounded-l-none px-0.5"
-                >
+                <Button size="sm" variant="ghost" className="h-6 rounded-l-none px-0.5">
                   <ChevronDown className="size-3" />
                 </Button>
               </DropdownMenuTrigger>
@@ -519,11 +497,7 @@ export function Ribbon({
             </DropdownMenuTrigger>
           </Hint>
           <DropdownMenuContent align="start" className="min-w-40">
-            <DropdownMenuItem
-              className="text-xs"
-              icon={<Rows3 />}
-              onSelect={() => onGroup("rows")}
-            >
+            <DropdownMenuItem className="text-xs" icon={<Rows3 />} onSelect={() => onGroup("rows")}>
               {t("ribbon.groupRows")}
             </DropdownMenuItem>
             <DropdownMenuItem
