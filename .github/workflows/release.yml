@@ -93,6 +93,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Style and lint before the long build: these should cost seconds, not a
+      # cold release compile. Rules are rustfmt.toml, .prettierrc.json and
+      # eslint.config.js.
+      - name: Check formatting and lint
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          pnpm prettier --check "src/**/*.{ts,tsx,css}"
+          pnpm eslint .
+
       # No bundle: the portable build *is* the bare executable.
       - run: pnpm tauri build --no-bundle --ci
 

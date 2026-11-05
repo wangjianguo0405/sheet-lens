@@ -18,6 +18,20 @@ pnpm tauri dev           # Tauri 开发（热重载）
 pnpm tauri build --no-bundle  # 便携 exe，输出到 src-tauri/target/release
 ```
 
+## 格式与检查
+
+```bash
+pnpm fmt         # prettier + cargo fmt，两边都写回
+pnpm lint        # eslint
+pnpm lint:fix    # eslint --fix
+pnpm fmt:check   # 三项全查：prettier、cargo fmt、eslint（CI 用的是这一条）
+```
+
+- 前端格式：prettier，规则在 `.prettierrc.json`（100 列、双引号、分号、尾逗号）。
+- Rust 格式：rustfmt，规则在 `src-tauri/rustfmt.toml`（`max_width = 120`）。
+- 检查：eslint，规则在 `eslint.config.js`。开的是 `rules-of-hooks`、`exhaustive-deps`、`no-misused-promises`、`no-floating-promises`、`no-unsafe-*`；关掉的是 React Compiler 那一组（`refs`、`set-state-in-effect`、`immutability` 等）——这个画布网格本来就靠 ref 和命令式绘制，那组规则描述的编码风格本 app 不走。
+- `release.yml` 在编译前跑这几项，不过就不打包。
+
 ## 测试
 
 ```bash

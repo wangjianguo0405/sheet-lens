@@ -12,7 +12,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "fmt": "prettier --write \"src/**/*.{ts,tsx,css}\" eslint.config.js .prettierrc.json",
+    "fmt:check": "prettier --check \"src/**/*.{ts,tsx,css}\" && cargo fmt --manifest-path src-tauri/Cargo.toml --check && eslint .",
+    "tauri": "tauri",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",
@@ -33,14 +37,19 @@
     "tw-animate-css": "1.4.0"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@tailwindcss/vite": "4.3.3",
     "@tauri-apps/cli": "2.12.1",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "prettier": "3.9.10",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
     "vite": "8.3.3"
   }
 }
