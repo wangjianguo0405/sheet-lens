@@ -1055,6 +1055,16 @@ export function CanvasGrid({
   const [baseRowH, setBaseRowH] = useState(24);
   const [colOverrides, setColOverrides] = useState<Map<number, number>>(() => new Map());
   const [rowOverrides, setRowOverrides] = useState<Map<number, number>>(() => new Map());
+  /**
+   * Heights worked out from the text, for the rows the file gives none. Excel
+   * does the same when it opens a sheet: a row it did not store a height for
+   * is fitted to what is in it, which is how a cell of wrapped text gets a row
+   * tall enough to show all of it. Kept apart from `rowOverrides` so that what
+   * a reader dragged stays a choice of theirs and these follow the content.
+   */
+  const [autoRowH, setAutoRowH] = useState<Map<number, number>>(() => new Map());
+  /** The blocks `autoRowH` has already been worked out from. */
+  const fittedBlocks = useRef(new Set<string>());
   const [layout, setLayout] = useState<SheetLayout | null>(null);
   /** The split's row and column band positions. */
   const [splitBands, setSplitBands] = useState<SplitBands | null>(null);
@@ -1615,9 +1625,11 @@ export function CanvasGrid({
         const row = sheetRowOf(display);
         if (row < 0 || row >= sheetRowsGuess) return baseRowH;
         if (hiddenRows.has(row)) return 0;
-        return rowOverrides.get(row) ?? baseRowH;
+        // What the reader dragged wins over the fit, and the file's own height
+        // over a fit that only starts once the row's text has been read.
+        return rowOverrides.get(row) ?? autoRowH.get(row) ?? baseRowH;
       }),
-    [rowCount, sheetRowsGuess, rowOverrides, baseRowH, sheetRowOf, hiddenRows],
+    [rowCount, sheetRowsGuess, rowOverrides, autoRowH, baseRowH, sheetRowOf, hiddenRows],
   );
 
   /**
@@ -2694,6 +2706,10 @@ export function CanvasGrid({
         setHiddenOverride(saved?.hidden ?? { rows: new Map(), cols: new Map() });
         setColOverrides(saved?.sizes?.col ?? toOverrides(parsed.colWidthsChars, colPx));
         setRowOverrides(saved?.sizes?.row ?? toOverrides(parsed.rowHeightsPx));
+        // The rows the file left without a height are fitted again from this
+        // sheet's own text, so the previous sheet's heights never linger.
+        fittedBlocks.current.clear();
+        setAutoRowH(new Map());
 
         // Put back the view this sheet was left at, before anything is
         // fetched, so the first paint is the right block rather than A1's.
@@ -5447,66 +5463,140 @@ export function CanvasGrid({
   };
 
   /**
-   * Sizes each of `indices` to the tallest its cells come to once wrapped — the
-   * same bargain `autofitColumn` strikes sideways, and drawn from the same
-   * loaded blocks, so a row is fitted to what has been read rather than to a
-   * sheet nobody has paged through. A cell that does not wrap is one line
-   * however long it is, and no row goes below the workbook's own default.
+   * How tall each of `indices` comes to once its text is wrapped, and how many
+   * lines the tallest cell takes — the same bargain `autofitColumn` strikes
+   * sideways, and drawn from the same loaded blocks, so a row is fitted to what
+   * has been read rather than to a sheet nobody has paged through. A cell that
+   * does not wrap is one line however long it is, and no row goes below the
+   * workbook's own default.
    */
-  const autofitRows = (indices: number[]) => {
-    const wanted = new Set(indices);
-    const tallest = new Map<number, number>(indices.map((row) => [row, baseRowH]));
-    const mine = blockPrefix(path, sheet.name);
-    for (const [key, block] of cache.current) {
-      if (!key.startsWith(mine)) continue;
-      const [rawRow] = key.slice(mine.length).split(SEP);
-      const blockRowStart = Number(rawRow) * BLOCK_ROWS;
-      for (let local = 0; local < block.length; local += 1) {
-        const row = blockRowStart + local;
-        if (!wanted.has(row)) continue;
-        const cells = block[local];
-        if (!cells) continue;
-        for (let col = 0; col < cells.length; col += 1) {
-          const text = cells[col]?.text;
-          if (!text) continue;
-          const style = styleAt(row, col);
-          const merge = mergeAt(row, col);
-          // A merge is one cell whose text sits in its top-left corner: only
-          // that cell has anything to fit, and the rest of what the merge
-          // covers is read for its own cells rather than for the text above it.
-          if (merge && (merge.row !== row || merge.col !== col)) continue;
-          const sizePx = style?.sizePx ?? fontSize;
-          const font = fontString(
-            cellFontStack(style?.family ?? null, fontFamily),
-            sizePx,
-            style?.bold ?? false,
-            style?.italic ?? false,
-          );
-          // And it wraps in the whole of itself, not in its first column, or
-          // its text would be counted as far more lines than it comes to.
-          const first = merge?.col ?? col;
-          const last = merge ? merge.col + merge.cols - 1 : col;
-          let width = 0;
-          for (let c = first; c <= last; c += 1) width += spanAt(cols.offsets, c);
-          const lines = layoutLines(
-            font,
-            text,
-            width - CELL_PAD_LEFT - CELL_PAD_RIGHT,
-            style?.wrap ?? false,
-          );
-          tallest.set(
-            row,
-            Math.max(tallest.get(row) ?? baseRowH, lines.length * sizePx * LINE_HEIGHT),
-          );
+  const measureRowHeights = useCallback(
+    (indices: Iterable<number>): Map<number, { px: number; lines: number }> => {
+      const wanted = new Set(indices);
+      const tallest = new Map<number, { px: number; lines: number }>();
+      const mine = blockPrefix(path, sheet.name);
+      for (const [key, block] of cache.current) {
+        if (!key.startsWith(mine)) continue;
+        const [rawRow] = key.slice(mine.length).split(SEP);
+        const blockRowStart = Number(rawRow) * BLOCK_ROWS;
+        for (let local = 0; local < block.length; local += 1) {
+          const row = blockRowStart + local;
+          if (!wanted.has(row)) continue;
+          const cells = block[local];
+          if (!cells) continue;
+          for (let col = 0; col < cells.length; col += 1) {
+            const text = cells[col]?.text;
+            if (!text) continue;
+            const style = styleAt(row, col);
+            const merge = mergeAt(row, col);
+            // A merge is one cell whose text sits in its top-left corner: only
+            // that cell has anything to fit, and the rest of what the merge
+            // covers is read for its own cells rather than for the text above it.
+            if (merge && (merge.row !== row || merge.col !== col)) continue;
+            const sizePx = style?.sizePx ?? fontSize;
+            const font = fontString(
+              cellFontStack(style?.family ?? null, fontFamily),
+              sizePx,
+              style?.bold ?? false,
+              style?.italic ?? false,
+            );
+            // And it wraps in the whole of itself, not in its first column, or
+            // its text would be counted as far more lines than it comes to.
+            const first = merge?.col ?? col;
+            const last = merge ? merge.col + merge.cols - 1 : col;
+            let width = 0;
+            for (let c = first; c <= last; c += 1) width += spanAt(cols.offsets, c);
+            const lines = layoutLines(
+              font,
+              text,
+              width - CELL_PAD_LEFT - CELL_PAD_RIGHT,
+              style?.wrap ?? false,
+            );
+            const px = lines.length * sizePx * LINE_HEIGHT;
+            const seen = tallest.get(row);
+            if (!seen || px > seen.px) tallest.set(row, { px, lines: lines.length });
+          }
         }
       }
-    }
+      for (const row of wanted) {
+        const seen = tallest.get(row);
+        tallest.set(row, { px: Math.max(seen?.px ?? 0, baseRowH), lines: seen?.lines ?? 1 });
+      }
+      return tallest;
+    },
+    [baseRowH, cols, styleAt, mergeAt, path, sheet.name, fontFamily, fontSize],
+  );
+
+  /** Sizes each of `indices` to that height, as a choice of the reader's. */
+  const autofitRows = (indices: number[]) => {
+    const tallest = measureRowHeights(indices);
     setRowOverrides((prev) => {
       const map = new Map(prev);
-      for (const [row, height] of tallest) map.set(row, Math.ceil(height));
+      for (const [row, measured] of tallest) map.set(row, Math.ceil(measured.px));
       return map;
     });
   };
+
+  /**
+   * Fits the rows the file gave no height to, the way Excel fits them as it
+   * opens a sheet: a row of wrapped text grows until all of it shows. Measured
+   * from the blocks as they arrive — a row whose other columns are still
+   * loading is measured again when they land — and never over the file's own
+   * height or one the reader has set.
+   */
+  useEffect(() => {
+    if (!layout || layoutSheet !== sheetIdentity(path, sheet.name)) return;
+    if (seeded.current !== sheetIdentity(path, sheet.name)) return;
+    const prefix = blockPrefix(path, sheet.name);
+    // A column the reader widens or narrows changes where the text wraps, so
+    // the blocks are measured again under a width they have not been seen at.
+    // The sheet's own columns only: the blank area past them grows as the view
+    // scrolls and would otherwise look like a change of width.
+    const widths = cols.offsets[sheetColsGuess] ?? 0;
+    const stale: number[] = [];
+    for (const key of cache.current.keys()) {
+      if (!key.startsWith(prefix)) continue;
+      const fitted = `${key}@${widths}`;
+      if (fittedBlocks.current.has(fitted)) continue;
+      fittedBlocks.current.add(fitted);
+      const [rawRow] = key.slice(prefix.length).split(SEP);
+      const start = Number(rawRow) * BLOCK_ROWS;
+      for (let local = 0; local < BLOCK_ROWS; local += 1) {
+        const row = start + local;
+        if (row >= sheetRowsGuess) break;
+        if (hiddenRows.has(row) || rowOverrides.has(row)) continue;
+        // A height in the file is the file's answer, and nothing here overrides it.
+        if (layout.rowHeightsPx[String(row)] !== undefined) continue;
+        stale.push(row);
+      }
+    }
+    if (stale.length === 0) return;
+    const fitted = measureRowHeights(stale);
+    setAutoRowH((prev) => {
+      let next: Map<number, number> | null = null;
+      for (const [row, measured] of fitted) {
+        // The workbook's default height already holds one line of text.
+        if (measured.lines < 2) continue;
+        const px = Math.ceil(measured.px);
+        if (prev.get(row) === px) continue;
+        next ??= new Map(prev);
+        next.set(row, px);
+      }
+      return next ?? prev;
+    });
+  }, [
+    version,
+    layout,
+    layoutSheet,
+    path,
+    sheet.name,
+    sheetRowsGuess,
+    hiddenRows,
+    rowOverrides,
+    cols,
+    sheetColsGuess,
+    measureRowHeights,
+  ]);
 
   /**
    * Ctrl+C: the cell's text, or the whole row or column, tab or newline joined.

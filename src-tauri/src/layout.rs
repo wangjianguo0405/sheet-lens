@@ -712,6 +712,13 @@ pub struct SheetLayout {
     /// folded into `notes` before this is cleared.
     #[serde(skip)]
     pub legacy_rel: Option<String>,
+    /// Cells that state a formula and no value of their own, by `(row, col)`.
+    /// Excel works those out when it opens the file; a writer that leaves the
+    /// cached value empty leaves the viewer a formula and nothing to draw. Not
+    /// part of what the grid sees — `cells` reads it, and the payload carries
+    /// no formulas.
+    #[serde(skip)]
+    pub formulas: HashMap<(u32, u32), String>,
     /// Cells carrying a note. Excel marks each with a small red triangle in the
     /// cell's top-right corner, which is all a note draws until it is hovered.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1055,6 +1062,7 @@ impl SheetLayout {
             drawings: Vec::new(),
             drawing_rel: None,
             legacy_rel: None,
+            formulas: HashMap::new(),
             notes: Vec::new(),
             rich_cells: Vec::new(),
             data_bars: Vec::new(),
@@ -3137,10 +3145,21 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
     let mut cell_place: Option<(u32, u32)> = None;
     let mut cell_start = false;
     let mut cell_value_seen = false;
+    // The formula the cell states, and whether the file shipped a value beside
+    // it. A generator that leaves `<v/>` empty hands the viewer a formula and
+    // nothing to draw; only the formula is kept for it.
+    let mut cell_formula: Option<String> = None;
+    let mut in_cell_formula = false;
+    let mut cell_has_value = false;
 
     loop {
         buf.clear();
-        match xml.read_event_into(&mut buf) {
+        let event = xml.read_event_into(&mut buf);
+        // Whether the tag that arrives closes itself. A `<v/>` carries no value
+        // and an `<f/>` states no formula — only its `si` for a shared one —
+        // and neither gets an end tag to tell us so later.
+        let self_closed = matches!(&event, Ok(Event::Empty(_)));
+        match event {
             Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
                 match element.local_name().as_ref() {
                     b"sheetFormatPr" => {
@@ -3418,9 +3437,23 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
                     b"v" => {
                         in_cell_value = rich_cell.is_some();
                         cell_value_seen = true;
+                        // `<v/>` is a value the file did not work out.
+                        if !self_closed {
+                            cell_has_value = true;
+                        }
                     }
                     // Inline strings carry their text as element content.
-                    b"is" => in_cell_text = true,
+                    b"is" => {
+                        in_cell_text = true;
+                        cell_has_value = true;
+                    }
+                    // A cell's own formula. Elements of this name appear only
+                    // inside `<c>`; the shared formula a sibling points at by
+                    // `si` states no text, and `<f/>` is exactly that.
+                    b"f" if cell_place.is_some() && !self_closed => {
+                        in_cell_formula = true;
+                        cell_formula.get_or_insert_with(String::new);
+                    }
                     b"c" => {
                         // Cell display values come from calamine; this pass only
                         // recovers the style, and only when it says something.
@@ -3430,6 +3463,8 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
                         cell_place = Some((row, col));
                         cell_value_seen = attr(&element, b"t").as_deref() == Some("str");
                         cell_start = true;
+                        cell_formula = None;
+                        cell_has_value = false;
                         // A shared-string cell names its string by number; the
                         // runs are looked up by that number when `<v>` arrives,
                         // because two cells may spell the same text with
@@ -3577,10 +3612,23 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
                                 span.1 = span.1.max(col);
                             }
                         }
+                        // A formula the file shipped no value for: Excel works
+                        // it out when it opens, so the viewer keeps it to do
+                        // what it can with. One that did ship a value needs
+                        // nothing — the cached value is what Excel shows too.
+                        if let (Some(place), Some(formula), false) = (cell_place, cell_formula.take(), cell_has_value) {
+                            let formula = formula.trim();
+                            if !formula.is_empty() {
+                                layout.formulas.insert(place, formula.to_owned());
+                            }
+                        }
                         cell_place = None;
                         cell_start = false;
                         cell_value_seen = false;
+                        cell_has_value = false;
+                        in_cell_formula = false;
                     }
+                    b"f" => in_cell_formula = false,
                     b"formula1" | b"formula2" => {
                         // The text arrives in pieces when the file escapes its
                         // characters as entity references, so it is trimmed
@@ -3603,6 +3651,13 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
                     }
                     b"customSheetViews" | b"extLst" => borrowed_filters = borrowed_filters.saturating_sub(1),
                     _ => {}
+                }
+            }
+            // A formula's text, which the file may split into entity-escaped
+            // pieces the same way it splits a validation's.
+            Ok(Event::Text(text)) if in_cell_formula => {
+                if let (Some(slot), Ok(content)) = (cell_formula.as_mut(), text.xml_content(XmlVersion::default())) {
+                    slot.push_str(&content);
                 }
             }
             Ok(Event::Text(text)) if in_cell_value => {
@@ -4245,6 +4300,32 @@ mod tests {
         assert_eq!(layout.row_styles.get(&0), None);
         let style = layout.row_styles.get(&1).expect("row 2 is styled");
         assert_eq!(layout.styles[*style as usize].fill.as_deref(), Some("#FFFF00"));
+    }
+
+    /// A generated sheet writes its formulas with an empty `<v/>` and lets
+    /// Excel work them out at open, so the formula is the only thing there is
+    /// to draw. A cell that did ship a value needs none of that, and a shared
+    /// formula states its text on the first cell of the run only.
+    #[test]
+    fn keeps_the_formula_of_a_cell_whose_value_the_file_left_empty() {
+        let styles = parse_styles("<styleSheet/>", Palette::EMPTY);
+        let sheet = br#"<worksheet><sheetData>
+            <row r="10">
+                <c r="B10"><f>ROW()-3</f><v/></c>
+                <c r="C10" t="str"><f>ROW()</f><v>10</v></c>
+                <c r="D10"><f t="shared" si="0" ref="D10:D12"/><v/></c>
+                <c r="E10" t="inlineStr"><is><t>x</t></is></c>
+            </row>
+        </sheetData></worksheet>"#;
+        let layout = parse_sheet(&sheet[..], &styles, &[]).expect("layout");
+        assert_eq!(layout.formulas.get(&(9, 1)).map(String::as_str), Some("ROW()-3"));
+        assert_eq!(layout.formulas.get(&(9, 2)), None, "a cached value needs no formula");
+        assert_eq!(
+            layout.formulas.get(&(9, 3)),
+            None,
+            "a shared formula states its text on the run's first cell"
+        );
+        assert_eq!(layout.formulas.get(&(9, 4)), None, "an inline string is a value");
     }
 
     /// Excel writes an autofilter over its header row and opens it over the
