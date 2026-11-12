@@ -12,6 +12,12 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.20] - 2026-11-12
+
+### Improved
+
+- The file tab's right-click menu answers to letters the way Excel's menus do: R reloads the workbook and C closes the tab, each underlined in the item it belongs to. Pressing the letter works while the menu is open, wherever the pointer is
+
 ## [1.0.19] - 2026-11-12
 
 ### Fixed
