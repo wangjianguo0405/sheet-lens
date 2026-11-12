@@ -186,13 +186,24 @@ impl Book {
         // from A1 to the first used cell — invisible on a sheet that starts at
         // A1, but a document whose content begins at B2 came out a row up and
         // a column left of its own styling.
-        let row_end = row.saturating_add(rows).min(origin_row.saturating_add(height as u32));
-        let col_end = col.saturating_add(cols).min(origin_col.saturating_add(width as u32));
+        //
+        // The window reaches as far as the layout says the sheet does, not
+        // only as far as calamine's values go: a sheet whose rows continue
+        // past its last value — a styled row, a formula the file shipped
+        // empty — still has cells out there, and stopping at the last value
+        // left them unreachable.
+        let layout = self.layouts.get(sheet);
+        let used_rows = origin_row
+            .saturating_add(height as u32)
+            .max(layout.map_or(0, |found| found.rows));
+        let used_cols = origin_col
+            .saturating_add(width as u32)
+            .max(layout.map_or(0, |found| found.cols));
+        let row_end = row.saturating_add(rows).min(used_rows);
+        let col_end = col.saturating_add(cols).min(used_cols);
 
         // The number format lives in the layout, which the grid loads before
         // it asks for any cells.
-        let layout = self.layouts.get(sheet);
-
         let mut out = Vec::with_capacity(row_end.saturating_sub(row) as usize);
         for r in row..row_end {
             let mut line = Vec::with_capacity(col_end.saturating_sub(col) as usize);
@@ -203,7 +214,23 @@ impl Book {
                     .and_then(|(value, code)| numfmt::apply(value, code));
                 line.push(match formatted {
                     Some(text) => Cell { kind: "date", text },
-                    None => cell_at(value),
+                    None => {
+                        let mut cell = cell_at(value);
+                        // The file states a formula and shipped no value for
+                        // it — Excel works it out at open. Only a formula that
+                        // needs nothing but its own address is answered here;
+                        // everything else stays as blank as the file left it.
+                        if cell.kind == "empty" {
+                            if let Some(Some(number)) = layout
+                                .and_then(|found| found.formulas.get(&(r, c)))
+                                .map(|formula| formula_number(formula, r, c))
+                            {
+                                write_float(number, &mut cell.text);
+                                cell.kind = "number";
+                            }
+                        }
+                        cell
+                    }
                 });
             }
             out.push(line);
@@ -645,6 +672,142 @@ fn write_float(f: f64, out: &mut String) {
         let _ = write!(out, "{}", f as i64);
     } else {
         let _ = write!(out, "{f}");
+    }
+}
+
+/// Works out a formula that depends on nothing but the cell it sits in.
+///
+/// `ROW()` and `COLUMN()` are how a generated sheet numbers its lines, and
+/// arithmetic around them is what those formulas are made of. Anything else —
+/// a reference, a name, a function not listed — is left unanswered: a blank
+/// cell is what the file itself carries, while a number Excel never computed
+/// would be the viewer's own invention.
+fn formula_number(text: &str, row: u32, col: u32) -> Option<f64> {
+    let mut parser = FormulaParser {
+        bytes: text.as_bytes(),
+        at: 0,
+        row: f64::from(row) + 1.0,
+        col: f64::from(col) + 1.0,
+    };
+    let value = parser.expression()?;
+    parser.skip_space();
+    (parser.at == parser.bytes.len() && value.is_finite()).then_some(value)
+}
+
+struct FormulaParser<'a> {
+    bytes: &'a [u8],
+    at: usize,
+    /// What `ROW()` and `COLUMN()` answer, which is where the cell is.
+    row: f64,
+    col: f64,
+}
+
+impl FormulaParser<'_> {
+    fn skip_space(&mut self) {
+        while matches!(self.bytes.get(self.at), Some(b' ')) {
+            self.at += 1;
+        }
+    }
+
+    fn eat(&mut self, wanted: u8) -> bool {
+        self.skip_space();
+        if self.bytes.get(self.at) == Some(&wanted) {
+            self.at += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expression(&mut self) -> Option<f64> {
+        let mut value = self.term()?;
+        loop {
+            if self.eat(b'+') {
+                value += self.term()?;
+            } else if self.eat(b'-') {
+                value -= self.term()?;
+            } else {
+                return Some(value);
+            }
+        }
+    }
+
+    fn term(&mut self) -> Option<f64> {
+        let mut value = self.power()?;
+        loop {
+            if self.eat(b'*') {
+                value *= self.power()?;
+            } else if self.eat(b'/') {
+                let divisor = self.power()?;
+                if divisor == 0.0 {
+                    return None;
+                }
+                value /= divisor;
+            } else {
+                return Some(value);
+            }
+        }
+    }
+
+    /// Right associative, the way Excel reads `2^3^2`.
+    fn power(&mut self) -> Option<f64> {
+        let value = self.unary()?;
+        if self.eat(b'^') {
+            return Some(value.powf(self.power()?));
+        }
+        Some(value)
+    }
+
+    fn unary(&mut self) -> Option<f64> {
+        if self.eat(b'-') {
+            return Some(-self.unary()?);
+        }
+        if self.eat(b'+') {
+            return self.unary();
+        }
+        self.primary()
+    }
+
+    fn primary(&mut self) -> Option<f64> {
+        self.skip_space();
+        match self.bytes.get(self.at)? {
+            b'(' => {
+                self.at += 1;
+                let value = self.expression()?;
+                self.eat(b')').then_some(value)
+            }
+            b'0'..=b'9' | b'.' => self.number(),
+            b'A'..=b'Z' | b'a'..=b'z' => self.call(),
+            _ => None,
+        }
+    }
+
+    fn number(&mut self) -> Option<f64> {
+        let start = self.at;
+        while matches!(self.bytes.get(self.at), Some(b'0'..=b'9' | b'.')) {
+            self.at += 1;
+        }
+        std::str::from_utf8(&self.bytes[start..self.at]).ok()?.parse().ok()
+    }
+
+    /// `ROW()` or `COLUMN()`, with the parentheses empty: a reference inside
+    /// them names another cell, which this parser does not follow.
+    fn call(&mut self) -> Option<f64> {
+        let start = self.at;
+        while matches!(self.bytes.get(self.at), Some(byte) if byte.is_ascii_alphabetic()) {
+            self.at += 1;
+        }
+        let name = std::str::from_utf8(&self.bytes[start..self.at])
+            .ok()?
+            .to_ascii_uppercase();
+        if !self.eat(b'(') || !self.eat(b')') {
+            return None;
+        }
+        match name.as_str() {
+            "ROW" => Some(self.row),
+            "COLUMN" => Some(self.col),
+            _ => None,
+        }
     }
 }
 
@@ -1243,5 +1406,26 @@ mod tests {
             )
             .unwrap();
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn works_out_a_formula_that_names_only_its_own_cell() {
+        // The line counter a generated sheet writes: row 10, one-based 10.
+        assert_eq!(formula_number("ROW()-3", 9, 1), Some(7.0));
+        assert_eq!(formula_number("ROW()", 46, 0), Some(47.0));
+        assert_eq!(formula_number("COLUMN()*2+ROW()", 0, 0), Some(3.0));
+        // Precedence, parentheses and the right-associative power.
+        assert_eq!(formula_number("1+2*3", 0, 0), Some(7.0));
+        assert_eq!(formula_number("(1+2)*3", 0, 0), Some(9.0));
+        assert_eq!(formula_number("2^3^2", 0, 0), Some(512.0));
+        assert_eq!(formula_number("-ROW()+1", 4, 0), Some(-4.0));
+        // Anything that reads another cell, or a function this does not know,
+        // stays unanswered rather than guessed at.
+        assert_eq!(formula_number("ROW(A5)", 0, 0), None);
+        assert_eq!(formula_number("A1+1", 0, 0), None);
+        assert_eq!(formula_number("SUM(A1:A3)", 0, 0), None);
+        assert_eq!(formula_number("IF(ROW()>1,1,2)", 0, 0), None);
+        assert_eq!(formula_number("ROW())", 0, 0), None);
+        assert_eq!(formula_number("1/0", 0, 0), None);
     }
 }

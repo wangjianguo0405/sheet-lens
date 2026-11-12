@@ -200,6 +200,49 @@ export function flatText(text: string): string {
 }
 
 /**
+ * How a line of this text may be broken, in the order the characters appear.
+ *
+ * Excel breaks after a space and after a hyphen, and anywhere a Japanese
+ * character meets its neighbour: a line may end on a kana when the Latin word
+ * after it will not fit. A run of Latin text is kept whole so that an
+ * identifier moves to the next line rather than being cut in half; only a word
+ * wider than a line is broken, which the caller does.
+ */
+function breakableChunks(paragraph: string): string[] {
+  const chunks: string[] = [];
+  let at = 0;
+  while (at < paragraph.length) {
+    if (isCjk(paragraph[at])) {
+      chunks.push(paragraph[at]);
+      at += 1;
+      continue;
+    }
+    let end = at;
+    while (end < paragraph.length && !isCjk(paragraph[end])) {
+      const ch = paragraph[end];
+      end += 1;
+      // The hyphen and the space ride with the word they follow, so both are
+      // re-emitted verbatim and a line keeps the hyphen it breaks after.
+      if (ch === "-" || /\s/.test(ch)) break;
+    }
+    chunks.push(paragraph.slice(at, end));
+    at = end;
+  }
+  return chunks;
+}
+
+/** Characters a line may break on either side of: kana, kanji, CJK punctuation. */
+function isCjk(ch: string): boolean {
+  const code = ch.codePointAt(0) ?? 0;
+  return (
+    (code >= 0x3000 && code <= 0x30ff) ||
+    (code >= 0x3400 && code <= 0x4dbf) ||
+    (code >= 0x4e00 && code <= 0x9fff) ||
+    (code >= 0xff00 && code <= 0xffef)
+  );
+}
+
+/**
  * The lines a cell's text occupies. A wrapped cell (`whitespace-pre-wrap
  * break-words`) breaks at spaces and, where a single word cannot fit, inside
  * the word, and a break in the value is a line of its own; an unwrapped one is
@@ -234,8 +277,11 @@ export function layoutLines(
       continue;
     }
     let line = "";
-    // Split keeps the separators so the spaces can be re-emitted verbatim.
-    for (const chunk of paragraph.split(/(?<=\s)/)) {
+    // Where Excel lets a line break: after a space, after a hyphen, and around
+    // every character outside a Latin word. A run of Latin text is one word
+    // and moves to the next line whole, rather than being cut in half, unless
+    // it is wider than a line by itself.
+    for (const chunk of breakableChunks(paragraph)) {
       if (width(pos, pos + line.length + chunk.length) <= maxWidth) {
         line += chunk;
         continue;
