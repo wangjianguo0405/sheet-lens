@@ -117,7 +117,7 @@
   },
   "tabs": {
     "close": "{{name}} を閉じる",
-    "closeThis": "閉じる",
+    "closeThis": "閉じる(&C)",
     "closeOthers": "他のタブを閉じる",
     "closeRight": "右側のタブを閉じる",
     "closeAll": "すべて閉じる",
@@ -130,7 +130,7 @@
     "openDefault": "既定のアプリ",
     "reveal": "ファイルの場所を開く",
     "list": "開いているファイル",
-    "reload": "再読み込み"
+    "reload": "再読み込み(&R)"
   },
   "palette": {
     "theme": "テーマの色",
