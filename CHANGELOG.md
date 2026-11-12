@@ -12,6 +12,13 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.19] - 2026-11-12
+
+### Fixed
+
+- A sheet that leaves its formulas to Excel now shows them. A generated workbook can store a formula with no value beside it, and those cells came out blank — a numbered list stopped partway down. Formulas that depend on nothing but their own cell, which is how a generated sheet numbers its lines, are now worked out
+- A row the file gives no height for is fitted to its wrapped text, the way Excel fits it when it opens the sheet. Those rows used to stay at the default height, with the text running over the row below. Wrapped text now also breaks where Excel breaks it — after a hyphen and around Japanese characters, with a run of Latin text kept whole — so a long path is no longer cut in the wrong place
+
 ## [1.0.18] - 2026-11-05
 
 ### Fixed
