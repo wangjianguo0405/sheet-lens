@@ -39,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Hint } from "@/components/Hint";
+import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Accelerated";
 import { copyText } from "@/lib/clipboard";
 import { toast } from "sonner";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -304,13 +305,14 @@ export function FileTabs({
                   Excel being open on it is the usual cause of. Below, the file
                   handed to whatever the system opens it with, and where it sits
                   on disk. */}
-              <ContextMenuContent className="min-w-44">
+              <ContextMenuContent className="min-w-44" onKeyDown={pickByAccelerator}>
                 <ContextMenuItem
                   className="text-xs"
+                  data-accelerator={acceleratorOf(t("tabs.reload"))}
                   icon={<RotateCw />}
                   onSelect={() => onReload(tab.path)}
                 >
-                  {t("tabs.reload")}
+                  <Accelerated label={t("tabs.reload")} />
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuSub>
@@ -381,10 +383,11 @@ export function FileTabs({
                     far more often than to shut it. */}
                 <ContextMenuItem
                   className="text-xs"
+                  data-accelerator={acceleratorOf(t("tabs.closeThis"))}
                   icon={<X />}
                   onSelect={() => onClose(tab.path)}
                 >
-                  {t("tabs.closeThis")}
+                  <Accelerated label={t("tabs.closeThis")} />
                 </ContextMenuItem>
                 <ContextMenuItem
                   className="text-xs"

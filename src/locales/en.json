@@ -117,7 +117,7 @@
   },
   "tabs": {
     "close": "Close {{name}}",
-    "closeThis": "Close",
+    "closeThis": "Close (&C)",
     "closeOthers": "Close others",
     "closeRight": "Close to the right",
     "closeAll": "Close all",
@@ -130,7 +130,7 @@
     "openDefault": "Default app",
     "reveal": "Open file location",
     "list": "Open files",
-    "reload": "Reload"
+    "reload": "Reload (&R)"
   },
   "palette": {
     "theme": "Theme colours",

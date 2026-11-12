@@ -5,8 +5,8 @@ import type { KeyboardEvent } from "react";
  * string carries one: `非表示(&H)` draws the `H` underlined, and pressing it
  * picks the item whether or not the pointer is anywhere near.
  *
- * Shared by the two menus that carry them — a row or column heading's, and a
- * sheet tab's — so the two spell their letters the same way.
+ * Shared by every menu that carries them — a row or column heading's, a sheet
+ * tab's and a file tab's — so they all spell their letters the same way.
  */
 export function acceleratorOf(label: string): string {
   const at = label.indexOf("&");
