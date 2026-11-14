@@ -2,6 +2,7 @@
   "app": {
     "name": "SheetLens",
     "resizeSheetList": "Resize the sheet list",
+    "resizeFileTree": "Resize the file tree",
     "resizeSearch": "Resize the search panel",
     "resizeSheetScrollBar": "Resize the sheet's scrollbar",
     "dragToResize": "Drag to resize",
@@ -24,7 +25,22 @@
     "checkUpdates": "Check for updates",
     "updateAvailable": "A newer version is available",
     "fill": "Fill colour",
-    "language": "Language"
+    "language": "Language",
+    "view": "View",
+    "fileTree": "File tree",
+    "showFileTree": "Show the file tree",
+    "hideFileTree": "Hide the file tree",
+    "sheetList": "Sheet list",
+    "sheetTabs": "Sheet tabs"
+  },
+  "tree": {
+    "title": "File tree",
+    "addRoot": "Add a root folder",
+    "removeRoot": "Remove {{name}} from the tree",
+    "refresh": "Refresh",
+    "empty": "No root folders yet — add one with ＋.",
+    "loading": "Loading…",
+    "error": "Could not be read"
   },
   "ribbon": {
     "file": "File",

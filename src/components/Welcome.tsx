@@ -15,18 +15,19 @@ import {
   unpinFile,
 } from "@/lib/recent";
 import { cn } from "@/lib/utils";
+import { FileTree } from "@/components/FileTree";
 import { Hint } from "@/components/Hint";
 
 /**
- * One column's height, and how much of it the fixed run may take.
- *
- * A column is the scroller, not each list under it: one fixed folder beside
- * ten fixed workbooks has to come out the same height, and a heading that
- * scrolls away is no heading. The fixed run sticks at the top of its column,
- * so what was fixed stays in reach while the rest goes by — but only for a
- * share of the column, or a long enough fixed list would leave nothing below.
+ * One column's height: 288px under the heading is the floor and 480px the
+ * ceiling, and a column between the two grows with what it holds and scrolls
+ * once it has more. The floor keeps a column with little to say level with the
+ * two beside it; the ceiling keeps a long tree or list from pushing the
+ * shortcuts off the page, which is what leaving the height wide open did.
+ * The fixed run sticks to the top of the column as it scrolls — but only for
+ * a share of it, or a long enough fixed list would leave nothing below.
  */
-const COLUMN_HEIGHT = "md:h-72";
+const COLUMN_HEIGHT = "md:min-h-72 md:max-h-120";
 const FIXED_HEIGHT = "max-h-40";
 
 /** A group's heading, as every column of the page draws it. */
@@ -397,63 +398,73 @@ export function Welcome({
         </header>
 
         <div className="flex flex-col gap-6 md:flex-row md:gap-0">
-          {/* Where to look. A workbook is often one of a folder's several, and
-              finding the folder is the part that takes the walking. */}
-          <section className="min-w-0 shrink-0 md:w-80 md:border-r md:border-border md:pr-6">
-            <Column
-              fixed={pinnedDirs.map((path) => (
-                <DirRow
-                  key={`fixed:${path}`}
-                  path={path}
-                  fixed
-                  onOpen={onOpenDirectory}
-                  onToggle={togglePinnedDir}
-                  onForget={forgetFolder}
-                />
-              ))}
-              rest={folderHistory.map((path) => (
-                <DirRow
-                  key={`recent:${path}`}
-                  path={path}
-                  fixed={false}
-                  onOpen={onOpenDirectory}
-                  onToggle={togglePinnedDir}
-                  onForget={forgetFolder}
-                />
-              ))}
-              fixedLabel={t("welcome.pinnedDirs")}
-              restLabel={t("welcome.folders")}
-              emptyLabel={t("welcome.noFolders")}
-            />
+          {/* Where to start from. The checkout repeats the same folder names
+              under every branch, so a tree is the one shape that tells them
+              apart — the two columns beside it take over from a folder once
+              the reader is inside one. */}
+          <section className="flex min-w-0 shrink-0 flex-col md:max-h-120 md:min-h-72 md:w-80 md:border-r md:border-border md:pr-1">
+            <FileTree currentPath={null} onOpenFile={onOpenRecent} />
           </section>
 
-          {/* What to open */}
-          <div className="min-w-0 flex-1 md:px-6">
-            <Column
-              fixed={pinnedFiles.map((path) => (
-                <Row
-                  key={path}
-                  path={path}
-                  missing={missing.has(path)}
-                  fixed
-                  onOpen={onOpenRecent}
-                  onToggle={togglePinned}
-                />
-              ))}
-              rest={history.map((path) => (
-                <Row
-                  key={path}
-                  path={path}
-                  missing={missing.has(path)}
-                  fixed={false}
-                  onOpen={onOpenRecent}
-                  onToggle={togglePinned}
-                />
-              ))}
-              fixedLabel={t("welcome.pinned")}
-              restLabel={t("welcome.history")}
-              emptyLabel={t("welcome.noHistory")}
-            />
+          <div className="flex min-w-0 flex-1 flex-col gap-6 md:flex-row md:gap-0 md:pl-1">
+            {/* Where to look. A workbook is often one of a folder's several, and
+                finding the folder is the part that takes the walking. */}
+            <section className="min-w-0 shrink-0 md:w-72 md:border-r md:border-border md:pr-1">
+              <Column
+                fixed={pinnedDirs.map((path) => (
+                  <DirRow
+                    key={`fixed:${path}`}
+                    path={path}
+                    fixed
+                    onOpen={onOpenDirectory}
+                    onToggle={togglePinnedDir}
+                    onForget={forgetFolder}
+                  />
+                ))}
+                rest={folderHistory.map((path) => (
+                  <DirRow
+                    key={`recent:${path}`}
+                    path={path}
+                    fixed={false}
+                    onOpen={onOpenDirectory}
+                    onToggle={togglePinnedDir}
+                    onForget={forgetFolder}
+                  />
+                ))}
+                fixedLabel={t("welcome.pinnedDirs")}
+                restLabel={t("welcome.folders")}
+                emptyLabel={t("welcome.noFolders")}
+              />
+            </section>
+
+            {/* What to open */}
+            <div className="min-w-0 flex-1 md:pl-1">
+              <Column
+                fixed={pinnedFiles.map((path) => (
+                  <Row
+                    key={path}
+                    path={path}
+                    missing={missing.has(path)}
+                    fixed
+                    onOpen={onOpenRecent}
+                    onToggle={togglePinned}
+                  />
+                ))}
+                rest={history.map((path) => (
+                  <Row
+                    key={path}
+                    path={path}
+                    missing={missing.has(path)}
+                    fixed={false}
+                    onOpen={onOpenRecent}
+                    onToggle={togglePinned}
+                  />
+                ))}
+                fixedLabel={t("welcome.pinned")}
+                restLabel={t("welcome.history")}
+                emptyLabel={t("welcome.noHistory")}
+              />
+            </div>
           </div>
         </div>
 

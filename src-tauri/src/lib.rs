@@ -232,6 +232,61 @@ fn close_workbook(path: String, store: State<'_, Shared>) {
     store.0.lock().unwrap().remove(&path);
 }
 
+/// One level of a folder, for the file tree.
+///
+/// A level at a time rather than the whole tree: a root can be a checkout
+/// hundreds of folders deep, and the tree only asks for a folder when the
+/// reader opens it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirEntry {
+    name: String,
+    path: String,
+    dir: bool,
+}
+
+/// The extensions the reader can open. Mirrors `EXCEL_EXTENSIONS` on the
+/// frontend: the tree lists folders beside these and nothing else, so a folder
+/// full of `.svn` bookkeeping or lock files reads as what it is to this app.
+const WORKBOOK_EXTENSIONS: [&str; 5] = ["xlsx", "xlsm", "xls", "xlsb", "ods"];
+
+#[tauri::command(async)]
+fn list_directory(path: String) -> Result<Vec<DirEntry>, String> {
+    let entries = std::fs::read_dir(&path).map_err(|error| format!("{path} — {error}"))?;
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // `metadata` rather than `file_type`: a link to a folder should open
+        // as one, and a link is not a folder to `file_type`.
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let dir = meta.is_dir();
+        if !dir {
+            let workbook = std::path::Path::new(&name)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| WORKBOOK_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()));
+            if !workbook {
+                continue;
+            }
+        }
+        out.push(DirEntry {
+            name,
+            path: entry.path().to_string_lossy().into_owned(),
+            dir,
+        });
+    }
+    // Explorer's own order: folders first, then the workbooks, each by name.
+    // A case-insensitive compare, so `Alpha` and `alpha` sit together.
+    out.sort_by(|a, b| {
+        b.dir
+            .cmp(&a.dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(out)
+}
+
 /// Reads embedded images out of a workbook, as base64, keyed by part.
 ///
 /// Asked for in one call per sheet rather than one per picture: a design
@@ -299,6 +354,7 @@ pub fn run() {
             edge_cell,
             read_media,
             close_workbook,
+            list_directory,
             fonts::list_fonts,
             update::update_status,
             update::update_check,
@@ -307,4 +363,52 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch folder for one test, named so parallel runs cannot collide.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("sheetlens-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Folders first, then only the workbooks, each run by name — the order
+    /// Explorer itself lists a folder in.
+    #[test]
+    fn lists_folders_before_workbooks_and_only_workbooks() {
+        let dir = scratch("list-directory");
+        std::fs::create_dir(dir.join("zeta")).unwrap();
+        std::fs::create_dir(dir.join("Alpha")).unwrap();
+        std::fs::write(dir.join("b.XLSX"), b"").unwrap();
+        std::fs::write(dir.join("a.ods"), b"").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"").unwrap();
+        std::fs::write(dir.join("no-extension"), b"").unwrap();
+
+        let entries = list_directory(dir.to_string_lossy().into_owned()).unwrap();
+        let listed: Vec<(String, bool)> = entries.iter().map(|e| (e.name.clone(), e.dir)).collect();
+        assert_eq!(
+            listed,
+            vec![
+                ("Alpha".to_owned(), true),
+                ("zeta".to_owned(), true),
+                ("a.ods".to_owned(), false),
+                ("b.XLSX".to_owned(), false),
+            ]
+        );
+        // The full path comes back, so the tree can ask for the next level.
+        assert!(entries[0].path.ends_with("Alpha"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_is_an_error() {
+        let dir = std::env::temp_dir().join("sheetlens-no-such-folder-for-sure");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(list_directory(dir.to_string_lossy().into_owned()).is_err());
+    }
 }

@@ -2,6 +2,7 @@
   "app": {
     "name": "SheetLens",
     "resizeSheetList": "调整工作表列表宽度",
+    "resizeFileTree": "调整文件树宽度",
     "resizeSearch": "调整搜索面板宽度",
     "resizeSheetScrollBar": "调整工作表滚动条宽度",
     "dragToResize": "拖动以调整大小",
@@ -24,7 +25,22 @@
     "checkUpdates": "检查更新",
     "updateAvailable": "有新版本可用",
     "fill": "填充颜色",
-    "language": "语言"
+    "language": "语言",
+    "view": "视图",
+    "fileTree": "文件树",
+    "showFileTree": "显示文件树",
+    "hideFileTree": "隐藏文件树",
+    "sheetList": "工作表列表",
+    "sheetTabs": "工作表标签"
+  },
+  "tree": {
+    "title": "文件树",
+    "addRoot": "添加根目录",
+    "removeRoot": "从树中移除 {{name}}",
+    "refresh": "刷新",
+    "empty": "还没有根目录，点「＋」添加。",
+    "loading": "正在读取…",
+    "error": "无法读取"
   },
   "ribbon": {
     "file": "文件",

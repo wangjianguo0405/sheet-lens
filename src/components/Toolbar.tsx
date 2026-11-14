@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/Hint";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -50,6 +51,13 @@ interface ToolbarProps {
   onForgetRecent: (path: string) => void;
   onClearRecents: () => void;
   onCloseWorkbook: () => void;
+  /** Which of the three panels the window shows; all read by the View menu. */
+  fileTreeOpen: boolean;
+  onToggleFileTree: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  sheetTabsOpen: boolean;
+  onToggleSheetTabs: () => void;
   /** False for a build that cannot replace itself, which hides the entry. */
   canUpdate: boolean;
   updateAvailable: boolean;
@@ -65,6 +73,12 @@ export function Toolbar({
   onForgetRecent,
   onClearRecents,
   onCloseWorkbook,
+  fileTreeOpen,
+  onToggleFileTree,
+  sidebarOpen,
+  onToggleSidebar,
+  sheetTabsOpen,
+  onToggleSheetTabs,
   canUpdate,
   updateAvailable,
   onShowUpdate,
@@ -159,6 +173,45 @@ export function Toolbar({
             {t("toolbar.close")}
             <DropdownMenuShortcut>Ctrl+W</DropdownMenuShortcut>
           </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* The View menu, beside the File menu as Excel's own 表示 sits beside
+          ファイル: each entry is a panel of the window, ticked while it shows.
+          A workbook has to be open for any of them to be anywhere — the start
+          page draws its own layout — so the entries are greyed until one is. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs">
+            {t("toolbar.view")}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-44">
+          <DropdownMenuLabel className="text-[10px]">{t("toolbar.view")}</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem
+            className="text-xs"
+            checked={fileTreeOpen}
+            disabled={!hasWorkbook}
+            onCheckedChange={onToggleFileTree}
+          >
+            {t("toolbar.fileTree")}
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            className="text-xs"
+            checked={sidebarOpen}
+            disabled={!hasWorkbook}
+            onCheckedChange={onToggleSidebar}
+          >
+            {t("toolbar.sheetList")}
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            className="text-xs"
+            checked={sheetTabsOpen}
+            disabled={!hasWorkbook}
+            onCheckedChange={onToggleSheetTabs}
+          >
+            {t("toolbar.sheetTabs")}
+          </DropdownMenuCheckboxItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
