@@ -40,7 +40,11 @@
     "refresh": "刷新",
     "empty": "还没有根目录，点「＋」添加。",
     "loading": "正在读取…",
-    "error": "无法读取"
+    "error": "无法读取",
+    "search": "搜索文件名",
+    "closeSearch": "关闭搜索",
+    "searching": "正在搜索…",
+    "noMatch": "没有匹配的文件"
   },
   "ribbon": {
     "file": "文件",

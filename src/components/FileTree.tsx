@@ -7,19 +7,24 @@ import {
   FileSpreadsheet,
   Folder,
   FolderOpen,
+  Loader2,
   Plus,
   RotateCw,
+  Search,
   X,
 } from "lucide-react";
 
 import { Hint } from "@/components/Hint";
+import { Input } from "@/components/ui/input";
 import {
   listDirectory,
   readTreeOpen,
   readTreeRoots,
+  searchTree,
   storeTreeOpen,
   storeTreeRoots,
   type DirEntry,
+  type FoundFile,
 } from "@/lib/fileTree";
 import { fileName, folderKey, folderName } from "@/lib/recent";
 import { cn } from "@/lib/utils";
@@ -31,6 +36,10 @@ const HEAD = "text-[10px] font-medium tracking-wide text-muted-foreground upperc
 const ACTION =
   "shrink-0 rounded-sm p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-60 hover:bg-accent hover:text-foreground hover:opacity-100";
 
+/** The header's buttons: in sight without being pointed at. */
+const HEAD_ACTION =
+  "shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
+
 /** What a workbook's row is coloured — the Excel green the app links in. */
 const LINK = "text-[#107C41]";
 
@@ -39,6 +48,39 @@ type Node =
   | { state: "loading" }
   | { state: "error"; message: string }
   | { state: "ready"; entries: DirEntry[] };
+
+/** One folder a search passed through, and the workbooks that matched in it. */
+interface SearchNode {
+  folders: Map<string, SearchNode>;
+  files: FoundFile[];
+}
+
+/**
+ * Puts the flat results back into the shape they were found in — each root, the
+ * folders under it that lead to a match, and the workbooks inside — so the
+ * results read as the tree they came from rather than as one long list.
+ */
+function pruneToTree(results: FoundFile[]): Map<string, SearchNode> {
+  const byRoot = new Map<string, SearchNode>();
+  const branch = (): SearchNode => ({ folders: new Map(), files: [] });
+  for (const file of results) {
+    let node: SearchNode | undefined = byRoot.get(file.root);
+    if (!node) {
+      node = branch();
+      byRoot.set(file.root, node);
+    }
+    for (const part of file.folder.split(/[\\/]/).filter(Boolean)) {
+      let next: SearchNode | undefined = node.folders.get(part);
+      if (!next) {
+        next = branch();
+        node.folders.set(part, next);
+      }
+      node = next;
+    }
+    node.files.push(file);
+  }
+  return byRoot;
+}
 
 interface FileTreeProps {
   /** The workbook on screen, marked when the tree reaches it. */
@@ -62,6 +104,10 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const [nodes, setNodes] = useState<Map<string, Node>>(new Map());
   /** The reads on their way, so a second expand of the same row asks once. */
   const [inflight] = useState(() => new Set<string>());
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<FoundFile[]>([]);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(
     (path: string) => {
@@ -83,6 +129,39 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   useEffect(() => {
     for (const path of readTreeOpen()) load(path);
   }, [load]);
+
+  // The tree lists only what has been opened, so a workbook the reader has not
+  // walked down to is found by sweeping the roots instead — a level at a time
+  // would never reach it. Typing waits 200 ms; a slower answer than that is
+  // thrown away rather than laid over a newer one.
+  useEffect(() => {
+    const text = query.trim();
+    if (!text) {
+      setResults([]);
+      setBusy(false);
+      return;
+    }
+    let cancelled = false;
+    setBusy(true);
+
+    const timer = window.setTimeout(() => {
+      searchTree(roots, text)
+        .then((found) => {
+          if (!cancelled) setResults(found);
+        })
+        .catch(() => {
+          if (!cancelled) setResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setBusy(false);
+        });
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [roots, query]);
 
   const toggle = (path: string) => {
     const next = new Set(open);
@@ -218,31 +297,158 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     );
   };
 
+  /**
+   * A workbook the search matched, hung at the depth its folder sits at.
+   */
+  const foundRow = (found: FoundFile, depth: number) => {
+    const current = currentPath !== null && folderKey(currentPath) === folderKey(found.path);
+    return (
+      <li key={found.path}>
+        <button
+          type="button"
+          onClick={() => onOpenFile(found.path)}
+          title={found.path}
+          className={cn(
+            "flex w-full min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
+            LINK,
+            current && "bg-accent/60 font-medium",
+          )}
+          style={{ paddingLeft: 16 + depth * 12 }}
+        >
+          <FileSpreadsheet className="size-3.5 shrink-0" />
+          <span className="whitespace-nowrap">{found.name}</span>
+        </button>
+      </li>
+    );
+  };
+
+  /**
+   * A folder the search passed through, drawn as the tree draws one: the
+   * matches read where they live, not as one flat list that hides which
+   * document belongs to which project.
+   */
+  const searchFolderRow = (name: string, node: SearchNode, depth: number, key: string) => (
+    <li key={key}>
+      <div className="flex items-center rounded-sm" style={{ paddingLeft: 4 + depth * 12 }}>
+        <span className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs">
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="whitespace-nowrap">{name}</span>
+        </span>
+      </div>
+      <ul>
+        {[...node.folders].map(([childName, child]) =>
+          searchFolderRow(childName, child, depth + 1, `${key}\\${childName}`),
+        )}
+        {node.files.map((file) => foundRow(file, depth + 1))}
+      </ul>
+    </li>
+  );
+
+  /** A root the search found something under, with its own name and where it is. */
+  const searchRootRow = (root: string, node: SearchNode) => (
+    <li key={root}>
+      <div className="flex items-center rounded-sm" style={{ paddingLeft: 4 }}>
+        <span className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs">
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="whitespace-nowrap">{fileName(root)}</span>
+          <span className="min-w-0 flex-1 whitespace-nowrap text-[10px] text-muted-foreground">
+            {folderName(root)}
+          </span>
+        </span>
+      </div>
+      <ul>
+        {[...node.folders].map(([name, child]) =>
+          searchFolderRow(name, child, 1, `${root}\\${name}`),
+        )}
+        {node.files.map((file) => foundRow(file, 1))}
+      </ul>
+    </li>
+  );
+
+  /** The pruned tree the results are drawn from. */
+  const foundByRoot = pruneToTree(results);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="group flex shrink-0 items-center gap-1 px-2 py-1">
-        <span className={cn(HEAD, "min-w-0 flex-1 truncate")}>{t("tree.title")}</span>
+      <header className="flex shrink-0 items-center gap-1 px-2 py-1">
+        {searching ? (
+          <div className="relative min-w-0 flex-1">
+            {busy ? (
+              <Loader2 className="pointer-events-none absolute top-1/2 left-1.5 size-3 -translate-y-1/2 animate-spin text-muted-foreground" />
+            ) : (
+              <Search className="pointer-events-none absolute top-1/2 left-1.5 size-3 -translate-y-1/2 text-muted-foreground" />
+            )}
+            <Input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              // Escape empties the box first and only then leaves it, so a
+              // mistyped word costs one press rather than two.
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                if (query !== "") setQuery("");
+                else setSearching(false);
+              }}
+              placeholder={t("tree.search")}
+              aria-label={t("tree.search")}
+              className="h-6 pl-5 text-xs select-text"
+            />
+          </div>
+        ) : (
+          <span className={cn(HEAD, "min-w-0 flex-1 truncate")}>{t("tree.title")}</span>
+        )}
         <div className="flex items-center gap-0.5">
-          <Hint label={t("tree.refresh")}>
-            <button
-              type="button"
-              aria-label={t("tree.refresh")}
-              onClick={refresh}
-              className={ACTION}
-            >
-              <RotateCw className="size-3" />
-            </button>
-          </Hint>
-          <Hint label={t("tree.addRoot")}>
-            <button
-              type="button"
-              aria-label={t("tree.addRoot")}
-              onClick={() => void addRoot()}
-              className={ACTION}
-            >
-              <Plus className="size-3" />
-            </button>
-          </Hint>
+          {searching ? (
+            <Hint label={t("tree.closeSearch")}>
+              <button
+                type="button"
+                aria-label={t("tree.closeSearch")}
+                onClick={() => {
+                  setQuery("");
+                  setSearching(false);
+                }}
+                className={HEAD_ACTION}
+              >
+                <X className="size-3" />
+              </button>
+            </Hint>
+          ) : (
+            <>
+              <Hint label={t("tree.search")}>
+                <button
+                  type="button"
+                  aria-label={t("tree.search")}
+                  onClick={() => setSearching(true)}
+                  disabled={roots.length === 0}
+                  className={cn(HEAD_ACTION, "disabled:pointer-events-none disabled:opacity-40")}
+                >
+                  <Search className="size-3" />
+                </button>
+              </Hint>
+              <Hint label={t("tree.refresh")}>
+                <button
+                  type="button"
+                  aria-label={t("tree.refresh")}
+                  onClick={refresh}
+                  className={HEAD_ACTION}
+                >
+                  <RotateCw className="size-3" />
+                </button>
+              </Hint>
+              <Hint label={t("tree.addRoot")}>
+                <button
+                  type="button"
+                  aria-label={t("tree.addRoot")}
+                  onClick={() => void addRoot()}
+                  className={HEAD_ACTION}
+                >
+                  <Plus className="size-3" />
+                </button>
+              </Hint>
+            </>
+          )}
         </div>
       </header>
       {/* The list is as wide as its widest row: a deep folder's indent and a
@@ -250,7 +456,20 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
           sideways to reach them rather than cutting the row off where the
           panel does. */}
       <div className="min-h-0 flex-1 overflow-auto pb-1">
-        {roots.length === 0 ? (
+        {query.trim() !== "" ? (
+          results.length === 0 ? (
+            <p className="px-2 py-1 text-[11px] text-muted-foreground">
+              {busy ? t("tree.searching") : t("tree.noMatch")}
+            </p>
+          ) : (
+            <ul className="w-max min-w-full">
+              {roots.map((root) => {
+                const node = foundByRoot.get(root);
+                return node ? searchRootRow(root, node) : null;
+              })}
+            </ul>
+          )
+        ) : roots.length === 0 ? (
           <p className="px-2 py-1 text-[11px] text-muted-foreground">{t("tree.empty")}</p>
         ) : (
           <ul className="w-max min-w-full">{roots.map((root) => folderRow(root, 0, true))}</ul>

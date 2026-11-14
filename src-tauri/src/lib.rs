@@ -287,6 +287,119 @@ fn list_directory(path: String) -> Result<Vec<DirEntry>, String> {
     Ok(out)
 }
 
+/// How much of a root one file-name search walks before it stops: enough to
+/// cover a checkout, near enough nothing that a root pointed at by mistake
+/// cannot hold the reader waiting.
+const MAX_SEARCH_DIRS: usize = 5_000;
+const MAX_SEARCH_RESULTS: usize = 200;
+const MAX_SEARCH_DEPTH: usize = 12;
+
+/// One workbook a folder search found.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FoundFile {
+    name: String,
+    path: String,
+    /// The root the search reached it under.
+    root: String,
+    /// The folder it sits in, relative to that root.
+    folder: String,
+}
+
+/// Finds workbooks by name under the given roots.
+///
+/// The tree lists a folder only once it is opened, so it cannot help find a
+/// workbook three levels down. This walks instead, past the dot-folders a
+/// working copy keeps its bookkeeping in, and gives up at a fixed number of
+/// folders and results rather than walking however large the root turns out
+/// to be.
+#[tauri::command(async)]
+fn search_tree(roots: Vec<String>, query: String) -> Vec<FoundFile> {
+    let needle = query.trim().to_lowercase();
+    let mut out = Vec::new();
+    if needle.is_empty() {
+        return out;
+    }
+    let mut budget = MAX_SEARCH_DIRS;
+    for root in &roots {
+        walk_workbooks(
+            std::path::Path::new(root),
+            std::path::Path::new(root),
+            &needle,
+            0,
+            &mut budget,
+            &mut out,
+        );
+        if budget == 0 || out.len() >= MAX_SEARCH_RESULTS {
+            break;
+        }
+    }
+    // Grouped by the folder they sit in, which is what a result row shows
+    // after the name, then by name — the order the tree itself would list them.
+    out.sort_by(|a, b| {
+        a.folder
+            .to_lowercase()
+            .cmp(&b.folder.to_lowercase())
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    out
+}
+
+fn walk_workbooks(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    needle: &str,
+    depth: usize,
+    budget: &mut usize,
+    out: &mut Vec<FoundFile>,
+) {
+    if *budget == 0 || depth > MAX_SEARCH_DEPTH || out.len() >= MAX_SEARCH_RESULTS {
+        return;
+    }
+    *budget -= 1;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        // A folder this account cannot read is passed over, not reported: the
+        // search is a sweep of the roots, and one refusal is not its answer.
+        return;
+    };
+    for entry in entries.flatten() {
+        if *budget == 0 || out.len() >= MAX_SEARCH_RESULTS {
+            return;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let path = entry.path();
+        if meta.is_dir() {
+            walk_workbooks(root, &path, needle, depth + 1, budget, out);
+            continue;
+        }
+        let workbook = std::path::Path::new(&name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| WORKBOOK_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()));
+        if !workbook || !name.to_lowercase().contains(needle) {
+            continue;
+        }
+        let folder = path
+            .strip_prefix(root)
+            .ok()
+            .and_then(|rel| rel.parent())
+            .map(|rel| rel.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        out.push(FoundFile {
+            name,
+            path: path.to_string_lossy().into_owned(),
+            root: root.to_string_lossy().into_owned(),
+            folder,
+        });
+    }
+}
+
 /// Reads embedded images out of a workbook, as base64, keyed by part.
 ///
 /// Asked for in one call per sheet rather than one per picture: a design
@@ -355,6 +468,7 @@ pub fn run() {
             read_media,
             close_workbook,
             list_directory,
+            search_tree,
             fonts::list_fonts,
             update::update_status,
             update::update_check,
@@ -410,5 +524,38 @@ mod tests {
         let dir = std::env::temp_dir().join("sheetlens-no-such-folder-for-sure");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(list_directory(dir.to_string_lossy().into_owned()).is_err());
+    }
+
+    /// A search reaches past the levels the tree has not opened, matches names
+    /// without case, and leaves the bookkeeping dot-folders alone.
+    #[test]
+    fn search_tree_walks_the_roots_for_workbooks() {
+        let dir = scratch("search-tree");
+        std::fs::create_dir_all(dir.join("project").join("design")).unwrap();
+        std::fs::create_dir(dir.join(".svn")).unwrap();
+        std::fs::write(dir.join("project").join("design").join("Cost Report.xlsx"), b"").unwrap();
+        std::fs::write(dir.join("project").join("cost summary.ods"), b"").unwrap();
+        std::fs::write(dir.join("project").join("notes.txt"), b"").unwrap();
+        std::fs::write(dir.join(".svn").join("cost base.xlsx"), b"").unwrap();
+
+        let roots = vec![dir.to_string_lossy().into_owned()];
+        let found = search_tree(roots.clone(), "COST".to_owned());
+        let listed: Vec<(&str, &str)> = found.iter().map(|f| (f.name.as_str(), f.folder.as_str())).collect();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0], ("cost summary.ods", "project"));
+        assert_eq!(listed[1].0, "Cost Report.xlsx");
+        assert!(listed[1].1.ends_with("design"), "found in {:?}", listed[1].1);
+        // Each result names its root, so the tree can hang it where it lives.
+        assert!(found.iter().all(|f| f.root == roots[0]));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Nothing typed is no walk at all.
+    #[test]
+    fn search_tree_with_no_query_finds_nothing() {
+        let dir = scratch("search-empty");
+        std::fs::write(dir.join("a.xlsx"), b"").unwrap();
+        assert!(search_tree(vec![dir.to_string_lossy().into_owned()], "  ".to_owned()).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
