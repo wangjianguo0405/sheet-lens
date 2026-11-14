@@ -40,7 +40,11 @@
     "refresh": "Refresh",
     "empty": "No root folders yet — add one with ＋.",
     "loading": "Loading…",
-    "error": "Could not be read"
+    "error": "Could not be read",
+    "search": "Search file names",
+    "closeSearch": "Close the search",
+    "searching": "Searching…",
+    "noMatch": "No matching files"
   },
   "ribbon": {
     "file": "File",

@@ -20,6 +20,25 @@ export function listDirectory(path: string): Promise<DirEntry[]> {
   return invoke<DirEntry[]>("list_directory", { path });
 }
 
+/** One workbook a folder search found. */
+export interface FoundFile {
+  name: string;
+  path: string;
+  /** The root the search reached it under. */
+  root: string;
+  /** The folder it sits in, relative to that root. */
+  folder: string;
+}
+
+/**
+ * Finds workbooks by name under the given roots, walking every folder under
+ * them — the tree itself lists a level only when it is opened, so it cannot
+ * find a workbook the reader has not already walked down to.
+ */
+export function searchTree(roots: string[], query: string): Promise<FoundFile[]> {
+  return invoke<FoundFile[]>("search_tree", { roots, query });
+}
+
 const ROOTS_KEY = "sheetlens.treeRoots";
 const OPEN_KEY = "sheetlens.treeOpen";
 const SHOWN_KEY = "sheetlens.treeShown";
@@ -63,12 +82,16 @@ export function storeTreeOpen(paths: string[]): string[] {
   return writeList(OPEN_KEY, paths);
 }
 
-/** Whether the tree's own sidebar shows beside the grid. */
+/**
+ * Whether the tree's own sidebar shows beside the grid. It is there unless the
+ * reader has put it away: opening a workbook should not take away the list it
+ * was opened from.
+ */
 export function readTreeShown(): boolean {
   try {
-    return localStorage.getItem(SHOWN_KEY) === "1";
+    return localStorage.getItem(SHOWN_KEY) !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
 
