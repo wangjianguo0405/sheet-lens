@@ -2256,27 +2256,13 @@ function paintCellText(
     padLeft += ICON_INSET;
   }
 
-  // A left-aligned value with no wrap runs on into the empty cells to its
-  // right, stopping at the first that holds something.
-  //
-  // Only two things stop it: a merged region's cells, which are not cells at
-  // all, and a neighbour that actually holds a value. A run of Center-Across
-  // cells does NOT stop it — those are ordinary empty cells that merely share
-  // an alignment, and Excel keeps spilling through them. Treating the run as
-  // the barrier the DOM renderer never made it cut the value off at its own
-  // edge on every label followed by an empty centred field.
-  //
-  // The sheet's own last column is not a barrier either. Excel spills past the
-  // cells the file mentions into ones it has never heard of, which is how a
-  // label sitting in the rightmost column of a narrow sheet — a rules page
-  // three columns wide — is read at all; stopping at the data cut every such
-  // label down to the two characters its own column holds. What stops it in
-  // the end is the value running out, or the scroller's own edge — which for
-  // such a label is off screen by then.
+  // The room the value draws in, which for an unwrapped cell is not just its
+  // own: see `valueBox` for where the spill stops and which cells it crosses.
+  const spill = valueBox(view, sheetRow, col, w, padLeft, padRight);
   const box = {
-    x,
+    x: x - spill.left,
     y,
-    w: valueWidth(view, sheetRow, col, w, padLeft, padRight),
+    w: spill.w,
     h,
   };
 
@@ -2296,46 +2282,75 @@ function paintCellText(
 }
 
 /**
- * The width a value is drawn in: its own cell's, or — when it is left-aligned,
- * unwrapped and wider than that — as much of the room beside it as it needs,
- * never past the first thing that stops a spill.
+ * The box an unwrapped value draws in: its own cell, plus the empty cells it
+ * is allowed to run on into. Excel gives the value the room on the side its
+ * alignment leans — a left-aligned label runs right, a right-aligned one runs
+ * left — and cuts it at the first cell that holds something.
+ *
+ * `left` is how far the box starts before the cell's own left edge; a
+ * right-aligned value's right edge, and so the end of its text, stays where
+ * the cell puts it.
  *
  * The field a double-click opens over a cell is this same box, which is why it
  * is here rather than inline: a column two pixels wide holds nothing readable,
  * and its value is read only because the field takes the room the value is
- * drawn in. A field the width of the column alone showed nothing at all.
+ * drawn in. A field the width of the column alone showed nothing at all. The
+ * insets are the caller's, since a filter header's are not a cell's.
  *
- * The insets are the caller's, since a filter header's are not a cell's.
+ * Only two things stop the spill: a merged region's cells, which are not
+ * cells at all, and a neighbour that actually holds a value. A run of
+ * Center-Across cells does NOT stop it — those are ordinary empty cells that
+ * merely share an alignment, and Excel keeps spilling through them. The
+ * sheet's own last column is not a barrier either: Excel spills past the
+ * cells the file mentions into ones it has never heard of, which is how a
+ * label in the last column of a narrow sheet is read at all. What stops it
+ * in the end is the value running out, or the scroller's own edge.
  */
-export function valueWidth(
+export function valueBox(
   view: GridView,
   sheetRow: number,
   col: number,
   w: number,
   padLeft: number,
   padRight: number,
-): number {
+): { left: number; w: number } {
   const cell = view.cellAt(sheetRow, col);
   const text = cell?.text ?? "";
   const style = view.styleAt(sheetRow, col);
   // A cell that shrinks to fit never reaches past its own edge.
-  if (text === "" || style?.wrap || style?.shrink) return w;
-  if (horizontalOf(style, cell?.kind) !== "left") return w;
+  if (text === "" || style?.wrap || style?.shrink) return { left: 0, w };
+  const horizontal = horizontalOf(style, cell?.kind);
+  if (horizontal !== "left" && horizontal !== "right") return { left: 0, w };
+  // A number or a date that does not fit is drawn as `###` by Excel — never
+  // spilled, whichever side it is aligned to. Spilling one would put its
+  // digits out where Excel shows the hash marks.
+  if (horizontal === "right" && (cell?.kind === "number" || cell?.kind === "date")) {
+    return { left: 0, w };
+  }
   // Only the reach of what is drawn: a break in an unwrapped value is not a
   // space, so it does not widen the room the value spills into.
   const needed = textWidth(cellFont(view, style), flatText(text)) + padLeft + padRight;
-  if (needed <= w) return w;
+  if (needed <= w) return { left: 0, w };
 
   // Only as far as the value reaches: Excel runs the *drawing* box on to the
   // end of the room, and for a field this same number would be a white bar
   // across a row that is otherwise empty.
   let reached = w;
-  for (let next = col + 1; reached < needed && next < view.colEnd; next += 1) {
+  if (horizontal === "left") {
+    for (let next = col + 1; reached < needed && next < view.colEnd; next += 1) {
+      if (inRegion(view, view.mergeView.covered, sheetRow, next)) break;
+      if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
+      reached += spanAt(view.cols.offsets, next);
+    }
+    return { left: 0, w: Math.min(reached, needed) };
+  }
+  for (let next = col - 1; reached < needed && next >= 0; next -= 1) {
     if (inRegion(view, view.mergeView.covered, sheetRow, next)) break;
     if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
     reached += spanAt(view.cols.offsets, next);
   }
-  return Math.min(reached, needed);
+  const width = Math.min(reached, needed);
+  return { left: width - w, w: width };
 }
 
 /** The opaque strips behind the row numbers and column letters. */

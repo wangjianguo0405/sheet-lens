@@ -785,6 +785,15 @@ impl<'a> Parser<'a> {
     }
 
     fn start(&mut self, element: &BytesStart, name: &[u8]) {
+        // A paragraph mark is not drawn: `endParaRPr` styles the invisible
+        // character that ends a paragraph, and everything it carries —
+        // a `solidFill` most of all — says nothing about the shape or its
+        // text. Read as a fill it painted the whole box black under black
+        // text, which is how a shape with no fill at all came out as a
+        // black rectangle (2026-11-13).
+        if self.stack.iter().any(|name| name == b"endParaRPr") {
+            return;
+        }
         let parent = self.parent().to_vec();
         match name {
             b"twoCellAnchor" | b"oneCellAnchor" | b"absoluteAnchor" => {
@@ -1904,6 +1913,26 @@ mod tests {
         let run = &text.paras[0][0];
         assert!(run.bold, "inherited from lstStyle");
         assert_eq!(run.family.as_deref(), Some("メイリオ"));
+    }
+
+    /// `endParaRPr` styles the invisible character that ends a paragraph. Its
+    /// `solidFill` is not the shape's fill — reading it as one painted a
+    /// transparent rectangle black, so its black text vanished into it
+    /// (2026-11-13) — and its colour is not the text's.
+    #[test]
+    fn a_paragraph_mark_is_not_a_fill() {
+        let xml = r#"<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr wrap="square"/><a:p><a:pPr algn="r"/><a:r><a:rPr lang="ja-JP" sz="1000"><a:solidFill><a:sysClr val="windowText" lastClr="000000"/></a:solidFill></a:rPr><a:t>a</a:t></a:r></a:p><a:p><a:pPr algn="r"/><a:r><a:rPr lang="ja-JP" sz="1000"><a:solidFill><a:sysClr val="windowText" lastClr="000000"/></a:solidFill></a:rPr><a:t>b</a:t></a:r><a:endParaRPr lang="en-US" sz="1800"><a:solidFill><a:sysClr val="windowText" lastClr="FF0000"/></a:solidFill></a:endParaRPr></a:p></xdr:txBody></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let shapes = parse(xml, &grid(), &[], &[], &HashMap::new());
+        assert!(shapes[0].fill.is_none(), "a paragraph mark is not a fill");
+        let text = shapes[0].text.as_ref().expect("text");
+        assert_eq!(text.size_pt, 10.0);
+        assert_eq!(text.color, "#000000", "the run's colour, not the mark's");
+        let lines: Vec<String> = text
+            .paras
+            .iter()
+            .map(|para| para.iter().map(|run| run.text.as_str()).collect())
+            .collect();
+        assert_eq!(lines, vec!["a".to_owned(), "b".to_owned()]);
     }
 
     /// `<a:grpFill/>` draws in the group's own fill, which in the design
