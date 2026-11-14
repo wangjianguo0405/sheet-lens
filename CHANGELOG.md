@@ -12,6 +12,17 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.21] - 2026-11-14
+
+### Added
+
+- A folder tree of your own: add the folders your workbooks live in, open them a level at a time, and open any workbook in them with a click. It sits in the start page's left column and, with a workbook open, in a column of its own beside the grid — switched on and off from the new View menu or the ribbon's View group
+
+### Fixed
+
+- A shape the file draws without a fill came out as a black rectangle with its text lost inside it: the colour that ends a paragraph was being read as the shape's own fill
+- A right-aligned value with no wrap runs on into the empty cells to its left, the way Excel spills it, instead of being cut off at the column's edge. Numbers and dates stay put — Excel draws them as ### when they do not fit
+
 ## [1.0.20] - 2026-11-12
 
 ### Improved
