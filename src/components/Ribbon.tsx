@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Columns3,
   Crosshair,
+  FolderTree,
   Italic,
   ListFilter,
   ListTree,
@@ -64,6 +65,9 @@ const FONT_FAMILIES = [
 interface RibbonProps {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  /** Whether the reader's folder tree sits beside the sheet list, and its switch. */
+  fileTreeOpen: boolean;
+  onToggleFileTree: () => void;
   sheetTabsOpen: boolean;
   onToggleSheetTabs: () => void;
   /** Shades the selection, or lifts the shading off it when `fill` is null. */
@@ -181,6 +185,8 @@ function SizeBox({ sizePx, onPick }: { sizePx: number; onPick: (sizePx: number) 
 export function Ribbon({
   sidebarOpen,
   onToggleSidebar,
+  fileTreeOpen,
+  onToggleFileTree,
   sheetTabsOpen,
   onToggleSheetTabs,
   onMark,
@@ -232,6 +238,13 @@ export function Ribbon({
       className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-border bg-muted/20 px-2 py-1"
     >
       <Group label={t("ribbon.view")}>
+        <Toggle
+          pressed={fileTreeOpen}
+          onClick={onToggleFileTree}
+          title={fileTreeOpen ? t("toolbar.hideFileTree") : t("toolbar.showFileTree")}
+        >
+          <FolderTree className="size-3.5" />
+        </Toggle>
         <Toggle
           pressed={sidebarOpen}
           onClick={onToggleSidebar}

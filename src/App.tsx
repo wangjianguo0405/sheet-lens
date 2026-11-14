@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { CanvasGrid, type SheetViews } from "@/components/CanvasGrid";
 import { FileTabs } from "@/components/FileTabs";
+import { FileTree } from "@/components/FileTree";
 import { Hint } from "@/components/Hint";
 import { FormulaBar } from "@/components/FormulaBar";
 import { GoToDialog } from "@/components/GoToDialog";
@@ -38,6 +39,7 @@ import { initialFontColor, storeFontColor } from "@/lib/fontColor";
 import { initialMarkColor, markSelection, storeMarkColor } from "@/lib/marks";
 import type { Target } from "@/lib/column";
 import { initialSheetPanels, storeSheetPanels, type SheetPanels } from "@/lib/sheetPanels";
+import { readTreeShown, storeTreeShown } from "@/lib/fileTree";
 import {
   folderKey,
   folderName,
@@ -176,6 +178,10 @@ const DEFAULT_SHEET_LIST_W = 240;
 const MIN_SHEET_LIST_W = 160;
 const MAX_SHEET_LIST_W = 480;
 
+const DEFAULT_TREE_W = 240;
+const MIN_TREE_W = 160;
+const MAX_TREE_W = 420;
+
 const DEFAULT_SEARCH_W = 288;
 const MIN_SEARCH_W = 200;
 const MAX_SEARCH_W = 640;
@@ -191,12 +197,13 @@ const MAX_SEARCH_W = 640;
 const MIN_SHEET_BAR_W = 120;
 
 /**
- * The three things a drag can size: the sheet list, the search panel, and the
- * sheet's scrollbar at the end of the tab row.
+ * The things a drag can size: the file tree, the sheet list, the search panel,
+ * and the sheet's scrollbar at the end of the tab row.
  */
-type DraggablePanel = "sheetList" | "search" | "sheetBar";
+type DraggablePanel = "fileTree" | "sheetList" | "search" | "sheetBar";
 
 const PANEL_LIMITS: Record<DraggablePanel, [number, number]> = {
+  fileTree: [MIN_TREE_W, MAX_TREE_W],
   sheetList: [MIN_SHEET_LIST_W, MAX_SHEET_LIST_W],
   search: [MIN_SEARCH_W, MAX_SEARCH_W],
   sheetBar: [MIN_SHEET_BAR_W, Number.POSITIVE_INFINITY],
@@ -285,6 +292,9 @@ export default function App() {
   /** View scale as a percentage, the way Excel names it. */
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [sheetListWidth, setSheetListWidth] = useState(DEFAULT_SHEET_LIST_W);
+  /** Whether the reader's folder tree sits beside the sheet list, kept between sessions. */
+  const [treeShown, setTreeShown] = useState(readTreeShown);
+  const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_W);
   /** Which panel the left sidebar shows: the sheet list, or the sheet's notes. */
   const [sidebarTab, setSidebarTab] = useState<"sheets" | "notes">("sheets");
   /** The note the sidebar is pointing at, to be shown in the sheet. */
@@ -1174,6 +1184,10 @@ export default function App() {
   }, [panels]);
 
   useEffect(() => {
+    storeTreeShown(treeShown);
+  }, [treeShown]);
+
+  useEffect(() => {
     storeFocusCell(focusCell);
   }, [focusCell]);
 
@@ -1413,14 +1427,15 @@ export default function App() {
   }, [handleOpen, activePath, closeTab, selectTab]);
 
   const startPanelDrag = useCallback(
-    (which: "sheetList" | "search", event: React.PointerEvent<HTMLDivElement>) => {
+    (which: "fileTree" | "sheetList" | "search", event: React.PointerEvent<HTMLDivElement>) => {
       panelDrag.current = {
         x: event.clientX,
-        width: which === "sheetList" ? sheetListWidth : searchWidth,
+        width:
+          which === "fileTree" ? treeWidth : which === "sheetList" ? sheetListWidth : searchWidth,
       };
       setDraggingPanel(which);
     },
-    [sheetListWidth, searchWidth],
+    [treeWidth, sheetListWidth, searchWidth],
   );
 
   /**
@@ -1469,13 +1484,14 @@ export default function App() {
     if (!draggingPanel) return;
     const [min, max] = PANEL_LIMITS[draggingPanel];
     const resize = {
+      fileTree: setTreeWidth,
       sheetList: setSheetListWidth,
       search: setSearchWidth,
       sheetBar: setSheetBarWidth,
     }[draggingPanel];
     // A panel on the left grows as the pointer moves right; the two on the
     // right grow as it moves left.
-    const direction = draggingPanel === "sheetList" ? 1 : -1;
+    const direction = draggingPanel === "sheetList" || draggingPanel === "fileTree" ? 1 : -1;
 
     const onMove = (event: PointerEvent) => {
       const drag = panelDrag.current;
@@ -1523,279 +1539,328 @@ export default function App() {
           onForgetRecent={handleForgetRecent}
           onClearRecents={handleClearRecents}
           onCloseWorkbook={handleCloseWorkbook}
+          fileTreeOpen={treeShown}
+          onToggleFileTree={() => setTreeShown((shown) => !shown)}
+          sidebarOpen={panels.list}
+          onToggleSidebar={() => togglePanel("list")}
+          sheetTabsOpen={panels.tabs}
+          onToggleSheetTabs={() => togglePanel("tabs")}
           canUpdate={update?.portable ?? false}
           updateAvailable={updateAvailable}
           onShowUpdate={() => setUpdateOpen(true)}
         />
 
-        <FileTabs
-          tabs={tabs.map((tab) => ({
-            path: tab.info.path,
-            fileName: tab.info.fileName,
-          }))}
-          active={activePath}
-          onSelect={selectTab}
-          onClose={closeTab}
-          onCloseMany={closeTabs}
-          onReload={(path) => void reloadTab(path)}
-          onReorder={handleReorderTabs}
-          homeOpen={homeOpen}
-          atHome={homeOpen && activePath === null}
-          onHome={() => setActivePath(null)}
-          onCloseHome={closeHome}
-          onNew={handleNewTab}
-        />
-
-        {/* Under the file tabs, and only while one is showing: the start page
-            has no sheet for any of this to act on. */}
-        {active && activeSheet && (
-          <Ribbon
-            sidebarOpen={panels.list}
-            onToggleSidebar={() => togglePanel("list")}
-            sheetTabsOpen={panels.tabs}
-            onToggleSheetTabs={() => togglePanel("tabs")}
-            onMark={applyMark}
-            markColor={markColor}
-            fontColor={fontColor}
-            onFontColor={(color) => {
-              if (color !== null) setFontColor(color);
-              // The grid decides whether this lands on the whole selection or
-              // on the stretch of the open cell's text the reader selected.
-              textColorVia.current?.(color);
-            }}
-            activeStyle={activeStyle}
-            onFormat={applyFormat}
-            frozen={frozenBands.rows > 0 || frozenBands.cols > 0}
-            onToggleFreeze={toggleFreeze}
-            splitOn={splitOn}
-            onToggleSplit={toggleSplit}
-            filterOn={filterOn}
-            onToggleFilter={() => void toggleFilter()}
-            onGroup={applyOutline}
-            focusCell={focusCell}
-            onToggleFocusCell={() => setFocusCell((on) => !on)}
-          />
-        )}
-
-        {error && active && (
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-destructive/10 px-3 py-1 text-[11px] text-destructive">
-            <span className="truncate" title={error}>
-              {error}
-            </span>
-            <button type="button" className="shrink-0 underline" onClick={() => setError(null)}>
-              {t("app.dismiss")}
-            </button>
-          </div>
-        )}
-
         <div className="flex min-h-0 flex-1">
-          {active && activeSheet ? (
+          {/* The reader's own folders, beside the workbook rather than on the
+              start page only: switching to another checkout's document is a
+              thing done while reading, not before it. The column runs from
+              the top bar to the status bar — the file tabs begin to its
+              right, so nothing crosses it. */}
+          {active && activeSheet && treeShown && (
             <>
-              {panels.list && (
-                <>
-                  <div className="flex min-h-0 shrink-0 flex-col" style={{ width: sheetListWidth }}>
-                    {/* Two panels share the sidebar; the grid is the same
-                        either way, so the switch costs nothing. */}
-                    <div className="flex shrink-0 border-b border-border bg-sidebar">
-                      {(["sheets", "notes"] as const).map((tab) => (
-                        <button
-                          key={tab}
-                          type="button"
-                          onClick={() => setSidebarTab(tab)}
-                          className={
-                            sidebarTab === tab
-                              ? "flex-1 border-b-2 border-[#107C41] px-2 py-1 text-[11px] font-medium text-foreground"
-                              : "flex-1 border-b-2 border-transparent px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
-                          }
-                        >
-                          {tab === "sheets" ? t("sheets.list") : t("notes.title")}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="min-h-0 flex-1">
-                      {sidebarTab === "sheets" ? (
-                        <SheetList
-                          path={active.info.path}
-                          sheets={active.info.sheets}
-                          hidden={new Set(hiddenNames)}
-                          active={active.sheet}
-                          onSelect={handleSheetSelect}
-                        />
-                      ) : (
-                        <NoteList
-                          path={active.info.path}
-                          sheet={active.sheet}
-                          onGo={(row, col) => handleGo(active.sheet, row, col)}
-                          onPreview={handleNotePreview}
-                        />
-                      )}
-                    </div>
-                  </div>
-                  <Hint label={t("app.dragToResize")}>
-                    <div
-                      role="separator"
-                      aria-orientation="vertical"
-                      aria-label={t("app.resizeSheetList")}
-                      onPointerDown={(event) => startPanelDrag("sheetList", event)}
-                      className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
-                    />
-                  </Hint>
-                </>
-              )}
+              <div
+                className="flex min-h-0 shrink-0 flex-col border-r border-border bg-sidebar"
+                style={{ width: treeWidth }}
+              >
+                <FileTree currentPath={active.info.path} onOpenFile={handleOpenRecent} />
+              </div>
+              <Hint label={t("app.dragToResize")}>
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t("app.resizeFileTree")}
+                  onPointerDown={(event) => startPanelDrag("fileTree", event)}
+                  className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
+                />
+              </Hint>
+            </>
+          )}
 
-              {/* The strip is at the foot of the sheet area, as Excel's is, so
+          {/* The tabs and everything under them share the column beside the
+              tree. The ribbon crosses the sheet list and the grid as it always
+              has; the start page has no workbook for any of it. */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            <FileTabs
+              tabs={tabs.map((tab) => ({
+                path: tab.info.path,
+                fileName: tab.info.fileName,
+              }))}
+              active={activePath}
+              onSelect={selectTab}
+              onClose={closeTab}
+              onCloseMany={closeTabs}
+              onReload={(path) => void reloadTab(path)}
+              onReorder={handleReorderTabs}
+              homeOpen={homeOpen}
+              atHome={homeOpen && activePath === null}
+              onHome={() => setActivePath(null)}
+              onCloseHome={closeHome}
+              onNew={handleNewTab}
+            />
+
+            {active && activeSheet ? (
+              <>
+                <Ribbon
+                  sidebarOpen={panels.list}
+                  onToggleSidebar={() => togglePanel("list")}
+                  fileTreeOpen={treeShown}
+                  onToggleFileTree={() => setTreeShown((shown) => !shown)}
+                  sheetTabsOpen={panels.tabs}
+                  onToggleSheetTabs={() => togglePanel("tabs")}
+                  onMark={applyMark}
+                  markColor={markColor}
+                  fontColor={fontColor}
+                  onFontColor={(color) => {
+                    if (color !== null) setFontColor(color);
+                    // The grid decides whether this lands on the whole selection
+                    // or on the stretch of the open cell's text the reader selected.
+                    textColorVia.current?.(color);
+                  }}
+                  activeStyle={activeStyle}
+                  onFormat={applyFormat}
+                  frozen={frozenBands.rows > 0 || frozenBands.cols > 0}
+                  onToggleFreeze={toggleFreeze}
+                  splitOn={splitOn}
+                  onToggleSplit={toggleSplit}
+                  filterOn={filterOn}
+                  onToggleFilter={() => void toggleFilter()}
+                  onGroup={applyOutline}
+                  focusCell={focusCell}
+                  onToggleFocusCell={() => setFocusCell((on) => !on)}
+                />
+
+                {error && (
+                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-destructive/10 px-3 py-1 text-[11px] text-destructive">
+                    <span className="truncate" title={error}>
+                      {error}
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 underline"
+                      onClick={() => setError(null)}
+                    >
+                      {t("app.dismiss")}
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex min-h-0 flex-1">
+                  {panels.list && (
+                    <>
+                      <div
+                        className="flex min-h-0 shrink-0 flex-col"
+                        style={{ width: sheetListWidth }}
+                      >
+                        {/* Two panels share the sidebar; the grid is the same
+                        either way, so the switch costs nothing. */}
+                        <div className="flex shrink-0 border-b border-border bg-sidebar">
+                          {(["sheets", "notes"] as const).map((tab) => (
+                            <button
+                              key={tab}
+                              type="button"
+                              onClick={() => setSidebarTab(tab)}
+                              className={
+                                sidebarTab === tab
+                                  ? "flex-1 border-b-2 border-[#107C41] px-2 py-1 text-[11px] font-medium text-foreground"
+                                  : "flex-1 border-b-2 border-transparent px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                              }
+                            >
+                              {tab === "sheets" ? t("sheets.list") : t("notes.title")}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="min-h-0 flex-1">
+                          {sidebarTab === "sheets" ? (
+                            <SheetList
+                              path={active.info.path}
+                              sheets={active.info.sheets}
+                              hidden={new Set(hiddenNames)}
+                              active={active.sheet}
+                              onSelect={handleSheetSelect}
+                            />
+                          ) : (
+                            <NoteList
+                              path={active.info.path}
+                              sheet={active.sheet}
+                              onGo={(row, col) => handleGo(active.sheet, row, col)}
+                              onPreview={handleNotePreview}
+                            />
+                          )}
+                        </div>
+                      </div>
+                      <Hint label={t("app.dragToResize")}>
+                        <div
+                          role="separator"
+                          aria-orientation="vertical"
+                          aria-label={t("app.resizeSheetList")}
+                          onPointerDown={(event) => startPanelDrag("sheetList", event)}
+                          className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
+                        />
+                      </Hint>
+                    </>
+                  )}
+
+                  {/* The strip is at the foot of the sheet area, as Excel's is, so
                   it stops where the search panel begins rather than running
                   under it. */}
-              <div className="flex min-w-0 flex-1 flex-col">
-                <div className="min-h-0 flex-1">
-                  <CanvasGrid
-                    path={active.info.path}
-                    sheet={activeSheet}
-                    revision={active.revision}
-                    views={views.current}
-                    selection={selection}
-                    marks={active.marks}
-                    formats={active.formats}
-                    textColors={active.textColors}
-                    textColorVia={textColorVia}
-                    onTextColor={applyTextColor}
-                    onFormatColor={(color) => applyFormat({ color })}
-                    onActiveStyle={setActiveStyle}
-                    frozen={active.frozen[active.sheet] ?? null}
-                    onFrozenChange={setFrozenBands}
-                    filterPane={active.filterPane[active.sheet] ?? null}
-                    onFilterState={setFilterOn}
-                    sessionOutline={active.sessionOutline[active.sheet] ?? null}
-                    split={active.splitAt[active.sheet] ?? null}
-                    onSplitChange={applySplit}
-                    onMark={applyMark}
-                    markColor={markColor}
-                    onSelect={handleSelect}
-                    onDetail={setDetail}
-                    onExtent={handleExtent}
-                    onFiltered={handleFiltered}
-                    onSheetStep={handleSheetStep}
-                    reveal={reveal}
-                    previewNote={notePreview}
-                    zoom={zoom}
-                    onZoom={setZoom}
-                    hideHScroll={panels.tabs || splitOn}
-                    tabsShown={panels.tabs}
-                    splitBarHost={panels.tabs && splitOn ? splitBarHost : null}
-                    onSplitLine={setSplitLineX}
-                    pageBreak={view === "pageBreak"}
-                    focusCell={focusCell}
-                    onViewport={setViewport}
-                    bar={
-                      <FormulaBar
-                        reference={selectionRef(selection)}
-                        value={detail?.text ?? ""}
-                        onGo={handleNameBoxGo}
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <div className="min-h-0 flex-1">
+                      <CanvasGrid
+                        path={active.info.path}
+                        sheet={activeSheet}
+                        revision={active.revision}
+                        views={views.current}
+                        selection={selection}
+                        marks={active.marks}
+                        formats={active.formats}
+                        textColors={active.textColors}
+                        textColorVia={textColorVia}
+                        onTextColor={applyTextColor}
+                        onFormatColor={(color) => applyFormat({ color })}
+                        onActiveStyle={setActiveStyle}
+                        frozen={active.frozen[active.sheet] ?? null}
+                        onFrozenChange={setFrozenBands}
+                        filterPane={active.filterPane[active.sheet] ?? null}
+                        onFilterState={setFilterOn}
+                        sessionOutline={active.sessionOutline[active.sheet] ?? null}
+                        split={active.splitAt[active.sheet] ?? null}
+                        onSplitChange={applySplit}
+                        onMark={applyMark}
+                        markColor={markColor}
+                        onSelect={handleSelect}
+                        onDetail={setDetail}
+                        onExtent={handleExtent}
+                        onFiltered={handleFiltered}
+                        onSheetStep={handleSheetStep}
+                        reveal={reveal}
+                        previewNote={notePreview}
+                        zoom={zoom}
+                        onZoom={setZoom}
+                        hideHScroll={panels.tabs || splitOn}
+                        tabsShown={panels.tabs}
+                        splitBarHost={panels.tabs && splitOn ? splitBarHost : null}
+                        onSplitLine={setSplitLineX}
+                        pageBreak={view === "pageBreak"}
+                        focusCell={focusCell}
+                        onViewport={setViewport}
+                        bar={
+                          <FormulaBar
+                            reference={selectionRef(selection)}
+                            value={detail?.text ?? ""}
+                            onGo={handleNameBoxGo}
+                          />
+                        }
                       />
-                    }
-                  />
-                </div>
-                {panels.tabs && (
-                  <SheetTabs
-                    sheets={shown}
-                    active={active.sheet}
-                    onSelect={handleSheetSelect}
-                    onTabClick={handleSheetClick}
-                    selected={sheetSelection}
-                    colors={active.tabColors}
-                    onColor={applyTabColor}
-                    onHide={handleHideSheet}
-                    onUnhide={(at) => {
-                      setUnhideAt(at);
-                      setUnhideOpen(true);
-                    }}
-                    onReorder={handleReorderSheets}
-                    hiddenCount={hiddenNames.length}
-                    splitX={splitOn ? splitLineX : null}
-                    trailing={
-                      // A split with two column bands draws its own pair here,
-                      // segmented at the line. With one band — a split across
-                      // rows only — the row stays exactly as it is: splitter,
-                      // share and all. Only what drives the bar changes, from
-                      // the view to the band, so choosing a row split does not
-                      // move the scrollbar.
-                      splitOn && splitLineX != null ? (
-                        <div
-                          ref={setSplitBarHost}
-                          className="relative min-w-0 flex-1 self-stretch"
-                        />
-                      ) : (
-                        <>
-                          {/* Excel's splitter, at the left end of the sheet's
+                    </div>
+                    {panels.tabs && (
+                      <SheetTabs
+                        sheets={shown}
+                        active={active.sheet}
+                        onSelect={handleSheetSelect}
+                        onTabClick={handleSheetClick}
+                        selected={sheetSelection}
+                        colors={active.tabColors}
+                        onColor={applyTabColor}
+                        onHide={handleHideSheet}
+                        onUnhide={(at) => {
+                          setUnhideAt(at);
+                          setUnhideOpen(true);
+                        }}
+                        onReorder={handleReorderSheets}
+                        hiddenCount={hiddenNames.length}
+                        splitX={splitOn ? splitLineX : null}
+                        trailing={
+                          // A split with two column bands draws its own pair here,
+                          // segmented at the line. With one band — a split across
+                          // rows only — the row stays exactly as it is: splitter,
+                          // share and all. Only what drives the bar changes, from
+                          // the view to the band, so choosing a row split does not
+                          // move the scrollbar.
+                          splitOn && splitLineX != null ? (
+                            <div
+                              ref={setSplitBarHost}
+                              className="relative min-w-0 flex-1 self-stretch"
+                            />
+                          ) : (
+                            <>
+                              {/* Excel's splitter, at the left end of the sheet's
                             scrollbar: drag it and the scrollbar is longer or
                             shorter, the tabs taking what is left. Excel draws
                             it as a column of dots, so it can be found at all. */}
-                          <Hint label={t("app.dragToResize")}>
-                            <div
-                              role="separator"
-                              aria-orientation="vertical"
-                              aria-label={t("app.resizeSheetScrollBar")}
-                              onPointerDown={startSheetBarDrag}
-                              className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#107C41]/40 hover:text-foreground"
-                            >
-                              <EllipsisVertical className="size-3" />
-                            </div>
-                          </Hint>
-                          {/* A share of the row until it is dragged, so the length
+                              <Hint label={t("app.dragToResize")}>
+                                <div
+                                  role="separator"
+                                  aria-orientation="vertical"
+                                  aria-label={t("app.resizeSheetScrollBar")}
+                                  onPointerDown={startSheetBarDrag}
+                                  className="flex w-4 shrink-0 cursor-col-resize items-center justify-center text-muted-foreground/60 transition-colors hover:bg-[#107C41]/40 hover:text-foreground"
+                                >
+                                  <EllipsisVertical className="size-3" />
+                                </div>
+                              </Hint>
+                              {/* A share of the row until it is dragged, so the length
                             is the row's rather than a number chosen here. The
                             bar is centred in the row; only the engine knows how
                             tall it is, so `SheetScrollBar` measures that. */}
-                          <div
-                            ref={setSheetBarHost}
-                            className={`relative flex min-w-24 shrink items-center ${sheetBarWidth === null ? "w-1/3" : ""}`}
-                            style={sheetBarWidth === null ? undefined : { width: sheetBarWidth }}
-                          >
-                            {splitOn ? null : <SheetScrollBar viewport={viewport} />}
-                          </div>
-                        </>
-                      )
-                    }
-                  />
-                )}
-              </div>
-
-              {searchOpen && (
-                <>
-                  {/* Mirrors the sheet list's handle, on the other side. */}
-                  <Hint label={t("app.dragToResize")}>
-                    <div
-                      role="separator"
-                      aria-orientation="vertical"
-                      aria-label={t("app.resizeSearch")}
-                      onPointerDown={(event) => startPanelDrag("search", event)}
-                      className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
-                    />
-                  </Hint>
-                  <div ref={searchPanelRef} className="shrink-0" style={{ width: searchWidth }}>
-                    <SearchPanel
-                      path={active.info.path}
-                      sheet={active.sheet}
-                      focusSignal={searchFocus}
-                      onJump={handleJump}
-                      onClose={() => setSearchOpen(false)}
-                    />
+                              <div
+                                ref={setSheetBarHost}
+                                className={`relative flex min-w-24 shrink items-center ${sheetBarWidth === null ? "w-1/3" : ""}`}
+                                style={
+                                  sheetBarWidth === null ? undefined : { width: sheetBarWidth }
+                                }
+                              >
+                                {splitOn ? null : <SheetScrollBar viewport={viewport} />}
+                              </div>
+                            </>
+                          )
+                        }
+                      />
+                    )}
                   </div>
-                </>
-              )}
-            </>
-          ) : active ? (
-            <p className="m-auto text-xs text-muted-foreground">{t("app.noSheets")}</p>
-          ) : (
-            <Welcome
-              onOpen={handleOpen}
-              onOpenDirectory={handleOpenInDirectory}
-              onForgetFolder={handleForgetFolder}
-              recentFiles={recentFiles}
-              missingFiles={missingFiles}
-              onOpenRecent={handleOpenRecent}
-              error={error}
-            />
-          )}
+
+                  {searchOpen && (
+                    <>
+                      {/* Mirrors the sheet list's handle, on the other side. */}
+                      <Hint label={t("app.dragToResize")}>
+                        <div
+                          role="separator"
+                          aria-orientation="vertical"
+                          aria-label={t("app.resizeSearch")}
+                          onPointerDown={(event) => startPanelDrag("search", event)}
+                          className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[#107C41]/40"
+                        />
+                      </Hint>
+                      <div ref={searchPanelRef} className="shrink-0" style={{ width: searchWidth }}>
+                        <SearchPanel
+                          path={active.info.path}
+                          sheet={active.sheet}
+                          focusSignal={searchFocus}
+                          onJump={handleJump}
+                          onClose={() => setSearchOpen(false)}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            ) : active ? (
+              <div className="flex min-h-0 flex-1 items-center justify-center">
+                <p className="text-xs text-muted-foreground">{t("app.noSheets")}</p>
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1">
+                <Welcome
+                  onOpen={handleOpen}
+                  onOpenDirectory={handleOpenInDirectory}
+                  onForgetFolder={handleForgetFolder}
+                  recentFiles={recentFiles}
+                  missingFiles={missingFiles}
+                  onOpenRecent={handleOpenRecent}
+                  error={error}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         <StatusBar
