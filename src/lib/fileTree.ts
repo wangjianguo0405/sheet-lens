@@ -42,6 +42,7 @@ export function searchTree(roots: string[], query: string): Promise<FoundFile[]>
 const ROOTS_KEY = "sheetlens.treeRoots";
 const OPEN_KEY = "sheetlens.treeOpen";
 const SHOWN_KEY = "sheetlens.treeShown";
+const AUTO_LOCATE_KEY = "sheetlens.treeAutoLocate";
 
 function readList(key: string): string[] {
   try {
@@ -98,6 +99,27 @@ export function readTreeShown(): boolean {
 export function storeTreeShown(shown: boolean): void {
   try {
     localStorage.setItem(SHOWN_KEY, shown ? "1" : "0");
+  } catch {
+    // As above.
+  }
+}
+
+/**
+ * Whether opening a workbook brings its row into sight by itself. It does not
+ * unless the reader has asked for it: the header's locate button is the
+ * default way to ask, the menu makes it happen every time.
+ */
+export function readTreeAutoLocate(): boolean {
+  try {
+    return localStorage.getItem(AUTO_LOCATE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function storeTreeAutoLocate(auto: boolean): void {
+  try {
+    localStorage.setItem(AUTO_LOCATE_KEY, auto ? "1" : "0");
   } catch {
     // As above.
   }

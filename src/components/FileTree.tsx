@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import {
   ChevronDown,
   ChevronRight,
+  EllipsisVertical,
   FileSpreadsheet,
   Folder,
   FolderOpen,
   Loader2,
+  LocateFixed,
   Plus,
   RotateCw,
   Search,
@@ -15,12 +17,20 @@ import {
 } from "lucide-react";
 
 import { Hint } from "@/components/Hint";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   listDirectory,
+  readTreeAutoLocate,
   readTreeOpen,
   readTreeRoots,
   searchTree,
+  storeTreeAutoLocate,
   storeTreeOpen,
   storeTreeRoots,
   type DirEntry,
@@ -82,6 +92,32 @@ function pruneToTree(results: FoundFile[]): Map<string, SearchNode> {
   return byRoot;
 }
 
+/**
+ * The folders a root has to open before `file`'s row can appear there — the
+ * root itself, then each folder down to the one holding the workbook. Empty
+ * when the file is not under the root, which is a workbook the tree has
+ * nothing to say about.
+ *
+ * The chain is spelled from `file`, so its rows match the listing they are
+ * looked up in.
+ */
+function foldersTo(root: string, file: string): string[] {
+  const sep = file.includes("\\") ? "\\" : "/";
+  const rootKey = folderKey(root);
+  if (!folderKey(file).startsWith(rootKey + sep)) return [];
+  const join = (base: string, name: string) =>
+    base.endsWith("\\") || base.endsWith("/") ? base + name : base + sep + name;
+  const parts = file.slice(rootKey.length + sep.length).split(/[\\/]/);
+  parts.pop(); // the workbook itself
+  const folders = [root];
+  let at = root;
+  for (const part of parts) {
+    at = join(at, part);
+    folders.push(at);
+  }
+  return folders;
+}
+
 interface FileTreeProps {
   /** The workbook on screen, marked when the tree reaches it. */
   currentPath: string | null;
@@ -108,6 +144,13 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<FoundFile[]>([]);
   const [busy, setBusy] = useState(false);
+  const [autoLocate, setAutoLocate] = useState(readTreeAutoLocate);
+  /** The list's scroller, so a located row can be brought into the fold. */
+  const listRef = useRef<HTMLDivElement | null>(null);
+  /** The folders whose listing has arrived, so a locate reads only the new ones. */
+  const ready = useRef(new Set<string>());
+  /** The workbook still to be brought into sight, once its rows exist. */
+  const [reveal, setReveal] = useState<string | null>(null);
 
   const load = useCallback(
     (path: string) => {
@@ -115,10 +158,14 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       inflight.add(path);
       setNodes((prev) => new Map(prev).set(path, { state: "loading" }));
       listDirectory(path)
-        .then((entries) => setNodes((prev) => new Map(prev).set(path, { state: "ready", entries })))
-        .catch((reason: unknown) =>
-          setNodes((prev) => new Map(prev).set(path, { state: "error", message: String(reason) })),
-        )
+        .then((entries) => {
+          ready.current.add(folderKey(path));
+          setNodes((prev) => new Map(prev).set(path, { state: "ready", entries }));
+        })
+        .catch((reason: unknown) => {
+          ready.current.delete(folderKey(path));
+          setNodes((prev) => new Map(prev).set(path, { state: "error", message: String(reason) }));
+        })
         .finally(() => inflight.delete(path));
     },
     [inflight],
@@ -163,6 +210,64 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     };
   }, [roots, query]);
 
+  /**
+   * Brings the workbook on screen back into the tree: every folder above it is
+   * opened and read, however deep, and the row itself is left to the effect
+   * below. A workbook under none of the roots is not in the tree at all, and
+   * is left alone.
+   *
+   * The folders are opened whatever the search box says; only the scroll waits
+   * for the tree's own rows.
+   */
+  const locate = useCallback(() => {
+    if (currentPath === null) return;
+    const chain = roots.map((root) => foldersTo(root, currentPath)).find((path) => path.length > 0);
+    if (!chain) {
+      setReveal(null);
+      return;
+    }
+    setOpen((prev) => {
+      const known = new Set([...prev].map(folderKey));
+      const next = new Set(prev);
+      for (const folder of chain) {
+        if (!known.has(folderKey(folder))) next.add(folder);
+      }
+      if (next.size === prev.size) return prev;
+      storeTreeOpen([...next]);
+      return next;
+    });
+    for (const folder of chain) {
+      if (!ready.current.has(folderKey(folder))) load(folder);
+    }
+    setReveal(currentPath);
+  }, [currentPath, roots, load]);
+
+  // Opening a workbook shows where it sits only when the reader has asked for
+  // it; the header's locate button is the way to ask once, the menu always.
+  useEffect(() => {
+    if (autoLocate) locate();
+  }, [autoLocate, locate]);
+
+  /** Whether the header's locate has anywhere to point: the workbook is in a root. */
+  const canLocate =
+    currentPath !== null && roots.some((root) => foldersTo(root, currentPath).length > 0);
+
+  /**
+   * The located row is scrolled into the fold once it exists: the folders
+   * above it are still being read when the workbook opens, so it takes a
+   * render or two. `nearest` leaves the list where it is when the row is
+   * already in sight, as it is when the workbook was clicked in the tree.
+   */
+  useEffect(() => {
+    if (reveal === null) return;
+    // The search results carry the same marker, and the tree is not on screen.
+    if (query.trim() !== "") return;
+    const row = listRef.current?.querySelector<HTMLElement>("[data-current]");
+    if (!row) return;
+    row.scrollIntoView({ block: "nearest", inline: "nearest" });
+    setReveal(null);
+  }, [reveal, query, open, nodes]);
+
   const toggle = (path: string) => {
     const next = new Set(open);
     if (next.has(path)) next.delete(path);
@@ -178,6 +283,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   /** Drops every listing and reads the open folders again — what SVN update changed. */
   const refresh = () => {
     setNodes(new Map());
+    ready.current.clear();
     for (const path of open) load(path);
   };
 
@@ -283,6 +389,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
           type="button"
           onClick={() => onOpenFile(entry.path)}
           title={entry.path}
+          data-current={current || undefined}
           className={cn(
             "flex w-full min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
             LINK,
@@ -427,6 +534,17 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
                   <Search className="size-3" />
                 </button>
               </Hint>
+              <Hint label={t("tree.locate")}>
+                <button
+                  type="button"
+                  aria-label={t("tree.locate")}
+                  onClick={locate}
+                  disabled={!canLocate}
+                  className={cn(HEAD_ACTION, "disabled:pointer-events-none disabled:opacity-40")}
+                >
+                  <LocateFixed className="size-3" />
+                </button>
+              </Hint>
               <Hint label={t("tree.refresh")}>
                 <button
                   type="button"
@@ -447,6 +565,28 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
                   <Plus className="size-3" />
                 </button>
               </Hint>
+              <DropdownMenu>
+                <Hint label={t("tree.more")}>
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" aria-label={t("tree.more")} className={HEAD_ACTION}>
+                      <EllipsisVertical className="size-3" />
+                    </button>
+                  </DropdownMenuTrigger>
+                </Hint>
+                <DropdownMenuContent align="end" className="min-w-48">
+                  <DropdownMenuCheckboxItem
+                    className="text-xs"
+                    checked={autoLocate}
+                    onCheckedChange={(checked) => {
+                      const next = checked === true;
+                      setAutoLocate(next);
+                      storeTreeAutoLocate(next);
+                    }}
+                  >
+                    {t("tree.autoLocate")}
+                  </DropdownMenuCheckboxItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
         </div>
@@ -455,7 +595,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
           long name both run past the panel's edge, and the list scrolls
           sideways to reach them rather than cutting the row off where the
           panel does. */}
-      <div className="min-h-0 flex-1 overflow-auto pb-1">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-auto pb-1">
         {query.trim() !== "" ? (
           results.length === 0 ? (
             <p className="px-2 py-1 text-[11px] text-muted-foreground">
