@@ -12,6 +12,12 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.23] - 2026-11-14
+
+### Added
+
+- The tree shows where the open workbook sits: the crosshair in its title line opens the folders above it and brings its row into sight. The ⋯ menu's "Auto-locate the open workbook" makes every workbook do that as it opens — off by default
+
 ## [1.0.22] - 2026-11-14
 
 ### Added
