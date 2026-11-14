@@ -30,7 +30,7 @@ import { useTranslation } from "react-i18next";
 import {
   paintBase,
   paintOverlay,
-  valueWidth,
+  valueBox,
   type GridView,
   type PaintStats,
 } from "@/lib/canvasPaint";
@@ -4381,7 +4381,12 @@ export function CanvasGrid({
             // after it are empty, and the field has to be that same box: the
             // width of the column alone is nothing at all for a column two
             // pixels wide. A merge is painted whole and never spills.
-            if (!merge) w = valueWidth(view, row, col, w, CELL_PAD_LEFT, CELL_PAD_RIGHT);
+            let left = 0;
+            if (!merge) {
+              const spill = valueBox(view, row, col, w, CELL_PAD_LEFT, CELL_PAD_RIGHT);
+              left = spill.left;
+              w = spill.w;
+            }
             // The merge's own rows, as far down the view as the last of them
             // still shows.
             const lastRow = row + (merge?.rows ?? 1) - 1;
@@ -4397,7 +4402,7 @@ export function CanvasGrid({
             const size = (style?.sizePx ?? view.workbookFontSizePx) * view.zoom;
             field.style.display = "";
             field.style.transform =
-              `translate(${(view.cols.offsets[col] - (col < fc ? 0 : view.scrollLeft)) * view.zoom}px, ` +
+              `translate(${(view.cols.offsets[col] - left - (col < fc ? 0 : view.scrollLeft)) * view.zoom}px, ` +
               `${(view.rows.offsets[display] - (display < fr ? 0 : view.scrollTop)) * view.zoom}px)`;
             // The cell's boundary is one pixel past its last one on the right
             // and bottom — that is where the ring and the cell's own border are
