@@ -12,6 +12,16 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.22] - 2026-11-14
+
+### Added
+
+- The folder tree finds workbooks by name: the magnifier in its title line turns it into a box, and what you type sweeps every root at once — folders the tree has never been opened down to included. The hits keep the folders they were found in, drawn as the tree draws them, and a click opens the workbook
+
+### Improved
+
+- The tree's title-line buttons are always in sight rather than waiting for the pointer, and a workbook now opens with the tree already beside it — the View menu's switch still puts it away
+
 ## [1.0.21] - 2026-11-14
 
 ### Added
