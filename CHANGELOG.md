@@ -12,6 +12,13 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.25] - 2026-11-16
+
+### Added
+
+- A workbook's row in the tree can be right-clicked: open the file in its default program, or show it in File Explorer with the file selected
+- A folder's row — a subfolder or a root — opens the folder itself in File Explorer
+
 ## [1.0.24] - 2026-11-16
 
 ### Added
