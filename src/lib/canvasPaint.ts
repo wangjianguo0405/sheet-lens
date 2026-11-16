@@ -1792,6 +1792,25 @@ function inRegion(view: GridView, covered: Set<number>, sheetRow: number, col: n
 }
 
 /**
+ * The merged region a cell belongs to. The cell map holds every region in the
+ * window, but an anchor that has been scrolled out of it is not a key there, so
+ * the regions the view knows about are searched as a fallback.
+ */
+function mergeAround(view: GridView, row: number, col: number): MergeRect | null {
+  const at = view.mergeView.at.get(cellKey(view.sheetCols, row, col));
+  if (at) return at;
+  return (
+    view.mergeView.shown.find(
+      (rect) =>
+        row >= rect.row &&
+        row < rect.row + rect.rows &&
+        col >= rect.col &&
+        col < rect.col + rect.cols,
+    ) ?? null
+  );
+}
+
+/**
  * Whether a cell paints a fill of its own. Gridlines are drawn under fills, so
  * an edge either side of which something is filled is not drawn at all — Excel's
  * own picture of a solid block has no rules inside it or along its edge, and the
@@ -2672,17 +2691,33 @@ function paintFocusCross(
   const at = view.focusAt ?? (view.focusCell ? cursorOf(view) : null);
   if (!at) return;
 
-  const display = view.displayOfRow(at.row);
-  // A hidden row has no cells on screen, so there is nothing to wash.
-  if (display >= 0 && !view.hiddenRows.has(at.row)) {
+  /**
+   * A merged cell is one cell that spans several rows and columns, so the cross
+   * has to cover the whole span. Washing only the anchor's row and column would
+   * cut the region into a top band and a left band and read as several cells
+   * again — which is the one thing a merged cell is not.
+   */
+  const merge = mergeAround(view, at.row, at.col);
+  const lastRow = merge ? merge.row + merge.rows - 1 : at.row;
+  const lastCol = merge ? merge.col + merge.cols - 1 : at.col;
+
+  for (let row = merge ? merge.row : at.row; row <= lastRow; row += 1) {
+    const display = view.displayOfRow(row);
+    // A hidden row has no cells on screen, so there is nothing to wash.
+    if (display < 0 || view.hiddenRows.has(row)) continue;
     const y = oy + view.rows.offsets[display];
     fill(ctx, 0, y, view.width, spanAt(view.rows.offsets, display), FOCUS_WASH);
   }
 
-  if (at.col < view.colStart || at.col >= view.colEnd) return;
-  if (view.hiddenCols.has(at.col)) return;
-  const x = ox + view.cols.offsets[at.col];
-  fill(ctx, x, 0, spanAt(view.cols.offsets, at.col), view.height, FOCUS_WASH);
+  for (
+    let col = Math.max(merge ? merge.col : at.col, view.colStart);
+    col <= Math.min(lastCol, view.colEnd - 1);
+    col += 1
+  ) {
+    if (view.hiddenCols.has(col)) continue;
+    const x = ox + view.cols.offsets[col];
+    fill(ctx, x, 0, spanAt(view.cols.offsets, col), view.height, FOCUS_WASH);
+  }
 }
 
 /** The cell the cross follows when the reader's switch is what asks for it. */
@@ -2906,7 +2941,7 @@ function paintGutterLabels(
     if (view.hiddenRows.has(sheetRow)) continue;
     const y = oy + view.rows.offsets[display];
     const h = spanAt(view.rows.offsets, display);
-    const lit = litRow(view.selection, sheetRow);
+    const lit = litRow(view.selection, sheetRow, view);
     if (lit) {
       fill(ctx, rowGutter, y, view.rowHeaderW - 1, h, GUTTER_TINT);
       ctx.font = fontString(stack, GUTTER_FONT_PX, true);
@@ -2936,7 +2971,7 @@ function paintGutterLabels(
     if (view.hiddenCols.has(c)) continue;
     const x = ox + view.cols.offsets[c];
     const w = spanAt(view.cols.offsets, c);
-    const lit = litColumn(view.selection, c);
+    const lit = litColumn(view.selection, c, view);
     if (lit) {
       fill(ctx, x, colGutter, w, COL_HEADER_H - 1, GUTTER_TINT);
       ctx.font = fontString(stack, GUTTER_FONT_PX, true);
@@ -2949,14 +2984,18 @@ function paintGutterLabels(
   ctx.restore();
 }
 
-function litRow(selection: Selection, row: number): boolean {
+function litRow(selection: Selection, row: number, view: GridView): boolean {
   return areasOf(selection).some((area) => {
     switch (area.kind) {
       case "row":
       case "range":
         return row >= area.row && row < area.row + area.rows;
-      case "cell":
-        return area.row === row;
+      case "cell": {
+        // A merged cell stands for every row it spans, and Excel lights all of
+        // their numbers, not only the anchor's.
+        const merge = mergeAround(view, area.row, area.col);
+        return merge ? row >= merge.row && row < merge.row + merge.rows : area.row === row;
+      }
       // A run of whole columns is every row's, which says nothing about any
       // one of them.
       case "column":
@@ -2965,14 +3004,16 @@ function litRow(selection: Selection, row: number): boolean {
   });
 }
 
-function litColumn(selection: Selection, col: number): boolean {
+function litColumn(selection: Selection, col: number, view: GridView): boolean {
   return areasOf(selection).some((area) => {
     switch (area.kind) {
       case "column":
       case "range":
         return col >= area.col && col < area.col + area.cols;
-      case "cell":
-        return area.col === col;
+      case "cell": {
+        const merge = mergeAround(view, area.row, area.col);
+        return merge ? col >= merge.col && col < merge.col + merge.cols : area.col === col;
+      }
       case "row":
         return false;
     }
