@@ -12,6 +12,17 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.24] - 2026-11-16
+
+### Added
+
+- A root folder in the tree can be shown under a name of your own: hover its row for the pencil, or right-click it and choose Rename. The folder's own name and path stay in sight on the line under the alias, and nothing is renamed on disk
+- Search results fold and unfold by folder, the same way the tree does
+
+### Improved
+
+- The start page's tree leaves out the locate button and the ⋯ menu, both of which need an open workbook to act on
+
 ## [1.0.23] - 2026-11-14
 
 ### Added
