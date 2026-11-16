@@ -105,7 +105,6 @@ import {
   activeArea,
   areasOf,
   colsBetween,
-  rangeBetween,
   rangeOver,
   rowsBetween,
   selectionAnchor,
@@ -2487,6 +2486,85 @@ export function CanvasGrid({
   );
 
   /**
+   * The block two cells describe, widened until every merged region it touches
+   * is covered whole.
+   *
+   * Excel does not let a selection hold part of a merged cell: a rectangle that
+   * cuts into one grows to that region's far edge, and the active cell stays
+   * the corner the block was pinned at — snapped to its own merge's anchor.
+   * (Measured with COM: selecting `A1:C3` against a `C3:D4` merge leaves a 4x4
+   * selection, and selecting `C4` — inside the merge — leaves `C3:D4`.) A block
+   * that comes out as exactly one merged region is that cell, not a range, so it
+   * keeps the single cell's ring rather than a block's wash.
+   */
+  const rangeWithMerges = useCallback(
+    (from: { row: number; col: number }, to: { row: number; col: number }): Area => {
+      const start = mergeAt(from.row, from.col);
+      let top = Math.min(from.row, to.row);
+      let left = Math.min(from.col, to.col);
+      let bottom = Math.max(from.row, to.row);
+      let right = Math.max(from.col, to.col);
+      // The block is pinned at `from`, so its own merge belongs to it even when
+      // the block grows up or left and the rectangle would leave it behind.
+      if (start) {
+        top = Math.min(top, start.row);
+        left = Math.min(left, start.col);
+        bottom = Math.max(bottom, start.row + start.rows - 1);
+        right = Math.max(right, start.col + start.cols - 1);
+      }
+      // One merge can push the rectangle into another, so this settles rather
+      // than scanning once: every region the finished block crosses is whole.
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const merge of merges) {
+          const mergeBottom = merge.row + merge.rows - 1;
+          const mergeRight = merge.col + merge.cols - 1;
+          if (mergeBottom < top || merge.row > bottom) continue;
+          if (mergeRight < left || merge.col > right) continue;
+          if (
+            merge.row >= top &&
+            merge.col >= left &&
+            mergeBottom <= bottom &&
+            mergeRight <= right
+          ) {
+            continue;
+          }
+          top = Math.min(top, merge.row);
+          left = Math.min(left, merge.col);
+          bottom = Math.max(bottom, mergeBottom);
+          right = Math.max(right, mergeRight);
+          grew = true;
+        }
+      }
+      if (
+        start &&
+        start.row === top &&
+        start.col === left &&
+        start.rows === bottom - top + 1 &&
+        start.cols === right - left + 1
+      ) {
+        return { kind: "cell", row: start.row, col: start.col };
+      }
+      if (top === bottom && left === right) return { kind: "cell", row: top, col: left };
+      return {
+        kind: "range",
+        row: top,
+        col: left,
+        rows: bottom - top + 1,
+        cols: right - left + 1,
+        anchor: start ? { row: start.row, col: start.col } : from,
+        // The corner the next Shift press walks from: the one on the side the
+        // pointer went to.
+        edge: {
+          row: to.row >= from.row ? bottom : top,
+          col: to.col >= from.col ? right : left,
+        },
+      };
+    },
+    [mergeAt, merges],
+  );
+
+  /**
    * Opens the text of a cell over it, which is what a double-click and F2 both
    * come to. A merged cell opens as its top-left corner, since that is the only
    * part of the merge the text is in — the rest of it reads as empty — and an
@@ -2597,10 +2675,22 @@ export function CanvasGrid({
         return;
       }
       if (extend)
-        onSelect(rangeBetween(selection.kind === "range" ? selection.anchor : from, { row, col }));
+        onSelect(
+          rangeWithMerges(selection.kind === "range" ? selection.anchor : from, { row, col }),
+        );
       else select(row, col);
     },
-    [selection, path, sheet.name, sheet.rows, sheet.cols, layout, onSelect, select],
+    [
+      selection,
+      path,
+      sheet.name,
+      sheet.rows,
+      sheet.cols,
+      layout,
+      onSelect,
+      select,
+      rangeWithMerges,
+    ],
   );
 
   /**
@@ -4854,20 +4944,23 @@ export function CanvasGrid({
    * sheet included: Excel keeps selecting rows after the pointer leaves the
    * gutter, and only the end it started from stays put.
    */
-  const dragTo = useCallback((anchor: DragAnchor, hit: Exclude<Hit, null>): Area | null => {
-    if (hit.kind === "corner") return null;
-    if (anchor.kind === "cell") {
-      if (hit.kind !== "cell") return null;
-      if (hit.row === anchor.row && hit.col === anchor.col) return null;
-      return rangeBetween(anchor, hit);
-    }
-    if (anchor.kind === "row") {
-      const row = hit.kind === "colHeader" ? -1 : hit.row;
-      return row < 0 || row === anchor.row ? null : rowsBetween(anchor.row, row);
-    }
-    const col = hit.kind === "rowHeader" ? -1 : hit.col;
-    return col < 0 || col === anchor.col ? null : colsBetween(anchor.col, col);
-  }, []);
+  const dragTo = useCallback(
+    (anchor: DragAnchor, hit: Exclude<Hit, null>): Area | null => {
+      if (hit.kind === "corner") return null;
+      if (anchor.kind === "cell") {
+        if (hit.kind !== "cell") return null;
+        if (hit.row === anchor.row && hit.col === anchor.col) return null;
+        return rangeWithMerges(anchor, hit);
+      }
+      if (anchor.kind === "row") {
+        const row = hit.kind === "colHeader" ? -1 : hit.row;
+        return row < 0 || row === anchor.row ? null : rowsBetween(anchor.row, row);
+      }
+      const col = hit.kind === "rowHeader" ? -1 : hit.col;
+      return col < 0 || col === anchor.col ? null : colsBetween(anchor.col, col);
+    },
+    [rangeWithMerges],
+  );
 
   /**
    * Carries a drag on while the pointer is held past an edge of the viewport.
@@ -4995,7 +5088,7 @@ export function CanvasGrid({
         } else if (selection.kind === "column") {
           onSelect(colsBetween(selection.anchor, hit.col));
         } else {
-          onSelect(rangeBetween(selectionAnchor(selection), { row: hit.row, col: hit.col }));
+          onSelect(rangeWithMerges(selectionAnchor(selection), { row: hit.row, col: hit.col }));
         }
         return;
       }
@@ -5692,7 +5785,21 @@ export function CanvasGrid({
     const anchor = selectionAnchor(selection);
     const shown: Selection =
       selection.kind === "areas" ? { kind: "cell", row: anchor.row, col: anchor.col } : selection;
-    const edge = shown.kind === "range" ? shown.edge : anchor;
+    /**
+     * A merged cell's far corner is where Shift walks from: pressing Shift+Right
+     * on a merged `B2:C3` has to reach `D`, and stepping one column past the
+     * anchor would land inside the merge and select nothing new.
+     */
+    const anchorMerge = shown.kind === "range" ? null : mergeAt(anchor.row, anchor.col);
+    const edge =
+      shown.kind === "range"
+        ? shown.edge
+        : anchorMerge
+          ? {
+              row: anchorMerge.row + anchorMerge.rows - 1,
+              col: anchorMerge.col + anchorMerge.cols - 1,
+            }
+          : anchor;
 
     // Ctrl belongs to the sheet rather than the cursor: Excel jumps to the two
     // corners with Ctrl+Home/End and steps between sheets with Ctrl+PageUp/Down.
@@ -5706,11 +5813,11 @@ export function CanvasGrid({
           // Shift turns the jump into an extension, as it does for the arrows:
           // Excel's Ctrl+Shift+Home takes the block back to A1 rather than
           // dropping the block and landing on it.
-          if (event.shiftKey) onSelect(rangeBetween(anchor, { row: 0, col: 0 }));
+          if (event.shiftKey) onSelect(rangeWithMerges(anchor, { row: 0, col: 0 }));
           else select(0, 0);
           break;
         case "End":
-          if (event.shiftKey) onSelect(rangeBetween(anchor, { row: lastRow, col: lastCol }));
+          if (event.shiftKey) onSelect(rangeWithMerges(anchor, { row: lastRow, col: lastCol }));
           else select(lastRow, lastCol);
           break;
         case " ":
@@ -5894,7 +6001,7 @@ export function CanvasGrid({
         select(target.row, target.col);
         return;
       }
-      onSelect(rangeBetween(anchor, target));
+      onSelect(rangeWithMerges(anchor, target));
     };
 
     switch (event.key) {
