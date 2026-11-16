@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import {
+  AppWindow,
   ChevronDown,
   ChevronRight,
   EllipsisVertical,
@@ -22,6 +25,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -363,6 +367,36 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const removeRoot = (path: string) =>
     setRoots(storeTreeRoots(roots.filter((root) => root !== path)));
 
+  /** The menu a workbook's row offers: its own program, or where it lives. */
+  const workbookMenu = (path: string) => (
+    <ContextMenuContent className="min-w-40">
+      <ContextMenuItem
+        icon={<AppWindow className="size-3" />}
+        onSelect={() => void openPath(path).catch(() => toast.error(t("toast.openFailed")))}
+      >
+        {t("tree.openWithDefault")}
+      </ContextMenuItem>
+      <ContextMenuItem
+        icon={<FolderOpen className="size-3" />}
+        onSelect={() => void revealItemInDir(path).catch(() => toast.error(t("toast.openFailed")))}
+      >
+        {t("tree.openLocation")}
+      </ContextMenuItem>
+    </ContextMenuContent>
+  );
+
+  /** The menu a folder's row offers: the folder itself, opened in the file manager. */
+  const folderMenu = (path: string) => (
+    <ContextMenuContent className="min-w-40">
+      <ContextMenuItem
+        icon={<FolderOpen className="size-3" />}
+        onSelect={() => void openPath(path).catch(() => toast.error(t("toast.openFailed")))}
+      >
+        {t("tree.openInExplorer")}
+      </ContextMenuItem>
+    </ContextMenuContent>
+  );
+
   const folderRow = (path: string, depth: number, root: boolean) => {
     const node = nodes.get(path);
     const expanded = open.has(path);
@@ -473,6 +507,13 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               }}
             >
               <ContextMenuItem
+                icon={<FolderOpen className="size-3" />}
+                onSelect={() => void openPath(path).catch(() => toast.error(t("toast.openFailed")))}
+              >
+                {t("tree.openInExplorer")}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
                 icon={<Pencil className="size-3" />}
                 onSelect={() => startRename(path)}
               >
@@ -484,7 +525,10 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
             </ContextMenuContent>
           </ContextMenu>
         ) : (
-          head
+          <ContextMenu>
+            <ContextMenuTrigger asChild>{head}</ContextMenuTrigger>
+            {folderMenu(path)}
+          </ContextMenu>
         )}
         {/* A renamed root keeps the real name and where it lives in sight, one
             level in, in the same grey the root row itself wears unnamed. */}
@@ -530,21 +574,26 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     const current = currentPath !== null && folderKey(currentPath) === folderKey(entry.path);
     return (
       <li key={entry.path}>
-        <button
-          type="button"
-          onClick={() => onOpenFile(entry.path)}
-          title={entry.path}
-          data-current={current || undefined}
-          className={cn(
-            "flex w-full min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
-            LINK,
-            current && "bg-accent/60 font-medium",
-          )}
-          style={{ paddingLeft: 16 + depth * 12 }}
-        >
-          <FileSpreadsheet className="size-3.5 shrink-0" />
-          <span className="whitespace-nowrap">{entry.name}</span>
-        </button>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <button
+              type="button"
+              onClick={() => onOpenFile(entry.path)}
+              title={entry.path}
+              data-current={current || undefined}
+              className={cn(
+                "flex w-full min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
+                LINK,
+                current && "bg-accent/60 font-medium",
+              )}
+              style={{ paddingLeft: 16 + depth * 12 }}
+            >
+              <FileSpreadsheet className="size-3.5 shrink-0" />
+              <span className="whitespace-nowrap">{entry.name}</span>
+            </button>
+          </ContextMenuTrigger>
+          {workbookMenu(entry.path)}
+        </ContextMenu>
       </li>
     );
   };
@@ -556,20 +605,25 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     const current = currentPath !== null && folderKey(currentPath) === folderKey(found.path);
     return (
       <li key={found.path}>
-        <button
-          type="button"
-          onClick={() => onOpenFile(found.path)}
-          title={found.path}
-          className={cn(
-            "flex w-full min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
-            LINK,
-            current && "bg-accent/60 font-medium",
-          )}
-          style={{ paddingLeft: 16 + depth * 12 }}
-        >
-          <FileSpreadsheet className="size-3.5 shrink-0" />
-          <span className="whitespace-nowrap">{found.name}</span>
-        </button>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <button
+              type="button"
+              onClick={() => onOpenFile(found.path)}
+              title={found.path}
+              className={cn(
+                "flex w-full min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
+                LINK,
+                current && "bg-accent/60 font-medium",
+              )}
+              style={{ paddingLeft: 16 + depth * 12 }}
+            >
+              <FileSpreadsheet className="size-3.5 shrink-0" />
+              <span className="whitespace-nowrap">{found.name}</span>
+            </button>
+          </ContextMenuTrigger>
+          {workbookMenu(found.path)}
+        </ContextMenu>
       </li>
     );
   };
@@ -585,21 +639,26 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     const Face = expanded ? FolderOpen : Folder;
     return (
       <li key={key}>
-        <div
-          className="flex items-center rounded-sm hover:bg-accent/50"
-          style={{ paddingLeft: 4 + depth * 12 }}
-        >
-          <button
-            type="button"
-            onClick={() => toggleFold(key)}
-            aria-expanded={expanded}
-            className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs"
-          >
-            <Chevron className="size-3 shrink-0 text-muted-foreground" />
-            <Face className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="whitespace-nowrap">{name}</span>
-          </button>
-        </div>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              className="flex items-center rounded-sm hover:bg-accent/50"
+              style={{ paddingLeft: 4 + depth * 12 }}
+            >
+              <button
+                type="button"
+                onClick={() => toggleFold(key)}
+                aria-expanded={expanded}
+                className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs"
+              >
+                <Chevron className="size-3 shrink-0 text-muted-foreground" />
+                <Face className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="whitespace-nowrap">{name}</span>
+              </button>
+            </div>
+          </ContextMenuTrigger>
+          {folderMenu(key)}
+        </ContextMenu>
         {expanded && (
           <ul>
             {[...node.folders].map(([childName, child]) =>
@@ -619,21 +678,31 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     const Face = expanded ? FolderOpen : Folder;
     return (
       <li key={root}>
-        <div className="flex items-center rounded-sm hover:bg-accent/50" style={{ paddingLeft: 4 }}>
-          <button
-            type="button"
-            onClick={() => toggleFold(root)}
-            aria-expanded={expanded}
-            className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs"
-          >
-            <Chevron className="size-3 shrink-0 text-muted-foreground" />
-            <Face className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="whitespace-nowrap">{names[folderKey(root)] ?? fileName(root)}</span>
-            <span className="min-w-0 flex-1 whitespace-nowrap text-[10px] text-muted-foreground">
-              {folderName(root)}
-            </span>
-          </button>
-        </div>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              className="flex items-center rounded-sm hover:bg-accent/50"
+              style={{ paddingLeft: 4 }}
+            >
+              <button
+                type="button"
+                onClick={() => toggleFold(root)}
+                aria-expanded={expanded}
+                className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs"
+              >
+                <Chevron className="size-3 shrink-0 text-muted-foreground" />
+                <Face className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="whitespace-nowrap">
+                  {names[folderKey(root)] ?? fileName(root)}
+                </span>
+                <span className="min-w-0 flex-1 whitespace-nowrap text-[10px] text-muted-foreground">
+                  {folderName(root)}
+                </span>
+              </button>
+            </div>
+          </ContextMenuTrigger>
+          {folderMenu(root)}
+        </ContextMenu>
         {expanded && (
           <ul>
             {[...node.folders].map(([name, child]) =>
