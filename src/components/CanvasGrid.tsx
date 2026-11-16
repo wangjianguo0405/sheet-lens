@@ -9,20 +9,16 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Eye, EyeOff } from "lucide-react";
+import { Copy, Eye, EyeOff, Hash, List, MessageSquareText, Search } from "lucide-react";
 
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { FilterButton } from "@/components/FilterButton";
-import { ColorPalette } from "@/components/ColorPalette";
 import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Accelerated";
 import { ShapeLayer, type ShapeDebugFacts } from "@/components/ShapeLayer";
 import { canvasTheme } from "@/lib/canvasTheme";
@@ -109,6 +105,7 @@ import {
   rowsBetween,
   selectionAnchor,
   selectionCovers,
+  selectionRef as referenceOf,
   toggleArea,
   withArea,
   type Area,
@@ -499,12 +496,14 @@ interface GridProps {
    * Null is no split; a zero row or column means only the other axis is split.
    */
   split?: { row: number; col: number } | null;
-  /** Moves a split line that is being dragged to a new sheet row/column. */
+  /** Where a split line is being dragged to a new sheet row/column. */
   onSplitChange?: (next: { row: number; col: number }) => void;
-  /** Shades the selection, or lifts the shading off it when `fill` is null. */
-  onMark: (fill: string | null) => void;
-  /** The colour the toolbar's bucket is holding, so the palette can ring it. */
-  markColor: string;
+  /** Where a cell's right-click put the mini toolbar, or null when it is away. */
+  onMiniToolbar?: (at: { x: number; y: number } | null) => void;
+  /** Shows the active cell's note, or clears it when null. */
+  onPreviewNote?: (note: { row: number; col: number } | null) => void;
+  /** Asks the search panel to look for a value. */
+  onSearchValue?: (text: string) => void;
   onDetail?: (cell: Cell | null) => void;
   /** The extent actually on screen, which can exceed calamine's range. */
   onExtent?: (rows: number, cols: number) => void;
@@ -852,8 +851,9 @@ export function CanvasGrid({
   sessionOutline,
   split,
   onSplitChange,
-  onMark,
-  markColor,
+  onMiniToolbar,
+  onPreviewNote,
+  onSearchValue,
   onDetail,
   onExtent,
   onFiltered,
@@ -5158,13 +5158,18 @@ export function CanvasGrid({
     const hit = hitAt(event.clientX, event.clientY);
     if (!hit || hit.kind === "corner") {
       aimMenuAt(null);
+      onMiniToolbar?.(null);
       return;
     }
     if (hit.kind === "cell") {
       aimMenuAt(null);
       if (!selectionCovers(selection, hit.row, hit.col)) select(hit.row, hit.col);
+      onMiniToolbar?.({ x: event.clientX, y: event.clientY });
       return;
     }
+    // A heading's menu acts on the run, not on one cell, so the mini toolbar
+    // (Excel's formatting strip) stays away.
+    onMiniToolbar?.(null);
     // A press inside what is selected leaves it alone — a run of whole rows, or
     // a block of cells whose rows the heading then acts on — so a whole stretch
     // can be coloured at once by right-clicking any part of it. A press
@@ -6474,6 +6479,18 @@ export function CanvasGrid({
   const tabBarLeftPane =
     (splitGeometry && splitGeometry.x > headerW ? splitGeometry.x : box.width) * (zoom / 100);
 
+  /**
+   * What the cell's menu offers: the active cell (a right-click inside a block
+   * leaves the block, so this is the cell its commands act on), its note and
+   * validation, and the text the search item would use.
+   */
+  const menuCell = selectionAnchor(selection);
+  const menuNote = notesByCell.get(cellKey(sheetColsGuess, menuCell.row, menuCell.col)) ?? null;
+  const menuDropdown = dropdownRuleAt(menuCell.row, menuCell.col);
+  const menuText = cellAt(menuCell.row, menuCell.col)?.text ?? "";
+  const menuNoteShowing = previewNote?.row === menuCell.row && previewNote?.col === menuCell.col;
+  const menuNoteLabel = t(menuNoteShowing ? "grid.hideNote" : "grid.showNote");
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {bar}
@@ -6494,6 +6511,7 @@ export function CanvasGrid({
           <ContextMenuTrigger asChild>
             <div
               ref={viewportRef}
+              data-sheet-viewport
               tabIndex={0}
               onScroll={handleScroll}
               onClick={handleClick}
@@ -6512,9 +6530,62 @@ export function CanvasGrid({
               <div style={{ width: contentW, height: contentH }} />
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="min-w-[13.5rem]" onKeyDown={pickByAccelerator}>
+          <ContextMenuContent
+            data-cell-menu
+            className="min-w-[13.5rem]"
+            onKeyDown={pickByAccelerator}
+          >
+            <ContextMenuItem
+              data-accelerator={acceleratorOf(t("grid.copy"))}
+              icon={<Copy />}
+              onSelect={() => void copySelection()}
+            >
+              <Accelerated label={t("grid.copy")} />
+            </ContextMenuItem>
+            {!menuTarget && (
+              <>
+                <ContextMenuItem
+                  data-accelerator={acceleratorOf(t("grid.copyReference"))}
+                  icon={<Hash />}
+                  onSelect={() => void copyText(referenceOf(selection))}
+                >
+                  <Accelerated label={t("grid.copyReference")} />
+                </ContextMenuItem>
+                {(menuNote || menuDropdown || menuText !== "") && <ContextMenuSeparator />}
+                {menuNote && (
+                  <ContextMenuItem
+                    data-accelerator={acceleratorOf(menuNoteLabel)}
+                    icon={<MessageSquareText />}
+                    onSelect={() => onPreviewNote?.(menuNoteShowing ? null : menuCell)}
+                  >
+                    <Accelerated label={menuNoteLabel} />
+                  </ContextMenuItem>
+                )}
+                {menuDropdown && (
+                  <ContextMenuItem
+                    data-accelerator={acceleratorOf(t("grid.pickFromList"))}
+                    icon={<List />}
+                    onSelect={() =>
+                      openValueList(menuDropdown, menuCell.row, menuCell.col, "pointer")
+                    }
+                  >
+                    <Accelerated label={t("grid.pickFromList")} />
+                  </ContextMenuItem>
+                )}
+                {menuText !== "" && (
+                  <ContextMenuItem
+                    data-accelerator={acceleratorOf(t("grid.searchValue"))}
+                    icon={<Search />}
+                    onSelect={() => onSearchValue?.(menuText)}
+                  >
+                    <Accelerated label={t("grid.searchValue")} />
+                  </ContextMenuItem>
+                )}
+              </>
+            )}
             {menuTarget && (
               <>
+                <ContextMenuSeparator />
                 <ContextMenuItem
                   data-accelerator={acceleratorOf(t("grid.hide"))}
                   icon={<EyeOff />}
@@ -6529,15 +6600,8 @@ export function CanvasGrid({
                 >
                   <Accelerated label={t("grid.unhide")} />
                 </ContextMenuItem>
-                <ContextMenuSeparator />
               </>
             )}
-            <ContextMenuSub>
-              <ContextMenuSubTrigger>{t("palette.fill")}</ContextMenuSubTrigger>
-              <ContextMenuSubContent>
-                <ColorPalette variant="context" current={markColor} onPick={onMark} />
-              </ContextMenuSubContent>
-            </ContextMenuSub>
           </ContextMenuContent>
         </ContextMenu>
 

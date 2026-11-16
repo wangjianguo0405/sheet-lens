@@ -23,7 +23,8 @@ import {
   Ungroup,
   WrapText,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,9 @@ interface RibbonProps {
   /** Whether the cursor's row and column are washed, and the switch for it. */
   focusCell: boolean;
   onToggleFocusCell: () => void;
+  /** Where a cell's right-click put the mini toolbar, or null when it is away. */
+  miniToolbar: { x: number; y: number } | null;
+  onCloseMiniToolbar: () => void;
 }
 
 /**
@@ -176,6 +180,362 @@ function SizeBox({ sizePx, onPick }: { sizePx: number; onPick: (sizePx: number) 
 }
 
 /**
+ * The face picker, shared by the ribbon and the mini toolbar. The toolbar asks
+ * for the narrow form, which is all a floating strip has room for.
+ */
+function FontFamilySelect({
+  family,
+  fonts,
+  onPick,
+  compact = false,
+}: {
+  family: string | null;
+  fonts: string[];
+  onPick: (family: string) => void;
+  compact?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <DropdownMenu>
+      <Hint label={t("ribbon.fontFamily")}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn(
+              "h-6 justify-between gap-1 px-1.5 text-[11px] font-normal",
+              compact ? "max-w-24" : "max-w-32",
+            )}
+          >
+            <span className="truncate">{family ?? t("ribbon.defaultFont")}</span>
+            <ChevronDown className="size-3 shrink-0 opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+      </Hint>
+      <DropdownMenuContent align="start" className="max-h-80 min-w-44 overflow-y-auto">
+        <DropdownMenuRadioGroup value={family ?? ""} onValueChange={(value) => onPick(value)}>
+          {fonts.map((name) => (
+            <DropdownMenuRadioItem
+              key={name}
+              value={name}
+              className="text-xs"
+              style={{ fontFamily: name }}
+            >
+              {name}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The review fill, as Excel's paint bucket and its caret. */
+function FillColorSplit({
+  color,
+  onPick,
+}: {
+  color: string;
+  onPick: (fill: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-stretch">
+      <Hint label={t("toolbar.fill")}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 rounded-r-none px-1.5"
+          onClick={() => onPick(color)}
+        >
+          <span className="flex flex-col items-center justify-center">
+            <PaintBucket className="size-3.5" />
+            <span
+              aria-hidden
+              className="mt-px h-[3px] w-4 rounded-[1px] ring-1 ring-foreground/20 ring-inset"
+              style={{ background: color }}
+            />
+          </span>
+        </Button>
+      </Hint>
+      <DropdownMenu>
+        <Hint label={t("toolbar.fill")}>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" className="h-6 rounded-l-none px-0.5">
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+        </Hint>
+        <DropdownMenuContent align="start" className="min-w-[13.5rem]">
+          <ColorPalette variant="dropdown" current={color} onPick={onPick} />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+/** The font colour, the A and the caret beside it. */
+function FontColorSplit({
+  color,
+  onPick,
+}: {
+  color: string;
+  onPick: (color: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-stretch">
+      <Hint label={t("ribbon.fontColor")}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 rounded-r-none px-1.5"
+          // On the press rather than the click: the press is what would take the
+          // focus, and with it the field's selection. Painting on it leaves the
+          // field open and the stretch still selected.
+          onPointerDown={(event) => {
+            event.preventDefault();
+            onPick(color);
+          }}
+          aria-label={t("ribbon.fontColor")}
+        >
+          <span className="flex flex-col items-center justify-center">
+            <span className="text-[11px] leading-none font-semibold">A</span>
+            <span
+              aria-hidden
+              className="mt-px h-[3px] w-4 rounded-[1px] ring-1 ring-foreground/20 ring-inset"
+              style={{ background: color }}
+            />
+          </span>
+        </Button>
+      </Hint>
+      <DropdownMenu>
+        <Hint label={t("ribbon.fontColor")}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 rounded-l-none px-0.5"
+              aria-label={t("ribbon.moreFontColors")}
+            >
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+        </Hint>
+        <DropdownMenuContent align="start" className="min-w-[13.5rem]">
+          <ColorPalette
+            variant="dropdown"
+            current={color}
+            onPick={onPick}
+            clearLabel={t("ribbon.fontColorAuto")}
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+/**
+ * Excel's mini toolbar: the formatting controls that follow a cell's
+ * right-click, floating above the context menu. It holds what this viewer has
+ * — the face, the size, the three switches, the two colours and the
+ * alignments — rather than Excel's full set, and every button is the ribbon's
+ * own control.
+ */
+function MiniToolbar({
+  at,
+  activeStyle,
+  fonts,
+  onFormat,
+  markColor,
+  onMark,
+  fontColor,
+  onFontColor,
+  onClose,
+}: {
+  at: { x: number; y: number };
+  activeStyle: ActiveCellStyle | null;
+  fonts: string[];
+  onFormat: (patch: CellFormat | null) => void;
+  markColor: string;
+  onMark: (fill: string | null) => void;
+  fontColor: string;
+  onFontColor: (color: string | null) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const style = activeStyle?.style ?? null;
+  const family = activeStyle?.family ?? null;
+  const sizePx = activeStyle?.sizePx ?? 12;
+  const horizontal = style?.horizontal ?? null;
+  const vertical = style?.vertical ?? "bottom";
+
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  /**
+   * Excel puts the strip above the context menu when there is room and below it
+   * when there is not, aligned with the menu's left edge. The menu is a Radix
+   * portal that has finished positioning by the next frame, so the measurement
+   * waits one; the strip stays hidden until it has an answer.
+   */
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setPos(null);
+    // The menu runs a 100ms zoom/fade on open; measuring during it would align
+    // to the animated rect and leave the strip a few pixels off. It stays
+    // hidden until the animation has settled.
+    const timer = window.setTimeout(() => {
+      const margin = 8;
+      const menus = document.querySelectorAll<HTMLElement>("[data-cell-menu]");
+      const rect = menus[menus.length - 1]?.getBoundingClientRect();
+      const sheet = document
+        .querySelector<HTMLElement>("[data-sheet-viewport]")
+        ?.getBoundingClientRect();
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
+      // The near edge: a menu that opened left of the pointer (the cell is near
+      // the right edge) makes the strip right-align to the menu, otherwise the
+      // left edges meet. The menu is anchored at the cell, so this is also the
+      // cell's near edge.
+      const alignRight = rect ? (rect.left + rect.right) / 2 < at.x : at.x > window.innerWidth / 2;
+      let left = rect
+        ? alignRight
+          ? rect.right - width
+          : rect.left
+        : alignRight
+          ? at.x - width
+          : at.x;
+      left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+      // Above the menu while that stays inside the sheet. A click on the top
+      // rows would otherwise put the strip over the ribbon, and Excel puts it
+      // below the menu there.
+      const sheetTop = sheet?.top ?? margin;
+      let top = (rect ? rect.top : at.y) - height - 4;
+      if (top < sheetTop + 4) top = (rect ? rect.bottom : at.y) + 4;
+      top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
+      setPos({ left, top });
+    }, 140);
+    return () => window.clearTimeout(timer);
+  }, [at]);
+
+  // The toolbar is its own layer, so it has to dismiss itself: a press outside
+  // it and its own dropdowns, a scroll (the selection moves under it), Escape,
+  // or a window resize. A press inside a Radix popper is a palette or a menu
+  // belonging to one of its buttons, not a dismissal.
+  useEffect(() => {
+    const onDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-mini-toolbar]")) return;
+      if (target?.closest("[data-radix-popper-content-wrapper]")) return;
+      onClose();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    // Only the sheet's own scroll dismisses it. Listening on the window caught
+    // the scroll a dropdown does to bring its palette on screen, which closed
+    // the strip the moment a colour was opened.
+    const viewport = document.querySelector<HTMLElement>("[data-sheet-viewport]");
+    const onScroll = () => onClose();
+    document.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("keydown", onKey);
+    viewport?.addEventListener("scroll", onScroll);
+    window.addEventListener("resize", onClose);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("keydown", onKey);
+      viewport?.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      data-mini-toolbar
+      style={{
+        left: pos?.left ?? 0,
+        top: pos?.top ?? 0,
+        visibility: pos ? "visible" : "hidden",
+      }}
+      className="pointer-events-auto fixed z-50 flex flex-col gap-1 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+    >
+      <div className="flex items-center gap-0.5">
+        <FontFamilySelect
+          family={family}
+          fonts={fonts}
+          onPick={(value) => onFormat({ family: value })}
+          compact
+        />
+        <SizeBox sizePx={sizePx} onPick={(value) => onFormat({ sizePx: value })} />
+        <Toggle
+          pressed={horizontal === "left"}
+          onClick={() => onFormat({ horizontal: "left" })}
+          title={t("ribbon.alignLeft")}
+        >
+          <AlignLeft className="size-3.5" />
+        </Toggle>
+        <Toggle
+          pressed={horizontal === "center"}
+          onClick={() => onFormat({ horizontal: "center" })}
+          title={t("ribbon.alignCenter")}
+        >
+          <AlignCenter className="size-3.5" />
+        </Toggle>
+        <Toggle
+          pressed={horizontal === "right"}
+          onClick={() => onFormat({ horizontal: "right" })}
+          title={t("ribbon.alignRight")}
+        >
+          <AlignRight className="size-3.5" />
+        </Toggle>
+        <Toggle
+          pressed={vertical === "middle"}
+          onClick={() => onFormat({ vertical: vertical === "middle" ? "bottom" : "middle" })}
+          title={t("ribbon.alignMiddle")}
+        >
+          <AlignCenterVertical className="size-3.5" />
+        </Toggle>
+        <Toggle
+          pressed={style?.wrap ?? false}
+          onClick={() => onFormat({ wrap: !(style?.wrap ?? false) })}
+          title={t("ribbon.wrap")}
+        >
+          <WrapText className="size-3.5" />
+        </Toggle>
+      </div>
+      <div className="flex items-center gap-0.5">
+        <Toggle
+          pressed={style?.bold ?? false}
+          onClick={() => onFormat({ bold: !(style?.bold ?? false) })}
+          title={t("ribbon.bold")}
+        >
+          <Bold className="size-3.5" />
+        </Toggle>
+        <Toggle
+          pressed={style?.italic ?? false}
+          onClick={() => onFormat({ italic: !(style?.italic ?? false) })}
+          title={t("ribbon.italic")}
+        >
+          <Italic className="size-3.5" />
+        </Toggle>
+        <Toggle
+          pressed={style?.underline === "single" || style?.underline === "double"}
+          onClick={() => onFormat({ underline: style?.underline ? null : "single" })}
+          title={t("ribbon.underline")}
+        >
+          <Underline className="size-3.5" />
+        </Toggle>
+        <FillColorSplit color={markColor} onPick={onMark} />
+        <FontColorSplit color={fontColor} onPick={onFontColor} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/**
  * The ribbon under the file tabs: what can be done to the sheet on screen.
  *
  * Excel's ribbon is a strip of labelled groups, and this is a short version of
@@ -204,6 +564,8 @@ export function Ribbon({
   onGroup,
   focusCell,
   onToggleFocusCell,
+  miniToolbar,
+  onCloseMiniToolbar,
 }: RibbonProps) {
   const { t } = useTranslation();
 
@@ -284,37 +646,11 @@ export function Ribbon({
 
       {/* Excel's Font group: the face, the size, and the three switches. */}
       <Group label={t("ribbon.font")}>
-        <DropdownMenu>
-          <Hint label={t("ribbon.fontFamily")}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 max-w-32 justify-between gap-1 px-1.5 text-[11px] font-normal"
-              >
-                <span className="truncate">{family ?? t("ribbon.defaultFont")}</span>
-                <ChevronDown className="size-3 shrink-0 opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-          </Hint>
-          <DropdownMenuContent align="start" className="max-h-80 min-w-44 overflow-y-auto">
-            <DropdownMenuRadioGroup
-              value={family ?? ""}
-              onValueChange={(value) => onFormat({ family: value })}
-            >
-              {fonts.map((name) => (
-                <DropdownMenuRadioItem
-                  key={name}
-                  value={name}
-                  className="text-xs"
-                  style={{ fontFamily: name }}
-                >
-                  {name}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <FontFamilySelect
+          family={family}
+          fonts={fonts}
+          onPick={(value) => onFormat({ family: value })}
+        />
 
         <SizeBox sizePx={activeStyle?.sizePx ?? 12} onPick={(sizePx) => onFormat({ sizePx })} />
 
@@ -340,58 +676,12 @@ export function Ribbon({
           <Underline className="size-3.5" />
         </Toggle>
 
-        {/* Excel's font colour: a split button, the A painting with the colour
-            the button is holding and the caret beside it opening the palette.
-            It sits with the font group because the colour is the font's, which
-            is also where Excel keeps it. */}
-        <div className="flex items-stretch">
-          <Hint label={t("ribbon.fontColor")}>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 rounded-r-none px-1.5"
-              // On the press rather than the click: the press is what would
-              // take the focus, and with it the field's selection. Painting on
-              // it leaves the field open and the stretch still selected.
-              onPointerDown={(event) => {
-                event.preventDefault();
-                onFontColor(fontColor);
-              }}
-              aria-label={t("ribbon.fontColor")}
-            >
-              <span className="flex flex-col items-center justify-center">
-                <span className="text-[11px] leading-none font-semibold">A</span>
-                <span
-                  aria-hidden
-                  className="mt-px h-[3px] w-4 rounded-[1px] ring-1 ring-foreground/20 ring-inset"
-                  style={{ background: fontColor }}
-                />
-              </span>
-            </Button>
-          </Hint>
-          <DropdownMenu>
-            <Hint label={t("ribbon.fontColor")}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 rounded-l-none px-0.5"
-                  aria-label={t("ribbon.moreFontColors")}
-                >
-                  <ChevronDown className="size-3" />
-                </Button>
-              </DropdownMenuTrigger>
-            </Hint>
-            <DropdownMenuContent align="start" className="min-w-[13.5rem]">
-              <ColorPalette
-                variant="dropdown"
-                current={fontColor}
-                onPick={(color) => onFontColor(color)}
-                clearLabel={t("ribbon.fontColorAuto")}
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        {/* Excel keeps the fill bucket in the Font group, ahead of the font
+            colour; its colours are the app's own and never touch the file. */}
+        <FillColorSplit color={markColor} onPick={onMark} />
+
+        {/* The colour is the font's, which is why it sits in this group. */}
+        <FontColorSplit color={fontColor} onPick={onFontColor} />
       </Group>
 
       {/* Alignment, split the way Excel splits it: across, then down. */}
@@ -447,44 +737,6 @@ export function Ribbon({
         </Toggle>
       </Group>
 
-      {/* The review fill, as Excel's paint bucket: the bucket itself fills the
-          selection with the colour it is holding, and the caret beside it opens
-          the palette. Its colours are the app's own — the file is never
-          written to. */}
-      <Group label={t("ribbon.color")}>
-        <div className="flex items-stretch">
-          <Hint label={t("toolbar.fill")}>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 rounded-r-none px-1.5"
-              onClick={() => onMark(markColor)}
-            >
-              <span className="flex flex-col items-center justify-center">
-                <PaintBucket className="size-3.5" />
-                <span
-                  aria-hidden
-                  className="mt-px h-[3px] w-4 rounded-[1px] ring-1 ring-foreground/20 ring-inset"
-                  style={{ background: markColor }}
-                />
-              </span>
-            </Button>
-          </Hint>
-          <DropdownMenu>
-            <Hint label={t("toolbar.fill")}>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost" className="h-6 rounded-l-none px-0.5">
-                  <ChevronDown className="size-3" />
-                </Button>
-              </DropdownMenuTrigger>
-            </Hint>
-            <DropdownMenuContent align="start" className="min-w-[13.5rem]">
-              <ColorPalette variant="dropdown" current={markColor} onPick={onMark} />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </Group>
-
       {/* Data: the filter switch and the outline groups, where Excel keeps
           them. Both are session-only, like everything else on this strip. */}
       <Group label={t("ribbon.data")}>
@@ -531,6 +783,19 @@ export function Ribbon({
           </DropdownMenuContent>
         </DropdownMenu>
       </Group>
+      {miniToolbar && (
+        <MiniToolbar
+          at={miniToolbar}
+          activeStyle={activeStyle}
+          fonts={fonts}
+          onFormat={onFormat}
+          markColor={markColor}
+          onMark={onMark}
+          fontColor={fontColor}
+          onFontColor={onFontColor}
+          onClose={onCloseMiniToolbar}
+        />
+      )}
     </div>
   );
 }

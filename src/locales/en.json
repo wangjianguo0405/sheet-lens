@@ -72,7 +72,6 @@
     "alignMiddle": "Middle align",
     "alignBottom": "Bottom align",
     "wrap": "Wrap text",
-    "color": "Colour",
     "data": "Data",
     "filter": "Filter",
     "clearFilter": "Remove filter",
@@ -165,8 +164,7 @@
     "theme": "Theme colours",
     "standard": "Standard colours",
     "recent": "Recent colours",
-    "clear": "No Fill",
-    "fill": "Fill colour"
+    "clear": "No Fill"
   },
   "sheets": {
     "filter": "Filter sheets",
@@ -247,6 +245,12 @@
     "resizeColumn": "Resize column {{column}}",
     "resizeColumnHint": "Drag to resize, double-click to fit",
     "resizeRow": "Resize row {{row}}",
+    "copy": "Copy (&C)",
+    "copyReference": "Copy reference (&R)",
+    "showNote": "Show note (&N)",
+    "hideNote": "Hide note (&N)",
+    "pickFromList": "Choose from list (&L)",
+    "searchValue": "Search for this value (&F)",
     "hide": "Hide (&H)",
     "unhide": "Unhide (&U)"
   },

@@ -584,7 +584,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               className={cn(
                 "flex w-full min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
                 LINK,
-                current && "bg-accent/60 font-medium",
+                current && "bg-[#107C41]/15 font-medium ring-1 ring-[#107C41]/50 ring-inset",
               )}
               style={{ paddingLeft: 16 + depth * 12 }}
             >
@@ -614,7 +614,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               className={cn(
                 "flex w-full min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 hover:underline",
                 LINK,
-                current && "bg-accent/60 font-medium",
+                current && "bg-[#107C41]/15 font-medium ring-1 ring-[#107C41]/50 ring-inset",
               )}
               style={{ paddingLeft: 16 + depth * 12 }}
             >

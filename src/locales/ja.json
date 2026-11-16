@@ -72,7 +72,6 @@
     "alignMiddle": "上下中央揃え",
     "alignBottom": "下揃え",
     "wrap": "折り返して全体を表示",
-    "color": "色",
     "data": "データ",
     "filter": "フィルター",
     "clearFilter": "フィルターを解除",
@@ -165,8 +164,7 @@
     "theme": "テーマの色",
     "standard": "標準の色",
     "recent": "最近使用した色",
-    "clear": "塗りつぶしなし",
-    "fill": "塗りつぶしの色"
+    "clear": "塗りつぶしなし"
   },
   "sheets": {
     "filter": "シートを絞り込む",
@@ -245,6 +243,12 @@
     "resizeColumn": "列 {{column}} の幅を変更",
     "resizeColumnHint": "ドラッグで幅を変更、ダブルクリックで自動調整",
     "resizeRow": "行 {{row}} の高さを変更",
+    "copy": "コピー(&C)",
+    "copyReference": "参照をコピー(&R)",
+    "showNote": "コメントを表示(&N)",
+    "hideNote": "コメントを非表示(&N)",
+    "pickFromList": "リストから選択(&L)",
+    "searchValue": "この値を検索(&F)",
     "hide": "非表示(&H)",
     "unhide": "再表示(&U)"
   },

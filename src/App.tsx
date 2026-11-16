@@ -227,6 +227,16 @@ export default function App() {
   const [sheetGroup, setSheetGroup] = useState<{ names: string[]; anchor: string } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   /**
+   * A value the cell's menu asked the search panel to look for. The signal is
+   * bumped on every ask, so asking for the same text twice still runs it.
+   */
+  const [searchSeed, setSearchSeed] = useState<{ text: string; signal: number } | null>(null);
+  const searchFor = useCallback((text: string) => {
+    if (!text) return;
+    setSearchOpen(true);
+    setSearchSeed((prev) => ({ text, signal: (prev?.signal ?? 0) + 1 }));
+  }, []);
+  /**
    * Bumped by Ctrl+F. The panel focuses its input when it opens; this is what
    * brings the keyboard back to it when it is already open, where pressing the
    * shortcut used to put the whole panel away.
@@ -295,6 +305,9 @@ export default function App() {
   /** Whether the reader's folder tree sits beside the sheet list, kept between sessions. */
   const [treeShown, setTreeShown] = useState(readTreeShown);
   const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_W);
+  /** Where a cell's right-click put the mini toolbar, or null when it is away. */
+  const [miniToolbar, setMiniToolbar] = useState<{ x: number; y: number } | null>(null);
+  const closeMiniToolbar = useCallback(() => setMiniToolbar(null), []);
   /** Which panel the left sidebar shows: the sheet list, or the sheet's notes. */
   const [sidebarTab, setSidebarTab] = useState<"sheets" | "notes">("sheets");
   /** The note the sidebar is pointing at, to be shown in the sheet. */
@@ -358,6 +371,10 @@ export default function App() {
     if (!active) return null;
     return active.info.sheets.find((sheet) => sheet.name === active.sheet) ?? null;
   }, [active]);
+
+  // The toolbar belongs to the cell it was opened on; a sheet or workbook
+  // switch leaves it pointing at nothing.
+  useEffect(() => setMiniToolbar(null), [active?.info.path, activeSheet]);
 
   /** The tabs the strip draws, and the sheets Unhide offers, in sheet order. */
   const shown = useMemo(() => (active ? shownSheets(active) : []), [active]);
@@ -1389,6 +1406,7 @@ export default function App() {
           if (!activePath) return;
           event.preventDefault();
           setSearchOpen(true);
+          setSearchSeed(null);
           setSearchFocus((n) => n + 1);
           break;
         case "g":
@@ -1627,6 +1645,8 @@ export default function App() {
                   onGroup={applyOutline}
                   focusCell={focusCell}
                   onToggleFocusCell={() => setFocusCell((on) => !on)}
+                  miniToolbar={miniToolbar}
+                  onCloseMiniToolbar={closeMiniToolbar}
                 />
 
                 {error && (
@@ -1725,8 +1745,9 @@ export default function App() {
                         sessionOutline={active.sessionOutline[active.sheet] ?? null}
                         split={active.splitAt[active.sheet] ?? null}
                         onSplitChange={applySplit}
-                        onMark={applyMark}
-                        markColor={markColor}
+                        onMiniToolbar={setMiniToolbar}
+                        onPreviewNote={handleNotePreview}
+                        onSearchValue={searchFor}
                         onSelect={handleSelect}
                         onDetail={setDetail}
                         onExtent={handleExtent}
@@ -1834,9 +1855,13 @@ export default function App() {
                         <SearchPanel
                           path={active.info.path}
                           sheet={active.sheet}
+                          seed={searchSeed}
                           focusSignal={searchFocus}
                           onJump={handleJump}
-                          onClose={() => setSearchOpen(false)}
+                          onClose={() => {
+                            setSearchOpen(false);
+                            setSearchSeed(null);
+                          }}
                         />
                       </div>
                     </>

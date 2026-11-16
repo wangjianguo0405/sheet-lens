@@ -75,9 +75,10 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
         }}
         style={{ background: fill }}
         className={cn(
-          "size-[22px] rounded-[2px] p-0 ring-1 ring-foreground/15 ring-inset",
-          "focus:ring-2 focus:ring-foreground/60",
-          current === fill && "ring-2 ring-foreground/70",
+          "size-[22px] rounded-none p-0",
+          current === fill
+            ? "relative z-10 shadow-[0_0_0_1px_var(--popover)] [outline:1px_solid_#ED7D31] [outline-offset:1px]"
+            : "ring-1 ring-foreground/15 ring-inset data-[highlighted]:relative data-[highlighted]:z-10 data-[highlighted]:shadow-[0_0_0_1px_var(--popover)] data-[highlighted]:[outline:1px_solid_#ED7D31] data-[highlighted]:[outline-offset:1px]",
         )}
       />
     </Hint>
@@ -93,7 +94,7 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
     <span
       key={`slot ${at}`}
       aria-hidden
-      className="size-[22px] rounded-[2px] ring-1 ring-foreground/15 ring-inset"
+      className="size-[22px] rounded-none ring-1 ring-foreground/15 ring-inset"
     />
   );
 
@@ -113,9 +114,10 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
         }}
         style={{ background: fill }}
         className={cn(
-          "mb-[8px] size-[22px] rounded-[2px] p-0 ring-1 ring-foreground/15 ring-inset",
-          "focus:ring-2 focus:ring-foreground/60",
-          current === fill && "ring-2 ring-foreground/70",
+          "mb-[8px] size-[22px] rounded-none p-0",
+          current === fill
+            ? "relative z-10 shadow-[0_0_0_1px_var(--popover)] [outline:1px_solid_#ED7D31] [outline-offset:1px]"
+            : "ring-1 ring-foreground/15 ring-inset data-[highlighted]:relative data-[highlighted]:z-10 data-[highlighted]:shadow-[0_0_0_1px_var(--popover)] data-[highlighted]:[outline:1px_solid_#ED7D31] data-[highlighted]:[outline-offset:1px]",
         )}
       />
     </Hint>
@@ -127,9 +129,9 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
    * rows — the colours are the separations there, and a border on every one of
    * them would cut the forty into squares Excel does not draw.
    *
-   * Nothing is left to ring them from the outside, either: a hovered tint has
-   * its neighbours below and above painted over any ring drawn outside it, so
-   * the two rings this one can take are drawn inside its own square.
+   * A hovered tint keeps its neighbours from painting over the outline: the
+   * marked swatch is lifted above them, and the outline sits in the gutter,
+   * outside the colour, so the swatch itself keeps its full size.
    */
   const tintSwatch = (fill: string, at: number) => (
     <Hint key={`tint ${at}`} label={fill}>
@@ -142,8 +144,9 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
         style={{ background: fill }}
         className={cn(
           "size-[22px] rounded-none p-0",
-          "focus:ring-2 focus:ring-foreground/60 focus:ring-inset",
-          current === fill && "ring-2 ring-foreground/70 ring-inset",
+          current === fill
+            ? "relative z-10 shadow-[0_0_0_1px_var(--popover)] [outline:1px_solid_#ED7D31] [outline-offset:1px]"
+            : "data-[highlighted]:relative data-[highlighted]:z-10 data-[highlighted]:shadow-[0_0_0_1px_var(--popover)] data-[highlighted]:[outline:1px_solid_#ED7D31] data-[highlighted]:[outline-offset:1px]",
         )}
       />
     </Hint>
@@ -162,7 +165,7 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
    * a slack edge beside it.
    */
   const swatchRow = (slots: ReactNode[], key: number) => (
-    <div key={key} className="grid w-max grid-cols-[repeat(10,22px)] gap-[3px] px-1.5">
+    <div key={key} className="grid w-max grid-cols-[repeat(10,22px)] gap-1.5 px-1.5">
       {slots}
     </div>
   );
@@ -175,7 +178,7 @@ export function ColorPalette({ variant, current, onPick, clearLabel }: ColorPale
         standard row, and not between the rows of tints, which sit against one
         another.
       */}
-      <div className="grid w-max grid-cols-[repeat(10,22px)] gap-x-[3px] px-1.5">
+      <div className="grid w-max grid-cols-[repeat(10,22px)] gap-x-1.5 px-1.5">
         {THEME_COLORS[0].map(themeSwatch)}
         {THEME_COLORS.slice(1).flat().map(tintSwatch)}
       </div>

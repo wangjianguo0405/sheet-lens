@@ -25,6 +25,8 @@ interface SearchPanelProps {
    * the press that finds it open and asks for the keyboard back.
    */
   focusSignal?: number;
+  /** A value the cell's menu asked this panel to look for. */
+  seed?: { text: string; signal: number } | null;
   onJump: (hit: SearchHit) => void;
   onClose: () => void;
 }
@@ -50,7 +52,7 @@ function remember(query: string) {
   if (recentQueries.length > RECENT_LIMIT) recentQueries.length = RECENT_LIMIT;
 }
 
-export function SearchPanel({ path, sheet, focusSignal, onJump, onClose }: SearchPanelProps) {
+export function SearchPanel({ path, sheet, focusSignal, seed, onJump, onClose }: SearchPanelProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -71,6 +73,14 @@ export function SearchPanel({ path, sheet, focusSignal, onJump, onClose }: Searc
     inputRef.current?.focus();
     inputRef.current?.select();
   }, [focusSignal]);
+
+  /** A value the cell's menu asked for: put it in the box and run it. */
+  useEffect(() => {
+    if (!seed) return;
+    setQuery(seed.text);
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [seed]);
 
   /**
    * A search is the reader's once they have looked somewhere with it, and the
