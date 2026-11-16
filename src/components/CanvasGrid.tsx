@@ -5998,6 +5998,21 @@ export function CanvasGrid({
     const moveTo = (row: number, col: number) => {
       const target = { row: clampRow(row), col: clampCol(col) };
       if (!event.shiftKey) {
+        /**
+         * A merged cell is one cell: a step that lands inside it again would be
+         * snapped back to its anchor and move nowhere. Excel steps to the cell
+         * just past the region on that side (merged `B2:C3`: Right lands on D2,
+         * Down on B4), keeping the other axis on the anchor's own row/column.
+         */
+        const merge = mergeAt(anchor.row, anchor.col);
+        if (merge) {
+          if (row > anchor.row) target.row = Math.max(target.row, merge.row + merge.rows);
+          else if (row < anchor.row) target.row = Math.min(target.row, merge.row - 1);
+          if (col > anchor.col) target.col = Math.max(target.col, merge.col + merge.cols);
+          else if (col < anchor.col) target.col = Math.min(target.col, merge.col - 1);
+          target.row = clampRow(target.row);
+          target.col = clampCol(target.col);
+        }
         select(target.row, target.col);
         return;
       }
