@@ -4382,10 +4382,14 @@ export function CanvasGrid({
             // width of the column alone is nothing at all for a column two
             // pixels wide. A merge is painted whole and never spills.
             let left = 0;
+            // How far a centred value's drawing centre sits from the widened
+            // box's own; the field has to wear the same offset as padding.
+            let centerShift = 0;
             if (!merge) {
               const spill = valueBox(view, row, col, w, CELL_PAD_LEFT, CELL_PAD_RIGHT);
               left = spill.left;
               w = spill.w;
+              centerShift = spill.shift;
             }
             // The merge's own rows, as far down the view as the last of them
             // still shows.
@@ -4419,8 +4423,10 @@ export function CanvasGrid({
             // The cell's own insets, scaled with the view: 3 left and 2 right,
             // which is Excel's and is not symmetric. The extra pixel the field
             // is wider by belongs to the right one, so the text ends where the
-            // canvas ends it rather than one pixel short.
-            field.style.paddingLeft = `${CELL_PAD_LEFT * view.zoom}px`;
+            // canvas ends it rather than one pixel short. A centred value is
+            // still centred on its cell, so the widened field's padding takes
+            // twice the shift: padding moves a centred line by half of it.
+            field.style.paddingLeft = `${(CELL_PAD_LEFT + 2 * centerShift) * view.zoom}px`;
             field.style.paddingRight = `${(CELL_PAD_RIGHT + 1) * view.zoom}px`;
             field.style.paddingBottom = "0px";
             field.style.font =

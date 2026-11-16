@@ -1131,6 +1131,12 @@ function paintText(
   runs: RichRun[] | null,
   /** `padRight` is the room a filter header keeps for its button. */
   reserveRight = false,
+  /**
+   * How far right of the widened box's own centre a centred line is drawn.
+   * A centred value spills both ways but stays centred on its cell, so when
+   * one side is blocked the box is not symmetric — see `valueBox`.
+   */
+  centerShift = 0,
 ): void {
   if (text === "") return;
   let available = box.w - padLeft - padRight;
@@ -1289,7 +1295,7 @@ function paintText(
       x = innerX + available;
       align = "right";
     } else if (horizontal === "center" || horizontal === "centerContinuous") {
-      x = innerX + available / 2;
+      x = innerX + available / 2 + centerShift;
       align = "center";
     } else {
       x = innerX;
@@ -2277,6 +2283,7 @@ function paintCellText(
     padRight,
     key === null ? null : (view.cellRich.get(key) ?? null),
     isFilterHeader,
+    spill.shift,
   );
   return true;
 }
@@ -2285,11 +2292,15 @@ function paintCellText(
  * The box an unwrapped value draws in: its own cell, plus the empty cells it
  * is allowed to run on into. Excel gives the value the room on the side its
  * alignment leans — a left-aligned label runs right, a right-aligned one runs
- * left — and cuts it at the first cell that holds something.
+ * left, and a centred one runs both ways — and cuts it at the first cell that
+ * holds something.
  *
  * `left` is how far the box starts before the cell's own left edge; a
  * right-aligned value's right edge, and so the end of its text, stays where
- * the cell puts it.
+ * the cell puts it. A centred value stays centred on its own cell even when
+ * one side is blocked, so its box can grow unequally: `shift` is how far the
+ * centre it draws around sits from the widened box's own, which keeps the text
+ * where Excel puts it while the blocked side is merely clipped.
  *
  * The field a double-click opens over a cell is this same box, which is why it
  * is here rather than inline: a column two pixels wide holds nothing readable,
@@ -2313,24 +2324,52 @@ export function valueBox(
   w: number,
   padLeft: number,
   padRight: number,
-): { left: number; w: number } {
+): { left: number; w: number; shift: number } {
   const cell = view.cellAt(sheetRow, col);
   const text = cell?.text ?? "";
   const style = view.styleAt(sheetRow, col);
   // A cell that shrinks to fit never reaches past its own edge.
-  if (text === "" || style?.wrap || style?.shrink) return { left: 0, w };
+  if (text === "" || style?.wrap || style?.shrink) return { left: 0, w, shift: 0 };
   const horizontal = horizontalOf(style, cell?.kind);
-  if (horizontal !== "left" && horizontal !== "right") return { left: 0, w };
+  if (horizontal !== "left" && horizontal !== "center" && horizontal !== "right") {
+    return { left: 0, w, shift: 0 };
+  }
   // A number or a date that does not fit is drawn as `###` by Excel — never
-  // spilled, whichever side it is aligned to. Spilling one would put its
-  // digits out where Excel shows the hash marks.
-  if (horizontal === "right" && (cell?.kind === "number" || cell?.kind === "date")) {
-    return { left: 0, w };
+  // spilled, whatever side it is aligned to. Spilling one would put its digits
+  // out where Excel shows the hash marks.
+  if (cell?.kind === "number" || cell?.kind === "date") {
+    return { left: 0, w, shift: 0 };
   }
   // Only the reach of what is drawn: a break in an unwrapped value is not a
   // space, so it does not widen the room the value spills into.
   const needed = textWidth(cellFont(view, style), flatText(text)) + padLeft + padRight;
-  if (needed <= w) return { left: 0, w };
+  if (needed <= w) return { left: 0, w, shift: 0 };
+
+  /**
+   * A centred value runs both ways at once. Excel keeps it centred on the
+   * cell's own middle — a neighbour holding something clips it there but does
+   * not push it across — so each side is measured on its own and the two are
+   * not made to match. `over` is how far the ink reaches past the cell on
+   * either side; `shift` then puts the drawing centre back on the cell.
+   */
+  if (horizontal === "center") {
+    const over = (needed - w) / 2;
+    let roomLeft = 0;
+    for (let next = col - 1; roomLeft < over && next >= 0; next -= 1) {
+      if (inRegion(view, view.mergeView.covered, sheetRow, next)) break;
+      if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
+      roomLeft += spanAt(view.cols.offsets, next);
+    }
+    let roomRight = 0;
+    for (let next = col + 1; roomRight < over && next < view.colEnd; next += 1) {
+      if (inRegion(view, view.mergeView.covered, sheetRow, next)) break;
+      if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
+      roomRight += spanAt(view.cols.offsets, next);
+    }
+    const left = Math.min(roomLeft, over);
+    const right = Math.min(roomRight, over);
+    return { left, w: w + left + right, shift: (left - right) / 2 };
+  }
 
   // Only as far as the value reaches: Excel runs the *drawing* box on to the
   // end of the room, and for a field this same number would be a white bar
@@ -2342,7 +2381,7 @@ export function valueBox(
       if ((view.cellAt(sheetRow, next)?.text ?? "") !== "") break;
       reached += spanAt(view.cols.offsets, next);
     }
-    return { left: 0, w: Math.min(reached, needed) };
+    return { left: 0, w: Math.min(reached, needed), shift: 0 };
   }
   for (let next = col - 1; reached < needed && next >= 0; next -= 1) {
     if (inRegion(view, view.mergeView.covered, sheetRow, next)) break;
@@ -2350,7 +2389,7 @@ export function valueBox(
     reached += spanAt(view.cols.offsets, next);
   }
   const width = Math.min(reached, needed);
-  return { left: width - w, w: width };
+  return { left: width - w, w: width, shift: 0 };
 }
 
 /** The opaque strips behind the row numbers and column letters. */
