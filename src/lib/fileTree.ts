@@ -43,6 +43,7 @@ const ROOTS_KEY = "sheetlens.treeRoots";
 const OPEN_KEY = "sheetlens.treeOpen";
 const SHOWN_KEY = "sheetlens.treeShown";
 const AUTO_LOCATE_KEY = "sheetlens.treeAutoLocate";
+const NAMES_KEY = "sheetlens.treeNames";
 
 function readList(key: string): string[] {
   try {
@@ -81,6 +82,36 @@ export function readTreeOpen(): string[] {
 
 export function storeTreeOpen(paths: string[]): string[] {
   return writeList(OPEN_KEY, paths);
+}
+
+/**
+ * The names the roots are shown under — a label the reader gives a row, not a
+ * rename of the folder. Keyed by `folderKey(path)`, so a root keeps its name
+ * however its path is spelled.
+ */
+export function readTreeNames(): Record<string, string> {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(NAMES_KEY) ?? "null");
+    if (stored !== null && typeof stored === "object" && !Array.isArray(stored)) {
+      const names: Record<string, string> = {};
+      for (const [key, value] of Object.entries(stored)) {
+        if (typeof value === "string" && value !== "") names[key] = value;
+      }
+      return names;
+    }
+  } catch {
+    // As above: the tree falls back to the folders' own names.
+  }
+  return {};
+}
+
+export function storeTreeNames(names: Record<string, string>): Record<string, string> {
+  try {
+    localStorage.setItem(NAMES_KEY, JSON.stringify(names));
+  } catch {
+    // The row still carries the new name; it just does not survive a restart.
+  }
+  return names;
 }
 
 /**

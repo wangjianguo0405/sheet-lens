@@ -10,6 +10,7 @@ import {
   FolderOpen,
   Loader2,
   LocateFixed,
+  Pencil,
   Plus,
   RotateCw,
   Search,
@@ -17,6 +18,12 @@ import {
 } from "lucide-react";
 
 import { Hint } from "@/components/Hint";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -27,10 +34,12 @@ import { Input } from "@/components/ui/input";
 import {
   listDirectory,
   readTreeAutoLocate,
+  readTreeNames,
   readTreeOpen,
   readTreeRoots,
   searchTree,
   storeTreeAutoLocate,
+  storeTreeNames,
   storeTreeOpen,
   storeTreeRoots,
   type DirEntry,
@@ -144,6 +153,15 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<FoundFile[]>([]);
   const [busy, setBusy] = useState(false);
+  /** The result folders folded away; every one is open until pointed at. */
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  /** The names the roots are shown under, given by hand and keyed by folderKey. */
+  const [names, setNames] = useState<Record<string, string>>(readTreeNames);
+  /** The root whose name is being typed, and what the box holds meanwhile. */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  /** Escape ends the edit without saving, though the box then also loses focus. */
+  const cancelled = useRef(false);
   const [autoLocate, setAutoLocate] = useState(readTreeAutoLocate);
   /** The list's scroller, so a located row can be brought into the fold. */
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -190,6 +208,9 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     }
     let cancelled = false;
     setBusy(true);
+    // A new query finds its own branches; a folder folded for the old one would
+    // hide matches the reader has not seen yet.
+    setFolded(new Set());
 
     const timer = window.setTimeout(() => {
       searchTree(roots, text)
@@ -280,6 +301,37 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     storeTreeOpen([...next]);
   };
 
+  /** Folds or unfolds one folder of the results; the real tree is left alone. */
+  const toggleFold = (key: string) =>
+    setFolded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const startRename = (path: string) => {
+    cancelled.current = false;
+    setDraft(names[folderKey(path)] ?? "");
+    setRenaming(path);
+  };
+
+  /** Saves the box's contents; an empty box takes the name away again. */
+  const commitRename = (path: string) => {
+    const key = folderKey(path);
+    const name = draft.trim();
+    const next = { ...names };
+    if (name) next[key] = name;
+    else delete next[key];
+    setNames(storeTreeNames(next));
+    setRenaming(null);
+  };
+
+  const cancelRename = () => {
+    cancelled.current = true;
+    setRenaming(null);
+  };
+
   /** Drops every listing and reads the open folders again — what SVN update changed. */
   const refresh = () => {
     setNodes(new Map());
@@ -316,12 +368,48 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     const expanded = open.has(path);
     const Chevron = expanded ? ChevronDown : ChevronRight;
     const Face = expanded ? FolderOpen : Folder;
-    return (
-      <li key={path}>
-        <div
-          className="group flex items-center rounded-sm pr-0.5 hover:bg-accent/50"
-          style={{ paddingLeft: 4 + depth * 12 }}
-        >
+    const alias = root ? names[folderKey(path)] : undefined;
+    const editing = root && renaming === path;
+    const label = t("tree.renameRoot", { name: fileName(path) });
+    const head = (
+      <div
+        className="group flex items-center rounded-sm pr-0.5 hover:bg-accent/50"
+        style={{ paddingLeft: 4 + depth * 12 }}
+      >
+        {editing ? (
+          <span className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-xs">
+            <Chevron className="size-3 shrink-0 text-muted-foreground" />
+            <Face className="size-3.5 shrink-0 text-muted-foreground" />
+            <Input
+              autoFocus
+              data-rename
+              value={draft}
+              placeholder={fileName(path)}
+              aria-label={label}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitRename(path);
+                else if (event.key === "Escape") cancelRename();
+              }}
+              onBlur={(event) => {
+                if (cancelled.current) {
+                  cancelled.current = false;
+                  return;
+                }
+                // The menu takes focus back as it closes; that is not the
+                // reader leaving the box.
+                if (
+                  event.relatedTarget instanceof Element &&
+                  event.relatedTarget.closest("[data-slot='context-menu-content']")
+                ) {
+                  return;
+                }
+                commitRename(path);
+              }}
+              className="h-5 min-w-0 flex-1 px-1.5 text-xs select-text"
+            />
+          </span>
+        ) : (
           <button
             type="button"
             onClick={() => toggle(path)}
@@ -330,29 +418,86 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
           >
             <Chevron className="size-3 shrink-0 text-muted-foreground" />
             <Face className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="whitespace-nowrap">{fileName(path)}</span>
+            <span className="whitespace-nowrap">{alias ?? fileName(path)}</span>
             {/* A root shows where it comes from: its own name is the leaf every
-                checkout repeats, and the folder above it is the one that tells
-                one checkout from another. */}
-            {root && (
+                  checkout repeats, and the folder above it is the one that tells
+                  one checkout from another. A renamed root says both on the line
+                  under it instead, so that the alias stands alone. */}
+            {root && alias === undefined && (
               <span className="min-w-0 flex-1 whitespace-nowrap text-[10px] text-muted-foreground">
                 {folderName(path)}
               </span>
             )}
           </button>
-          {root && (
-            <Hint label={t("tree.removeRoot", { name: fileName(path) })}>
-              <button
-                type="button"
-                aria-label={t("tree.removeRoot", { name: fileName(path) })}
-                onClick={() => removeRoot(path)}
-                className={ACTION}
+        )}
+        {root && !editing && (
+          <Hint label={label}>
+            <button
+              type="button"
+              aria-label={label}
+              onClick={() => startRename(path)}
+              className={ACTION}
+            >
+              <Pencil className="size-3" />
+            </button>
+          </Hint>
+        )}
+        {root && (
+          <Hint label={t("tree.removeRoot", { name: fileName(path) })}>
+            <button
+              type="button"
+              aria-label={t("tree.removeRoot", { name: fileName(path) })}
+              onClick={() => removeRoot(path)}
+              className={ACTION}
+            >
+              <X className="size-3" />
+            </button>
+          </Hint>
+        )}
+      </div>
+    );
+    return (
+      <li key={path}>
+        {root ? (
+          <ContextMenu>
+            <ContextMenuTrigger asChild>{head}</ContextMenuTrigger>
+            <ContextMenuContent
+              className="min-w-40"
+              // The row's rename box is left unfocused while the menu holds
+              // focus, so it is focused here instead of handing focus back.
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                requestAnimationFrame(() => {
+                  listRef.current?.querySelector<HTMLInputElement>("[data-rename]")?.focus();
+                });
+              }}
+            >
+              <ContextMenuItem
+                icon={<Pencil className="size-3" />}
+                onSelect={() => startRename(path)}
               >
-                <X className="size-3" />
-              </button>
-            </Hint>
-          )}
-        </div>
+                {t("tree.rename")}
+              </ContextMenuItem>
+              <ContextMenuItem icon={<X className="size-3" />} onSelect={() => removeRoot(path)}>
+                {t("tree.removeRootItem")}
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
+        ) : (
+          head
+        )}
+        {/* A renamed root keeps the real name and where it lives in sight, one
+            level in, in the same grey the root row itself wears unnamed. */}
+        {root && alias !== undefined && !editing && (
+          <div
+            title={path}
+            className="flex min-w-0 items-center gap-1 py-0.5 pr-1 text-[11px] text-muted-foreground"
+            style={{ paddingLeft: 16 + (depth + 1) * 12 }}
+          >
+            <span className="whitespace-nowrap">{fileName(path)}</span>
+            <span className="min-w-0 flex-1 whitespace-nowrap">{folderName(path)}</span>
+          </div>
+        )}
         {expanded && (
           <ul>
             {node === undefined || node.state === "loading" ? (
@@ -434,45 +579,72 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
    * matches read where they live, not as one flat list that hides which
    * document belongs to which project.
    */
-  const searchFolderRow = (name: string, node: SearchNode, depth: number, key: string) => (
-    <li key={key}>
-      <div className="flex items-center rounded-sm" style={{ paddingLeft: 4 + depth * 12 }}>
-        <span className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs">
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="whitespace-nowrap">{name}</span>
-        </span>
-      </div>
-      <ul>
-        {[...node.folders].map(([childName, child]) =>
-          searchFolderRow(childName, child, depth + 1, `${key}\\${childName}`),
+  const searchFolderRow = (name: string, node: SearchNode, depth: number, key: string) => {
+    const expanded = !folded.has(key);
+    const Chevron = expanded ? ChevronDown : ChevronRight;
+    const Face = expanded ? FolderOpen : Folder;
+    return (
+      <li key={key}>
+        <div
+          className="flex items-center rounded-sm hover:bg-accent/50"
+          style={{ paddingLeft: 4 + depth * 12 }}
+        >
+          <button
+            type="button"
+            onClick={() => toggleFold(key)}
+            aria-expanded={expanded}
+            className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs"
+          >
+            <Chevron className="size-3 shrink-0 text-muted-foreground" />
+            <Face className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="whitespace-nowrap">{name}</span>
+          </button>
+        </div>
+        {expanded && (
+          <ul>
+            {[...node.folders].map(([childName, child]) =>
+              searchFolderRow(childName, child, depth + 1, `${key}\\${childName}`),
+            )}
+            {node.files.map((file) => foundRow(file, depth + 1))}
+          </ul>
         )}
-        {node.files.map((file) => foundRow(file, depth + 1))}
-      </ul>
-    </li>
-  );
+      </li>
+    );
+  };
 
   /** A root the search found something under, with its own name and where it is. */
-  const searchRootRow = (root: string, node: SearchNode) => (
-    <li key={root}>
-      <div className="flex items-center rounded-sm" style={{ paddingLeft: 4 }}>
-        <span className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs">
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="whitespace-nowrap">{fileName(root)}</span>
-          <span className="min-w-0 flex-1 whitespace-nowrap text-[10px] text-muted-foreground">
-            {folderName(root)}
-          </span>
-        </span>
-      </div>
-      <ul>
-        {[...node.folders].map(([name, child]) =>
-          searchFolderRow(name, child, 1, `${root}\\${name}`),
+  const searchRootRow = (root: string, node: SearchNode) => {
+    const expanded = !folded.has(root);
+    const Chevron = expanded ? ChevronDown : ChevronRight;
+    const Face = expanded ? FolderOpen : Folder;
+    return (
+      <li key={root}>
+        <div className="flex items-center rounded-sm hover:bg-accent/50" style={{ paddingLeft: 4 }}>
+          <button
+            type="button"
+            onClick={() => toggleFold(root)}
+            aria-expanded={expanded}
+            className="flex min-w-0 flex-1 items-center gap-1 px-1 py-0.5 text-left text-xs"
+          >
+            <Chevron className="size-3 shrink-0 text-muted-foreground" />
+            <Face className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="whitespace-nowrap">{names[folderKey(root)] ?? fileName(root)}</span>
+            <span className="min-w-0 flex-1 whitespace-nowrap text-[10px] text-muted-foreground">
+              {folderName(root)}
+            </span>
+          </button>
+        </div>
+        {expanded && (
+          <ul>
+            {[...node.folders].map(([name, child]) =>
+              searchFolderRow(name, child, 1, `${root}\\${name}`),
+            )}
+            {node.files.map((file) => foundRow(file, 1))}
+          </ul>
         )}
-        {node.files.map((file) => foundRow(file, 1))}
-      </ul>
-    </li>
-  );
+      </li>
+    );
+  };
 
   /** The pruned tree the results are drawn from. */
   const foundByRoot = pruneToTree(results);
@@ -534,17 +706,21 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
                   <Search className="size-3" />
                 </button>
               </Hint>
-              <Hint label={t("tree.locate")}>
-                <button
-                  type="button"
-                  aria-label={t("tree.locate")}
-                  onClick={locate}
-                  disabled={!canLocate}
-                  className={cn(HEAD_ACTION, "disabled:pointer-events-none disabled:opacity-40")}
-                >
-                  <LocateFixed className="size-3" />
-                </button>
-              </Hint>
+              {/* The start page's tree has no workbook on screen to point at, so
+                  it offers no locate at all. */}
+              {currentPath !== null && (
+                <Hint label={t("tree.locate")}>
+                  <button
+                    type="button"
+                    aria-label={t("tree.locate")}
+                    onClick={locate}
+                    disabled={!canLocate}
+                    className={cn(HEAD_ACTION, "disabled:pointer-events-none disabled:opacity-40")}
+                  >
+                    <LocateFixed className="size-3" />
+                  </button>
+                </Hint>
+              )}
               <Hint label={t("tree.refresh")}>
                 <button
                   type="button"
@@ -565,28 +741,32 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
                   <Plus className="size-3" />
                 </button>
               </Hint>
-              <DropdownMenu>
-                <Hint label={t("tree.more")}>
-                  <DropdownMenuTrigger asChild>
-                    <button type="button" aria-label={t("tree.more")} className={HEAD_ACTION}>
-                      <EllipsisVertical className="size-3" />
-                    </button>
-                  </DropdownMenuTrigger>
-                </Hint>
-                <DropdownMenuContent align="end" className="min-w-48">
-                  <DropdownMenuCheckboxItem
-                    className="text-xs"
-                    checked={autoLocate}
-                    onCheckedChange={(checked) => {
-                      const next = checked === true;
-                      setAutoLocate(next);
-                      storeTreeAutoLocate(next);
-                    }}
-                  >
-                    {t("tree.autoLocate")}
-                  </DropdownMenuCheckboxItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {/* The menu holds only the auto-locate switch, which the start
+                  page's tree has no workbook for. */}
+              {currentPath !== null && (
+                <DropdownMenu>
+                  <Hint label={t("tree.more")}>
+                    <DropdownMenuTrigger asChild>
+                      <button type="button" aria-label={t("tree.more")} className={HEAD_ACTION}>
+                        <EllipsisVertical className="size-3" />
+                      </button>
+                    </DropdownMenuTrigger>
+                  </Hint>
+                  <DropdownMenuContent align="end" className="min-w-48">
+                    <DropdownMenuCheckboxItem
+                      className="text-xs"
+                      checked={autoLocate}
+                      onCheckedChange={(checked) => {
+                        const next = checked === true;
+                        setAutoLocate(next);
+                        storeTreeAutoLocate(next);
+                      }}
+                    >
+                      {t("tree.autoLocate")}
+                    </DropdownMenuCheckboxItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </>
           )}
         </div>
