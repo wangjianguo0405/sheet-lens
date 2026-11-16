@@ -12,6 +12,24 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.26] - 2026-11-16
+
+### Added
+
+- Right-clicking a cell now brings a mini formatting toolbar beside the menu — font, size, alignment, bold/italic/underline, and the fill and font colours. It follows the menu, and stays usable while the menu is open
+- A cell's right-click menu can copy its reference (`D5`, `D5:F9`), show or hide its note, open its drop-down list, and search for its value
+
+### Improved
+
+- The ribbon's fill colour now sits beside the font colour in the Font group, as Excel has it
+- The colour picker matches the current Excel palette: square swatches, wider gutters, and an orange outline around the hovered and selected colours
+- The open workbook's row in the file tree is highlighted clearly enough to spot after locating it
+
+### Fixed
+
+- A centred value wider than its cell now spills into the empty cells on both sides, as Excel does, instead of being cut at the cell's edge
+- Merged cells are one cell again when selecting: a drag, Shift+click or Shift+arrow no longer splits a merge, a selection grows to cover every merge it touches, the arrow keys step past a merged cell, and the focus highlight and row/column headers cover the whole merged region
+
 ## [1.0.25] - 2026-11-16
 
 ### Added
