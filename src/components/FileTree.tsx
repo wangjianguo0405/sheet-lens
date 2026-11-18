@@ -7,6 +7,7 @@ import {
   AppWindow,
   ChevronDown,
   ChevronRight,
+  Copy,
   EllipsisVertical,
   FileSpreadsheet,
   Folder,
@@ -26,6 +27,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -35,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { copyText } from "@/lib/clipboard";
 import {
   listDirectory,
   readTreeAutoLocate,
@@ -367,7 +372,55 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const removeRoot = (path: string) =>
     setRoots(storeTreeRoots(roots.filter((root) => root !== path)));
 
-  /** The menu a workbook's row offers: its own program, or where it lives. */
+  /**
+   * The row's path without the root it sits under — what a command run from
+   * that root expects. A root is relative to the folder holding it, so it still
+   * names something there.
+   */
+  const relativePath = (path: string) => {
+    const key = folderKey(path);
+    let best: string | null = null;
+    for (const root of roots) {
+      const trimmed = root.replace(/[\\/]+$/, "");
+      const rootKey = folderKey(trimmed);
+      if (key === rootKey) return fileName(trimmed);
+      const under = key.startsWith(rootKey) && /^[\\/]/.test(key.slice(rootKey.length));
+      if (under && (best === null || trimmed.length > best.length)) best = trimmed;
+    }
+    return best === null ? path : path.slice(best.length).replace(/^[\\/]+/, "");
+  };
+
+  /** Puts one form of a row's path on the clipboard, and says how it went. */
+  const copy = (text: string) => {
+    void copyText(text).then((ok) =>
+      ok ? toast.success(t("toast.copied")) : toast.error(t("toast.copyFailed")),
+    );
+  };
+
+  /**
+   * The copy submenu every row carries. A folder has no file name of its own to
+   * offer, so only a workbook's menu passes `file`.
+   */
+  const copyMenu = (path: string, file: boolean) => (
+    <ContextMenuSub>
+      <ContextMenuSubTrigger icon={<Copy className="size-3" />}>
+        {t("tree.copy")}
+      </ContextMenuSubTrigger>
+      <ContextMenuSubContent className="min-w-40">
+        {file && (
+          <ContextMenuItem onSelect={() => copy(fileName(path))}>
+            {t("tree.copyName")}
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onSelect={() => copy(path)}>{t("tree.copyPath")}</ContextMenuItem>
+        <ContextMenuItem onSelect={() => copy(relativePath(path))}>
+          {t("tree.copyRelativePath")}
+        </ContextMenuItem>
+      </ContextMenuSubContent>
+    </ContextMenuSub>
+  );
+
+  /** The menu a workbook's row offers: its own program, what to copy, where it lives. */
   const workbookMenu = (path: string) => (
     <ContextMenuContent className="min-w-40">
       <ContextMenuItem
@@ -376,6 +429,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       >
         {t("tree.openWithDefault")}
       </ContextMenuItem>
+      {copyMenu(path, true)}
       <ContextMenuItem
         icon={<FolderOpen className="size-3" />}
         onSelect={() => void revealItemInDir(path).catch(() => toast.error(t("toast.openFailed")))}
@@ -385,7 +439,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     </ContextMenuContent>
   );
 
-  /** The menu a folder's row offers: the folder itself, opened in the file manager. */
+  /** The menu a folder's row offers: the folder in the file manager, then what to copy. */
   const folderMenu = (path: string) => (
     <ContextMenuContent className="min-w-40">
       <ContextMenuItem
@@ -394,6 +448,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       >
         {t("tree.openInExplorer")}
       </ContextMenuItem>
+      {copyMenu(path, false)}
     </ContextMenuContent>
   );
 
@@ -512,6 +567,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               >
                 {t("tree.openInExplorer")}
               </ContextMenuItem>
+              {copyMenu(path, false)}
               <ContextMenuSeparator />
               <ContextMenuItem
                 icon={<Pencil className="size-3" />}

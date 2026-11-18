@@ -64,6 +64,10 @@ interface WelcomeProps {
   missingFiles: string[];
   onOpenRecent: (path: string) => void;
   error: string | null;
+  /** Which of the page's columns to draw; the tree is the app's own panel. */
+  treeShown: boolean;
+  dirsShown: boolean;
+  filesShown: boolean;
 }
 
 /**
@@ -285,6 +289,9 @@ export function Welcome({
   missingFiles,
   onOpenRecent,
   error,
+  treeShown,
+  dirsShown,
+  filesShown,
 }: WelcomeProps) {
   const { t } = useTranslation();
   const missing = new Set(missingFiles);
@@ -397,19 +404,35 @@ export function Welcome({
           )}
         </header>
 
+        {/* Three columns that share the page's width between them: each one
+            grows from its own minimum, so hiding a column hands its width to
+            the ones still showing rather than leaving a gap. */}
         <div className="flex flex-col gap-6 md:flex-row md:gap-0">
           {/* Where to start from. The checkout repeats the same folder names
               under every branch, so a tree is the one shape that tells them
               apart — the two columns beside it take over from a folder once
               the reader is inside one. */}
-          <section className="flex min-w-0 shrink-0 flex-col md:max-h-120 md:min-h-72 md:w-80 md:border-r md:border-border md:pr-1">
-            <FileTree currentPath={null} onOpenFile={onOpenRecent} />
-          </section>
+          {treeShown && (
+            <section
+              className={cn(
+                "flex min-w-0 flex-col md:min-w-80 md:max-h-120 md:min-h-72 md:flex-1 md:basis-0",
+                (dirsShown || filesShown) && "md:border-r md:border-border md:pr-1",
+              )}
+            >
+              <FileTree currentPath={null} onOpenFile={onOpenRecent} />
+            </section>
+          )}
 
-          <div className="flex min-w-0 flex-1 flex-col gap-6 md:flex-row md:gap-0 md:pl-1">
-            {/* Where to look. A workbook is often one of a folder's several, and
-                finding the folder is the part that takes the walking. */}
-            <section className="min-w-0 shrink-0 md:w-72 md:border-r md:border-border md:pr-1">
+          {/* Where to look. A workbook is often one of a folder's several, and
+              finding the folder is the part that takes the walking. */}
+          {dirsShown && (
+            <section
+              className={cn(
+                "min-w-0 md:min-w-72 md:flex-1 md:basis-0",
+                treeShown && "md:pl-1",
+                filesShown && "md:border-r md:border-border md:pr-1",
+              )}
+            >
               <Column
                 fixed={pinnedDirs.map((path) => (
                   <DirRow
@@ -436,9 +459,16 @@ export function Welcome({
                 emptyLabel={t("welcome.noFolders")}
               />
             </section>
+          )}
 
-            {/* What to open */}
-            <div className="min-w-0 flex-1 md:pl-1">
+          {/* What to open */}
+          {filesShown && (
+            <div
+              className={cn(
+                "min-w-0 md:min-w-72 md:flex-1 md:basis-0",
+                (treeShown || dirsShown) && "md:pl-1",
+              )}
+            >
               <Column
                 fixed={pinnedFiles.map((path) => (
                   <Row
@@ -465,7 +495,7 @@ export function Welcome({
                 emptyLabel={t("welcome.noHistory")}
               />
             </div>
-          </div>
+          )}
         </div>
 
         {/* What the keyboard does, across the foot of the page: a rule above it

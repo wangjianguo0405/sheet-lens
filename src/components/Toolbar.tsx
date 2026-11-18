@@ -58,6 +58,11 @@ interface ToolbarProps {
   onToggleSidebar: () => void;
   sheetTabsOpen: boolean;
   onToggleSheetTabs: () => void;
+  /** The start page's two lists; its tree column is `fileTreeOpen`. */
+  welcomeDirsOpen: boolean;
+  onToggleWelcomeDirs: () => void;
+  welcomeFilesOpen: boolean;
+  onToggleWelcomeFiles: () => void;
   /** False for a build that cannot replace itself, which hides the entry. */
   canUpdate: boolean;
   updateAvailable: boolean;
@@ -79,6 +84,10 @@ export function Toolbar({
   onToggleSidebar,
   sheetTabsOpen,
   onToggleSheetTabs,
+  welcomeDirsOpen,
+  onToggleWelcomeDirs,
+  welcomeFilesOpen,
+  onToggleWelcomeFiles,
   canUpdate,
   updateAvailable,
   onShowUpdate,
@@ -177,9 +186,11 @@ export function Toolbar({
       </DropdownMenu>
 
       {/* The View menu, beside the File menu as Excel's own 表示 sits beside
-          ファイル: each entry is a panel of the window, ticked while it shows.
-          A workbook has to be open for any of them to be anywhere — the start
-          page draws its own layout — so the entries are greyed until one is. */}
+          ファイル: each entry is a panel, ticked while it shows. The tree is
+          the one panel both screens have — a sidebar beside a workbook, a
+          column on the start page — so it sits above the two groups that say
+          where the rest belongs. The start page's lists stay live with no
+          workbook open; the panels it does not draw are greyed instead. */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs">
@@ -191,11 +202,12 @@ export function Toolbar({
           <DropdownMenuCheckboxItem
             className="text-xs"
             checked={fileTreeOpen}
-            disabled={!hasWorkbook}
             onCheckedChange={onToggleFileTree}
           >
             {t("toolbar.fileTree")}
           </DropdownMenuCheckboxItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-[10px]">{t("toolbar.reading")}</DropdownMenuLabel>
           <DropdownMenuCheckboxItem
             className="text-xs"
             checked={sidebarOpen}
@@ -211,6 +223,22 @@ export function Toolbar({
             onCheckedChange={onToggleSheetTabs}
           >
             {t("toolbar.sheetTabs")}
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-[10px]">{t("toolbar.home")}</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem
+            className="text-xs"
+            checked={welcomeDirsOpen}
+            onCheckedChange={onToggleWelcomeDirs}
+          >
+            {t("toolbar.recentDirs")}
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            className="text-xs"
+            checked={welcomeFilesOpen}
+            onCheckedChange={onToggleWelcomeFiles}
+          >
+            {t("toolbar.recentFiles")}
           </DropdownMenuCheckboxItem>
         </DropdownMenuContent>
       </DropdownMenu>

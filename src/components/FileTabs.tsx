@@ -297,14 +297,13 @@ export function FileTabs({
                   </button>
                 </div>
               </ContextMenuTrigger>
-              {/* The name and the path are the two things worth having somewhere
-                  else — a bug report, a chat message — and neither is easy to get
-                  at otherwise, since the tab shows only the name and truncates
-                  even that. Above them sits the one thing a tab can *do*: read its
-                  file again, for the workbook that changed underneath us — which
-                  Excel being open on it is the usual cause of. Below, the file
-                  handed to whatever the system opens it with, and where it sits
-                  on disk. */}
+              {/* The menu follows the one order every context menu in the app
+                  keeps: what the entry itself does, then what the system opens
+                  it with, then its name and path — the two things worth having
+                  somewhere else, a bug report or a chat message — then where it
+                  sits on disk. Reading a tab again is the one thing a tab can
+                  *do*: for the workbook that changed underneath us, which Excel
+                  being open on it is the usual cause of. */}
               <ContextMenuContent className="min-w-44" onKeyDown={pickByAccelerator}>
                 <ContextMenuItem
                   className="text-xs"
@@ -315,6 +314,23 @@ export function FileTabs({
                   <Accelerated label={t("tabs.reload")} />
                 </ContextMenuItem>
                 <ContextMenuSeparator />
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger className="text-xs" icon={<AppWindow />}>
+                    {t("tabs.openWith")}
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent>
+                    <ContextMenuItem
+                      className="text-xs"
+                      onSelect={() => {
+                        // The harness has no desktop behind it; a view must not
+                        // fail because of where it was opened.
+                        void openPath(tab.path).catch(() => toast.error(t("toast.openFailed")));
+                      }}
+                    >
+                      {t("tabs.openDefault")}
+                    </ContextMenuItem>
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
                 <ContextMenuSub>
                   <ContextMenuSubTrigger className="text-xs" icon={<Copy />}>
                     {t("tabs.copy")}
@@ -343,23 +359,6 @@ export function FileTabs({
                       }}
                     >
                       {t("tabs.copyPath")}
-                    </ContextMenuItem>
-                  </ContextMenuSubContent>
-                </ContextMenuSub>
-                <ContextMenuSub>
-                  <ContextMenuSubTrigger className="text-xs" icon={<AppWindow />}>
-                    {t("tabs.openWith")}
-                  </ContextMenuSubTrigger>
-                  <ContextMenuSubContent>
-                    <ContextMenuItem
-                      className="text-xs"
-                      onSelect={() => {
-                        // The harness has no desktop behind it; a view must not
-                        // fail because of where it was opened.
-                        void openPath(tab.path).catch(() => toast.error(t("toast.openFailed")));
-                      }}
-                    >
-                      {t("tabs.openDefault")}
                     </ContextMenuItem>
                   </ContextMenuSubContent>
                 </ContextMenuSub>

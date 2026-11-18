@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pin, PinOff, Search, X } from "lucide-react";
+import { Copy, Eye, EyeOff, Pin, PinOff, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
+import { ColorPalette } from "@/components/ColorPalette";
 import { Hint } from "@/components/Hint";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { type UnhideAnchor } from "@/components/UnhideDialog";
 import { copyText } from "@/lib/clipboard";
 import type { SheetInfo } from "@/lib/excel";
 import { pinSheet, readPinnedSheets, setPinnedSheets, unpinSheet } from "@/lib/sheetPins";
@@ -12,6 +25,18 @@ import { cn } from "@/lib/utils";
 
 /** A group's heading, the same type the start page puts over its own lists. */
 const HEAD = "px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase";
+
+/**
+ * Where a menu stands, as the point the Unhide dialog takes its place from:
+ * its left edge, and its foot measured up from the window's own foot.
+ */
+function menuAnchor(item: EventTarget | null): UnhideAnchor | null {
+  if (!(item instanceof Element)) return null;
+  const menu = item.closest("[data-slot='context-menu-content']");
+  if (!menu) return null;
+  const box = menu.getBoundingClientRect();
+  return { left: box.left, bottom: window.innerHeight - box.bottom };
+}
 
 interface SheetListProps {
   /** The workbook the list belongs to, which is what the fixes are kept by. */
@@ -21,15 +46,37 @@ interface SheetListProps {
   hidden: Set<string>;
   active: string;
   onSelect: (name: string) => void;
+  /** The colours the reader has given the tabs, by sheet name. */
+  colors: Map<string, string>;
+  onColor: (sheet: string, color: string | null) => void;
+  /** Takes a sheet off the strip, for as long as the workbook is open. */
+  onHide: (sheet: string) => void;
+  /** Opens the dialog that offers the hidden sheets back. */
+  onUnhide: (at: UnhideAnchor | null) => void;
 }
 
-export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListProps) {
+export function SheetList({
+  path,
+  sheets,
+  hidden,
+  active,
+  onSelect,
+  colors,
+  onColor,
+  onHide,
+  onUnhide,
+}: SheetListProps) {
   const { t } = useTranslation();
   const [filter, setFilter] = useState("");
   /** Fixed by hand, and kept here rather than in the app: this list is its
       only reader, and mounting reads the names back out of storage. */
   const [pins, setPins] = useState<string[]>(() => readPinnedSheets(path));
   const pinned = useMemo(() => new Set(pins), [pins]);
+  /** Hiding the last sheet still on the strip is what the Hide item refuses. */
+  const shownCount = useMemo(
+    () => sheets.filter((sheet) => !hidden.has(sheet.name)).length,
+    [sheets, hidden],
+  );
 
   // Another tab's workbook brings its own list of fixed sheets with it.
   useEffect(() => {
@@ -59,6 +106,13 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
 
   const togglePin = (name: string) =>
     setPins(pinned.has(name) ? unpinSheet(path, name) : pinSheet(path, name));
+
+  /** The name on the clipboard, the same way the tab strip's own menu copies it. */
+  const copyName = (name: string) => {
+    void copyText(name).then((ok) =>
+      ok ? toast.success(t("toast.copied")) : toast.error(t("toast.copyFailed")),
+    );
+  };
 
   /** The fixed sheet under the pointer, and the edge it would land on. */
   const [dragging, setDragging] = useState<string | null>(null);
@@ -174,82 +228,129 @@ export function SheetList({ path, sheets, hidden, active, onSelect }: SheetListP
     const edge =
       inFixed && dropAt?.name === sheet.name ? (dropAt.after ? "after" : "before") : null;
     return (
-      <div
-        key={inFixed ? `fixed ${sheet.name}` : sheet.name}
-        // Only the fixed run is reordered by hand; the rest follows the file.
-        // The copy below is not a place to drag from, even of a fixed sheet.
-        data-fixed={inFixed ? sheet.name : undefined}
-        onPointerDown={(event) => {
-          if (!inFixed) return;
-          // The pin is its own control; pulling a sheet is the row's.
-          if ((event.target as HTMLElement).closest("[data-sheet-pin]")) return;
-          dropped.current = false;
-          press.current = { name: sheet.name, y: event.clientY, moved: false };
-        }}
-        className={cn(
-          "group flex items-center rounded-sm transition-colors",
-          sheet.name === active ? "bg-accent" : !isHidden && "hover:bg-accent/50",
-          isPinned && "cursor-grab",
-          dragging === sheet.name && inFixed && "opacity-40",
-          edge === "before" && "shadow-[inset_0_2px_0_0_#107C41]",
-          edge === "after" && "shadow-[inset_0_-2px_0_0_#107C41]",
-        )}
-      >
-        <button
-          type="button"
-          disabled={isHidden}
-          onClick={() => {
-            // Letting go of a pull is not a click on the sheet under it.
-            if (dropped.current) return;
-            onSelect(sheet.name);
-          }}
-          onKeyDown={(event) => {
-            // Ctrl+C on a focused sheet copies its name, matching the
-            // "copy whatever is selected" behaviour of the grid.
-            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
-              event.preventDefault();
-              void copyText(sheet.name);
-            }
-          }}
-          className={cn(
-            "flex min-w-0 flex-1 items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs",
-            sheet.name === active
-              ? "font-medium text-accent-foreground"
-              : isHidden
-                ? "text-muted-foreground/60"
-                : "text-foreground/80",
-          )}
-        >
-          <span className="truncate" title={sheet.name}>
-            {sheet.name}
-          </span>
-          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-            {isHidden ? t("sheets.hidden") : `${sheet.rows}×${sheet.cols}`}
-          </span>
-        </button>
-        {/* Not offered on a hidden sheet: it has no tab to come back to, so
-            there is nothing a fixed place would save. */}
-        {!isHidden && (
-          <Hint label={pinLabel}>
+      <ContextMenu key={inFixed ? `fixed ${sheet.name}` : sheet.name}>
+        <ContextMenuTrigger asChild>
+          <div
+            // Only the fixed run is reordered by hand; the rest follows the file.
+            // The copy below is not a place to drag from, even of a fixed sheet.
+            data-fixed={inFixed ? sheet.name : undefined}
+            onPointerDown={(event) => {
+              if (!inFixed) return;
+              // The pin is its own control; pulling a sheet is the row's.
+              if ((event.target as HTMLElement).closest("[data-sheet-pin]")) return;
+              dropped.current = false;
+              press.current = { name: sheet.name, y: event.clientY, moved: false };
+            }}
+            className={cn(
+              "group flex items-center rounded-sm transition-colors",
+              sheet.name === active ? "bg-accent" : !isHidden && "hover:bg-accent/50",
+              isPinned && "cursor-grab",
+              dragging === sheet.name && inFixed && "opacity-40",
+              edge === "before" && "shadow-[inset_0_2px_0_0_#107C41]",
+              edge === "after" && "shadow-[inset_0_-2px_0_0_#107C41]",
+            )}
+          >
             <button
               type="button"
-              data-sheet-pin
-              onClick={() => togglePin(sheet.name)}
-              aria-label={pinLabel}
-              aria-pressed={isPinned}
+              disabled={isHidden}
+              onClick={() => {
+                // Letting go of a pull is not a click on the sheet under it.
+                if (dropped.current) return;
+                onSelect(sheet.name);
+              }}
+              onKeyDown={(event) => {
+                // Ctrl+C on a focused sheet copies its name, matching the
+                // "copy whatever is selected" behaviour of the grid.
+                if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+                  event.preventDefault();
+                  void copyText(sheet.name);
+                }
+              }}
               className={cn(
-                "shrink-0 rounded-sm p-1 text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100",
-                // A fixed sheet shows the way back out of being fixed without
-                // being asked for; the rest offer it under a pointer already on
-                // the row.
-                isPinned ? "opacity-60" : "opacity-0 group-hover:opacity-60",
+                "flex min-w-0 flex-1 items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs",
+                sheet.name === active
+                  ? "font-medium text-accent-foreground"
+                  : isHidden
+                    ? "text-muted-foreground/60"
+                    : "text-foreground/80",
               )}
             >
-              {isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+              <span className="truncate" title={sheet.name}>
+                {sheet.name}
+              </span>
+              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                {isHidden ? t("sheets.hidden") : `${sheet.rows}×${sheet.cols}`}
+              </span>
             </button>
-          </Hint>
-        )}
-      </div>
+            {/* Not offered on a hidden sheet: it has no tab to come back to, so
+            there is nothing a fixed place would save. */}
+            {!isHidden && (
+              <Hint label={pinLabel}>
+                <button
+                  type="button"
+                  data-sheet-pin
+                  onClick={() => togglePin(sheet.name)}
+                  aria-label={pinLabel}
+                  aria-pressed={isPinned}
+                  className={cn(
+                    "shrink-0 rounded-sm p-1 text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100",
+                    // A fixed sheet shows the way back out of being fixed without
+                    // being asked for; the rest offer it under a pointer already on
+                    // the row.
+                    isPinned ? "opacity-60" : "opacity-0 group-hover:opacity-60",
+                  )}
+                >
+                  {isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+                </button>
+              </Hint>
+            )}
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="min-w-40">
+          {/* The tab strip's own sheet commands first, in its order: Unhide
+              has nothing to offer until something is hidden, and Hide refuses
+              the last sheet still on the strip. */}
+          <ContextMenuItem
+            icon={<Eye className="size-3" />}
+            disabled={hidden.size === 0}
+            onSelect={(event) => onUnhide(menuAnchor(event.currentTarget))}
+          >
+            {t("sheets.unhideItem")}
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<EyeOff className="size-3" />}
+            disabled={isHidden || shownCount <= 1}
+            onSelect={() => onHide(sheet.name)}
+          >
+            {t("sheets.hideItem")}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem icon={<Copy className="size-3" />} onSelect={() => copyName(sheet.name)}>
+            {t("sheets.copyNameItem")}
+          </ContextMenuItem>
+          <ContextMenuSub>
+            <ContextMenuSubTrigger disabled={isHidden}>
+              {t("sheets.tabColor")}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ColorPalette
+                variant="context"
+                current={colors.get(sheet.name) ?? sheet.tabColor ?? null}
+                clearLabel={t("sheets.tabColorNone")}
+                onPick={(fill) => onColor(sheet.name, fill)}
+              />
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            icon={isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+            disabled={isHidden && !isPinned}
+            onSelect={() => togglePin(sheet.name)}
+          >
+            {t(isPinned ? "sheets.unpinItem" : "sheets.pinItem")}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     );
   };
 

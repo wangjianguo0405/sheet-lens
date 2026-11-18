@@ -40,6 +40,7 @@ import { initialMarkColor, markSelection, storeMarkColor } from "@/lib/marks";
 import type { Target } from "@/lib/column";
 import { initialSheetPanels, storeSheetPanels, type SheetPanels } from "@/lib/sheetPanels";
 import { readTreeShown, storeTreeShown } from "@/lib/fileTree";
+import { readWelcomeColumns, storeWelcomeColumns } from "@/lib/welcomeColumns";
 import {
   folderKey,
   folderName,
@@ -304,6 +305,8 @@ export default function App() {
   const [sheetListWidth, setSheetListWidth] = useState(DEFAULT_SHEET_LIST_W);
   /** Whether the reader's folder tree sits beside the sheet list, kept between sessions. */
   const [treeShown, setTreeShown] = useState(readTreeShown);
+  /** The start page's two lists; the tree beside them is `treeShown`. */
+  const [welcomeColumns, setWelcomeColumns] = useState(readWelcomeColumns);
   const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_W);
   /** Where a cell's right-click put the mini toolbar, or null when it is away. */
   const [miniToolbar, setMiniToolbar] = useState<{ x: number; y: number } | null>(null);
@@ -1205,6 +1208,10 @@ export default function App() {
   }, [treeShown]);
 
   useEffect(() => {
+    storeWelcomeColumns(welcomeColumns);
+  }, [welcomeColumns]);
+
+  useEffect(() => {
     storeFocusCell(focusCell);
   }, [focusCell]);
 
@@ -1559,6 +1566,14 @@ export default function App() {
           onCloseWorkbook={handleCloseWorkbook}
           fileTreeOpen={treeShown}
           onToggleFileTree={() => setTreeShown((shown) => !shown)}
+          welcomeDirsOpen={welcomeColumns.folders}
+          onToggleWelcomeDirs={() =>
+            setWelcomeColumns((columns) => ({ ...columns, folders: !columns.folders }))
+          }
+          welcomeFilesOpen={welcomeColumns.files}
+          onToggleWelcomeFiles={() =>
+            setWelcomeColumns((columns) => ({ ...columns, files: !columns.files }))
+          }
           sidebarOpen={panels.list}
           onToggleSidebar={() => togglePanel("list")}
           sheetTabsOpen={panels.tabs}
@@ -1697,6 +1712,13 @@ export default function App() {
                               hidden={new Set(hiddenNames)}
                               active={active.sheet}
                               onSelect={handleSheetSelect}
+                              colors={active.tabColors}
+                              onColor={applyTabColor}
+                              onHide={(name) => applySheetHidden(name, true)}
+                              onUnhide={(at) => {
+                                setUnhideAt(at);
+                                setUnhideOpen(true);
+                              }}
                             />
                           ) : (
                             <NoteList
@@ -1882,6 +1904,9 @@ export default function App() {
                   missingFiles={missingFiles}
                   onOpenRecent={handleOpenRecent}
                   error={error}
+                  treeShown={treeShown}
+                  dirsShown={welcomeColumns.folders}
+                  filesShown={welcomeColumns.files}
                 />
               </div>
             )}
