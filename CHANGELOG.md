@@ -12,6 +12,20 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.27] - 2026-11-18
+
+### Added
+
+- The start page's three columns can be shown and hidden from the View menu — file tree, recent folders, recent files. A hidden column gives its width to the ones still showing
+- A file tree row's menu can copy the workbook's file name, absolute path or path relative to its root; folders offer the two paths only
+- The left-hand sheet list has a right-click menu: unhide, hide, copy the sheet name, tab colour, and pin or unpin
+
+### Improved
+
+- The View menu is grouped into a reading view and the start page, since a panel can belong to just one of them
+- Right-click menus follow one order across the app — the entry's own action, then copy, then its location, then organising, with anything destructive last; the file tree and the file tabs now read the same
+- Right-clicking a surface with no menu of its own no longer brings up the webview's browser menu; text fields keep theirs
+
 ## [1.0.26] - 2026-11-16
 
 ### Added
