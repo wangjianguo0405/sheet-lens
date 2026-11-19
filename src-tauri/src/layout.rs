@@ -968,7 +968,10 @@ pub struct RichCell {
 #[derive(Serialize, Clone)]
 pub struct RichRun {
     pub text: String,
-    /// `#rrggbb`, or `None` when the run takes the cell's own colour.
+    /// `#rrggbb`, or `None` when the run states no colour of its own. The two
+    /// ways that happens read differently: a run with no `<rPr>` draws in the
+    /// cell's colour, while one whose `<rPr>` leaves the colour out draws in
+    /// the automatic ink — Excel does not inherit the cell's colour there.
     pub color: Option<String>,
     /// What the run's own `<rPr>` says. `None` when the run has none, which
     /// means the whole of the cell's font — see `RichFont`.

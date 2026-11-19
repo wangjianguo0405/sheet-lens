@@ -1357,6 +1357,14 @@ function paintText(
   // CSS centres the leading, so the baseline sits below the half-leading.
   const halfLeading = (metrics.lineHeight - (metrics.ascent + metrics.descent)) / 2;
   const base = textColor(style, kind, view.theme);
+  /**
+   * What a run draws in when its `<rPr>` says everything but the colour.
+   * Excel does not take the cell's colour there: a red cell holding a run
+   * that only restates its font draws that run in the automatic ink, where
+   * a run with no `<rPr>` at all takes the cell's colour whole.
+   */
+  const defaultInk = textColor(null, kind, view.theme);
+  const spanInk = (span: RunSpan | null): string => span?.color ?? (span?.font ? defaultInk : base);
   const cellDecoration = decorationFor(cellFontFamily(view, style));
 
   for (let i = 0; i < lines.length; i += 1) {
@@ -1435,7 +1443,7 @@ function paintText(
       const pieceWidth = textWidth(runFont, piece);
       const runBaseline = baseline + riseOf(span);
       ctx.font = runFont;
-      ctx.fillStyle = span.color ?? base;
+      ctx.fillStyle = spanInk(span);
       ctx.fillText(piece, at, runBaseline);
       paintDecoration(
         ctx,
@@ -1444,7 +1452,7 @@ function paintText(
         pieceWidth,
         runBaseline,
         piecePx(span),
-        span.color ?? base,
+        spanInk(span),
         span.font ? span.font : style,
       );
       at += pieceWidth;

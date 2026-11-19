@@ -189,7 +189,11 @@ export interface Block {
  */
 export interface RichRun {
   text: string;
-  /** `#rrggbb`, or null when the run takes the cell's own colour. */
+  /**
+   * `#rrggbb`, or null when the run states no colour of its own. A run with no
+   * `rPr` then takes the cell's colour; one whose `rPr` leaves the colour out
+   * takes the default ink instead — see `paintText`.
+   */
   color: string | null;
   /** The run's own `<rPr>`, or absent when it has none — see `RichFont`. */
   font?: RichFont | null;

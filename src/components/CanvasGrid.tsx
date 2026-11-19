@@ -6448,7 +6448,12 @@ export function CanvasGrid({
    * cell's own colour says nothing about them.
    */
   const editingText = editing ? (cellAt(editing.row, editing.col)?.text ?? "") : "";
-  const runs = editing
+  /**
+   * What a run with an `<rPr>` but no colour of its own draws in, matching the
+   * painter: the cell's colour is not inherited there (see `paintText`).
+   */
+  const editorDefaultInk = canvasTheme().foreground;
+  const runs: RichRun[] | null = editing
     ? (() => {
         const file =
           layout?.richCells?.find((cell) => cell.row === editing.row && cell.col === editing.col)
@@ -6824,7 +6829,12 @@ export function CanvasGrid({
             >
               {runs ? (
                 runs.map((run, index) => (
-                  <span key={index} style={run.color ? { color: run.color } : undefined}>
+                  <span
+                    key={index}
+                    style={{
+                      color: run.color ?? (run.font ? editorDefaultInk : undefined),
+                    }}
+                  >
                     {run.text}
                   </span>
                 ))
