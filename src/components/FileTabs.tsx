@@ -170,6 +170,29 @@ export function FileTabs({
   }, [tabs.length, homeOpen]);
 
   /**
+   * The tab a click picked is the one being looked for, and the tree often
+   * points at a workbook whose tab sits past the strip's edge. That is not a
+   * growth, so the effect above never hears about it: selecting a workbook
+   * that was already open has to bring its tab in here.
+   *
+   * The strip moves only when the tab is really out of sight, and only as far
+   * as it takes — a tab already showing must not shift the row under the
+   * pointer that picked it.
+   */
+  useLayoutEffect(() => {
+    const node = strip.current;
+    if (!node || active === null) return;
+    const tab = [...node.querySelectorAll<HTMLElement>("[data-file-tab]")].find(
+      (one) => one.dataset.fileTab === active,
+    );
+    if (!tab) return;
+    const box = node.getBoundingClientRect();
+    const rect = tab.getBoundingClientRect();
+    if (rect.left < box.left) node.scrollLeft += rect.left - box.left;
+    else if (rect.right > box.right) node.scrollLeft += rect.right - box.right;
+  }, [active, tabs]);
+
+  /**
    * The tab the pointer is over, as a place in the strip. Each tab is passed
    * once the pointer is past its middle, which is what makes the one being
    * dragged change places with the one under it rather than only at its edge.
@@ -270,10 +293,10 @@ export function FileTabs({
                   data-file-tab={tab.path}
                   onPointerDown={(event) => holdTab(event, tab.path, index)}
                   className={cn(
-                    "group flex max-w-64 shrink-0 items-center gap-1 border-r border-border px-2 py-1 text-xs select-none",
+                    "group flex max-w-64 shrink-0 items-center gap-1 border-r border-b-2 border-border px-2 py-1 text-xs select-none",
                     isActive
-                      ? "bg-background text-foreground"
-                      : "text-muted-foreground hover:bg-accent/40",
+                      ? "border-b-[#107C41] bg-background font-medium text-foreground"
+                      : "border-b-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground",
                     dragged === tab.path && "cursor-grabbing opacity-70",
                   )}
                   onAuxClick={middleClose(() => onClose(tab.path))}
