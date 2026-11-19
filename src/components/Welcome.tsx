@@ -60,6 +60,8 @@ interface WelcomeProps {
   onForgetFolder: (folder: string) => void;
   /** Newest first, the same list the File menu shows. */
   recentFiles: string[];
+  /** Drops one workbook from the page, pinned or not. */
+  onForgetFile: (path: string) => void;
   /** Those of them the last attempt to open failed on, shown greyed. */
   missingFiles: string[];
   onOpenRecent: (path: string) => void;
@@ -100,6 +102,7 @@ function Row({
   fixed,
   onOpen,
   onToggle,
+  onForget,
 }: {
   path: string;
   missing: boolean;
@@ -107,11 +110,14 @@ function Row({
   fixed: boolean;
   onOpen: (path: string) => void;
   onToggle: (path: string) => void;
+  /** Takes it off the page: off the pinned list and out of the history. */
+  onForget: (path: string) => void;
 }) {
   const { t } = useTranslation();
   const label = t(fixed ? "welcome.unpin" : "welcome.pin", {
     name: fileName(path),
   });
+  const removeLabel = t("toolbar.forget", { name: fileName(path) });
 
   return (
     <li className="group flex items-center">
@@ -147,6 +153,16 @@ function Row({
           )}
         >
           {fixed ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+        </button>
+      </Hint>
+      <Hint label={removeLabel}>
+        <button
+          type="button"
+          onClick={() => onForget(path)}
+          aria-label={removeLabel}
+          className={ACTION}
+        >
+          <Trash2 className="size-3" />
         </button>
       </Hint>
     </li>
@@ -288,6 +304,7 @@ export function Welcome({
   recentFiles,
   missingFiles,
   onOpenRecent,
+  onForgetFile,
   error,
   treeShown,
   dirsShown,
@@ -324,6 +341,15 @@ export function Welcome({
     onForgetFolder(path);
     setPinnedFiles(readPinnedFiles());
     setPinnedDirs(readPinnedDirs());
+  };
+
+  /**
+   * Drops a workbook from the page. A pinned one has to be unpinned here as
+   * well, or it would stay in the run above after the history let it go.
+   */
+  const forgetWorkbook = (path: string) => {
+    setPinnedFiles(unpinFile(path));
+    onForgetFile(path);
   };
 
   /**
@@ -478,6 +504,7 @@ export function Welcome({
                     fixed
                     onOpen={onOpenRecent}
                     onToggle={togglePinned}
+                    onForget={forgetWorkbook}
                   />
                 ))}
                 rest={history.map((path) => (
@@ -488,6 +515,7 @@ export function Welcome({
                     fixed={false}
                     onOpen={onOpenRecent}
                     onToggle={togglePinned}
+                    onForget={forgetWorkbook}
                   />
                 ))}
                 fixedLabel={t("welcome.pinned")}

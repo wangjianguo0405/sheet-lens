@@ -1900,6 +1900,7 @@ export default function App() {
                   onOpen={handleOpen}
                   onOpenDirectory={handleOpenInDirectory}
                   onForgetFolder={handleForgetFolder}
+                  onForgetFile={handleForgetRecent}
                   recentFiles={recentFiles}
                   missingFiles={missingFiles}
                   onOpenRecent={handleOpenRecent}
