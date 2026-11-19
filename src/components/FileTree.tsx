@@ -180,10 +180,16 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const [reveal, setReveal] = useState<string | null>(null);
 
   const load = useCallback(
-    (path: string) => {
+    (path: string, keep = false) => {
       if (inflight.has(path)) return;
       inflight.add(path);
-      setNodes((prev) => new Map(prev).set(path, { state: "loading" }));
+      setNodes((prev) => {
+        // A refresh leaves the listing it is replacing on screen until the new
+        // one arrives: folding the rows away for a frame takes the reader's
+        // scroll position with them.
+        if (keep && prev.get(path)?.state === "ready") return prev;
+        return new Map(prev).set(path, { state: "loading" });
+      });
       listDirectory(path)
         .then((entries) => {
           ready.current.add(folderKey(path));
@@ -341,11 +347,27 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     setRenaming(null);
   };
 
-  /** Drops every listing and reads the open folders again — what SVN update changed. */
+  /** Reads every open folder again — what an SVN update changed — in place. */
   const refresh = () => {
-    setNodes(new Map());
-    ready.current.clear();
-    for (const path of open) load(path);
+    for (const path of open) load(path, true);
+  };
+
+  /**
+   * Reads one folder and every open folder under it again, without the tree
+   * folding away. This is the row's own refresh: the folder the reader is
+   * looking at is the one a file was just added to, and the header's refresh
+   * cannot know which row they were scrolled to.
+   */
+  const refreshFolder = (path: string) => {
+    const key = folderKey(path);
+    const under = (other: string) => {
+      const otherKey = folderKey(other);
+      if (otherKey === key) return true;
+      const rest = otherKey.slice(key.length);
+      return otherKey.startsWith(key) && (rest.startsWith("\\") || rest.startsWith("/"));
+    };
+    for (const other of open) if (under(other)) load(other, true);
+    load(path, true);
   };
 
   /**
@@ -439,8 +461,12 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     </ContextMenuContent>
   );
 
-  /** The menu a folder's row offers: the folder in the file manager, then what to copy. */
-  const folderMenu = (path: string) => (
+  /**
+   * The menu a folder's row offers: the folder in the file manager, then what
+   * to copy. A folder the search drew has no listing to read again, so its
+   * menu leaves the refresh out.
+   */
+  const folderMenu = (path: string, canRefresh = true) => (
     <ContextMenuContent className="min-w-40">
       <ContextMenuItem
         icon={<FolderOpen className="size-3" />}
@@ -448,6 +474,14 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       >
         {t("tree.openInExplorer")}
       </ContextMenuItem>
+      {canRefresh && (
+        <ContextMenuItem
+          icon={<RotateCw className="size-3" />}
+          onSelect={() => refreshFolder(path)}
+        >
+          {t("tree.refresh")}
+        </ContextMenuItem>
+      )}
       {copyMenu(path, false)}
     </ContextMenuContent>
   );
@@ -566,6 +600,12 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
                 onSelect={() => void openPath(path).catch(() => toast.error(t("toast.openFailed")))}
               >
                 {t("tree.openInExplorer")}
+              </ContextMenuItem>
+              <ContextMenuItem
+                icon={<RotateCw className="size-3" />}
+                onSelect={() => refreshFolder(path)}
+              >
+                {t("tree.refresh")}
               </ContextMenuItem>
               {copyMenu(path, false)}
               <ContextMenuSeparator />
@@ -713,7 +753,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               </button>
             </div>
           </ContextMenuTrigger>
-          {folderMenu(key)}
+          {folderMenu(key, false)}
         </ContextMenu>
         {expanded && (
           <ul>
@@ -757,7 +797,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               </button>
             </div>
           </ContextMenuTrigger>
-          {folderMenu(root)}
+          {folderMenu(root, false)}
         </ContextMenu>
         {expanded && (
           <ul>
