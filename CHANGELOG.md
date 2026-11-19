@@ -12,6 +12,22 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.28] - 2026-11-19
+
+### Added
+
+- A folder in the file tree can be read again from its right-click menu: a workbook added under it appears at once, without going back to the header's refresh, and the tree keeps its scroll position
+- Recent files on the start page can be removed from their row with the trash under the pointer; a pinned workbook leaves both lists, and the file itself is untouched
+
+### Improved
+
+- The active file tab wears the same white ground and green underline as the sheet tabs, so the workbook you are reading stands out among many
+
+### Fixed
+
+- A cell whose font is one colour and whose text has a stretch that restates only its font now draws that stretch in Excel's default ink — two-tone text Excel shows no longer comes out one colour
+- Clicking a workbook in the file tree that is already open now brings its tab into view, instead of leaving it past the edge of a full tab strip
+
 ## [1.0.27] - 2026-11-18
 
 ### Added
