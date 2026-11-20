@@ -1435,6 +1435,10 @@ pub fn read_cached(cache: &mut Cache, path: &str, sheet: &str) -> Result<SheetLa
     // local to one row.
     let sheet_xml = read_entry(&mut zip, &part)?;
     let mut layout = parse_sheet(sheet_xml.as_bytes(), &cache.styles, &cache.rich_strings)?;
+    // A string may be written inline instead of into the shared table, and
+    // those cells keep their runs on the cell itself — a workbook is free to
+    // mix the two forms, and one of them is read here rather than in the table.
+    layout.rich_cells.extend(inline_rich_cells(&sheet_xml, cache.palette()));
     // A sheet with no `_xlnm.Print_Area` still gets shaded by Excel, which falls
     // back to the range it would print. Leaving this `None` painted those sheets
     // white to the edge while every other sheet in the same workbook greyed out
@@ -1988,6 +1992,121 @@ fn rich_strings(xml: &str, palette: Palette) -> Vec<Option<Vec<RichRun>>> {
                             }
                         }
                     }
+                }
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The runs of every cell that writes its string inline, as
+/// `<c t="inlineStr"><is><r>…`.
+///
+/// The same formatting a shared string carries, stored on the cell instead of
+/// in the workbook-wide table — Excel writes either form, and a workbook is
+/// free to mix them. Without this pass those runs are dropped and the cell is
+/// drawn in one colour: the text itself still arrives, because calamine reads
+/// it from wherever it was written.
+fn inline_rich_cells(xml: &str, palette: Palette) -> Vec<RichCell> {
+    let mut out: Vec<RichCell> = Vec::new();
+    let mut reader = XmlReader::from_str(xml);
+    let mut buf = Vec::new();
+    /// The inline-string cell being read, while its `<is>` is open.
+    let mut place: Option<(u32, u32)> = None;
+    let mut inline = false;
+    let mut runs: Option<Vec<RichRun>> = None;
+    let mut run: Option<RichRun> = None;
+    let mut font: Option<RichFont> = None;
+    let mut in_text = false;
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(element)) => match element.local_name().as_ref() {
+                b"c" => {
+                    let text = attr(&element, b"t").as_deref() == Some("inlineStr");
+                    place = text
+                        .then(|| attr(&element, b"r").and_then(|r| parse_cell(&r)))
+                        .flatten();
+                    inline = false;
+                    runs = None;
+                    run = None;
+                    font = None;
+                    in_text = false;
+                }
+                b"is" if place.is_some() => {
+                    inline = true;
+                    runs = Some(Vec::new());
+                }
+                b"r" if inline => {
+                    run = Some(RichRun {
+                        text: String::new(),
+                        color: None,
+                        font: None,
+                    });
+                }
+                b"rPr" if inline => font = Some(RichFont::default()),
+                b"t" if inline => in_text = true,
+                b"color" if inline => set_run_color(&element, run.as_mut(), palette),
+                _ if inline => read_run_font(&element, font.as_mut()),
+                _ => {}
+            },
+            Ok(Event::Empty(element)) => {
+                if inline {
+                    match element.local_name().as_ref() {
+                        b"color" => set_run_color(&element, run.as_mut(), palette),
+                        _ => read_run_font(&element, font.as_mut()),
+                    }
+                }
+            }
+            // Entities arrive as their own event, exactly as they do in the
+            // shared table; the text around them is stitched back together.
+            Ok(Event::GeneralRef(reference)) => {
+                if let (Some(run), Some(ch)) = (run.as_mut(), entity_text(&reference)) {
+                    run.text.push(ch);
+                }
+            }
+            // Only text inside a `<r>` counts; a phonetic `<rPh>` opens the same
+            // flag with no run under it, so its reading is left out.
+            Ok(Event::Text(text)) if in_text => {
+                if let (Some(run), Ok(text)) = (run.as_mut(), text.xml_content(XmlVersion::default())) {
+                    run.text.push_str(&text);
+                }
+            }
+            Ok(Event::End(element)) => match element.local_name().as_ref() {
+                b"t" if inline => in_text = false,
+                b"rPr" if inline => {
+                    if let (Some(run), Some(font)) = (run.as_mut(), font.take()) {
+                        run.font = (!font.is_empty()).then_some(font);
+                    }
+                }
+                b"r" if inline => {
+                    if let (Some(list), Some(run)) = (runs.as_mut(), run.take()) {
+                        list.push(run);
+                    }
+                }
+                b"is" if inline => {
+                    inline = false;
+                    // Only runs that say something; one restating the cell's
+                    // own colour draws exactly like the plain text.
+                    if let Some(list) = runs.take() {
+                        if let Some((row, col)) = place {
+                            if list.iter().any(|run| run.color.is_some() || run.font.is_some()) {
+                                out.push(RichCell { row, col, runs: list });
+                            }
+                        }
+                    }
+                }
+                b"c" => {
+                    place = None;
+                    inline = false;
+                    runs = None;
+                    run = None;
+                    font = None;
+                    in_text = false;
                 }
                 _ => {}
             },
@@ -5060,6 +5179,24 @@ mod tests {
         assert_eq!(list[2].color, None);
         let text: String = list.iter().map(|run| run.text.as_str()).collect();
         assert_eq!(text, "aredw<>ord");
+    }
+
+    /// A string written inline keeps its runs the same way a shared one does —
+    /// the position comes from the cell, since there is no table slot to index.
+    /// Plain inline text still gets no entry, and a shared string is left to
+    /// the table.
+    #[test]
+    fn keeps_the_runs_of_an_inline_string() {
+        let xml = r#"<worksheet><sheetData><row r="2">
+            <c r="J5" t="inlineStr"><is><r><rPr><color rgb="FF000000"/></rPr><t>plain </t></r><r><rPr><color rgb="FFFF0000"/></rPr><t>red</t></r></is></c>
+            <c r="K5" t="inlineStr"><is><t>plain</t></is></c>
+            <c r="L5" t="s"><v>3</v></c>
+        </row></sheetData></worksheet>"#;
+        let cells = inline_rich_cells(xml, Palette::EMPTY);
+        assert_eq!(cells.len(), 1, "only the inline string with formatting is kept");
+        assert_eq!((cells[0].row, cells[0].col), (4, 9), "J5, zero-based");
+        assert_eq!(cells[0].runs.len(), 2);
+        assert_eq!(cells[0].runs[1].color.as_deref(), Some("#FF0000"));
     }
 
     /// A run's own `<rPr>` is read, and a string distinguished only by its font
