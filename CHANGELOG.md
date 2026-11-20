@@ -12,6 +12,15 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.29] - 2026-11-20
+
+### Added
+
+- Search reads regular expressions: the `.*` toggle beside the case and whole-cell switches treats what you type as a pattern. Whole-cell anchors it to the value, the case switch still applies, and a pattern that does not compile finds nothing rather than failing
+- Undo and redo over everything the session changes by hand: fonts and colours, marks, hidden sheets, hidden rows and columns, dragged or fitted column widths and row heights, and shapes dragged aside. Ctrl+Z takes a step back, Ctrl+Y or Ctrl+Shift+Z puts it back, and the two buttons beside the File menu do the same; scrolling, zooming, freezing, splitting and filtering are not edits and stay out of the history
+- A file tab's menu can close every tab to its left, and — for a workbook under one of the folder tree's roots — copy its path relative to that root
+- Ctrl+R reads the workbook again from disk instead of reloading the window, so a file that changed underneath is picked up without closing anything
+
 ## [1.0.28] - 2026-11-19
 
 ### Added
