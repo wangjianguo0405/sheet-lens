@@ -12,6 +12,12 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.30] - 2026-11-20
+
+### Fixed
+
+- A cell whose words carry two colours now draws both when the workbook writes its strings inline rather than into Excel's shared-string table; the second colour used to be dropped and the whole value came out in one
+
 ## [1.0.29] - 2026-11-20
 
 ### Added
