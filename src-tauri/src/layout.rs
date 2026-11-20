@@ -2014,7 +2014,7 @@ fn inline_rich_cells(xml: &str, palette: Palette) -> Vec<RichCell> {
     let mut out: Vec<RichCell> = Vec::new();
     let mut reader = XmlReader::from_str(xml);
     let mut buf = Vec::new();
-    /// The inline-string cell being read, while its `<is>` is open.
+    // The inline-string cell being read, while its `<is>` is open.
     let mut place: Option<(u32, u32)> = None;
     let mut inline = false;
     let mut runs: Option<Vec<RichRun>> = None;
