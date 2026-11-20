@@ -211,6 +211,13 @@ export interface SheetView {
    * the workbook is what puts the file's own answer back.
    */
   hidden?: { rows: Map<number, boolean>; cols: Map<number, boolean> };
+  /**
+   * Where shapes have been dragged to, by their index in the sheet's shape
+   * list. Session state like the sizes above, and kept here for the same two
+   * reasons: leaving the sheet returns it as it was left, and undoing a drag
+   * has one place to put the old offsets back.
+   */
+  shapes?: Map<number, { x: number; y: number }>;
 }
 
 /** Those positions, by workbook path and then by sheet name. */
@@ -515,6 +522,12 @@ interface GridProps {
   /** Steps to the sheet `delta` along in the workbook, for Ctrl+PageUp/Down. */
   onSheetStep?: (delta: number) => void;
   /**
+   * A session edit is about to change what the sheet keeps — a dragged size,
+   * hidden lines, a moved shape. Called before the change, so the caller can
+   * take the snapshot its undo step restores.
+   */
+  onEdit?: () => void;
+  /**
    * Bumped when the caller places the cursor somewhere it has to be *seen* — Go
    * To, or a search hit. Arriving on a sheet is not one of those: Excel puts
    * back the view that sheet was left at, off-screen cursor and all, so a jump
@@ -583,6 +596,8 @@ interface ResizeDrag {
   rows: number[];
   start: number;
   size: number;
+  /** Whether the gesture has already handed the undo stack its step. */
+  recorded: boolean;
 }
 
 async function computeVisibleRows(
@@ -858,6 +873,7 @@ export function CanvasGrid({
   onExtent,
   onFiltered,
   onSheetStep,
+  onEdit,
   reveal,
   previewNote,
   zoom,
@@ -1351,6 +1367,8 @@ export function CanvasGrid({
   const shapeOffsets = shapeMoves.get(shapeMovesKey);
   const moveShape = useCallback(
     (index: number, x: number, y: number) => {
+      // A drag commits once, on release, so this is one undo step.
+      onEdit?.();
       setShapeMoves((current) => {
         const next = new Map(current);
         const sheetOffsets = new Map(next.get(shapeMovesKey) ?? []);
@@ -1359,7 +1377,7 @@ export function CanvasGrid({
         return next;
       });
     },
-    [shapeMovesKey],
+    [shapeMovesKey, onEdit],
   );
 
   /**
@@ -2796,6 +2814,12 @@ export function CanvasGrid({
         setHiddenOverride(saved?.hidden ?? { rows: new Map(), cols: new Map() });
         setColOverrides(saved?.sizes?.col ?? toOverrides(parsed.colWidthsChars, colPx));
         setRowOverrides(saved?.sizes?.row ?? toOverrides(parsed.rowHeightsPx));
+        setShapeMoves((current) =>
+          new Map(current).set(
+            shapeMovesKey,
+            saved?.shapes ?? new Map<number, { x: number; y: number }>(),
+          ),
+        );
         // The rows the file left without a height are fitted again from this
         // sheet's own text, so the previous sheet's heights never linger.
         fittedBlocks.current.clear();
@@ -2869,9 +2893,19 @@ export function CanvasGrid({
       ...view,
       sizes: { col: colOverrides, row: rowOverrides },
       hidden: hiddenOverride,
+      shapes: shapeMoves.get(shapeMovesKey) ?? new Map(),
     });
     views.set(path, bySheet);
-  }, [views, path, sheet.name, colOverrides, rowOverrides, hiddenOverride]);
+  }, [
+    views,
+    path,
+    sheet.name,
+    colOverrides,
+    rowOverrides,
+    hiddenOverride,
+    shapeMoves,
+    shapeMovesKey,
+  ]);
 
   /**
    * The zoom the reader chose, kept for this sheet the way Excel keeps one per
@@ -4905,6 +4939,7 @@ export function CanvasGrid({
     const isRows = action.kind === "rowGroup" || action.kind === "rowLevel";
     const lineOutline = isRows ? outlineRows : outlineCols;
     if (!lineOutline) return;
+    onEdit?.();
     if (action.kind === "rowLevel" || action.kind === "colLevel") {
       // Excel's corner buttons show up to their own level and close what is
       // deeper, whatever each group had been left at.
@@ -5226,6 +5261,7 @@ export function CanvasGrid({
   const setHeaderHidden = (hidden: boolean) => {
     const target = menuTargetRef.current;
     if (!target) return;
+    onEdit?.();
     const rows = target.kind === "row";
     let [from, to] = headerSpan(target.kind) ?? [target.index, target.index];
     if (!hidden) {
@@ -5555,6 +5591,7 @@ export function CanvasGrid({
 
   /** Sizes a column to the widest text currently loaded for it. */
   const autofitColumn = (index: number) => {
+    onEdit?.();
     let widest = MIN_COL_W;
     const mine = blockPrefix(path, sheet.name);
     for (const [key, block] of cache.current) {
@@ -5638,6 +5675,7 @@ export function CanvasGrid({
 
   /** Sizes each of `indices` to that height, as a choice of the reader's. */
   const autofitRows = (indices: number[]) => {
+    onEdit?.();
     const tallest = measureRowHeights(indices);
     setRowOverrides((prev) => {
       const map = new Map(prev);
@@ -6069,6 +6107,12 @@ export function CanvasGrid({
     const onMove = (event: PointerEvent) => {
       const active = drag.current;
       if (!active) return;
+      // The first move of a grip is the gesture's one undo step; the rest of
+      // the drag is the same step's outcome.
+      if (!active.recorded) {
+        active.recorded = true;
+        onEdit?.();
+      }
       const moved =
         (active.kind === "col" ? event.clientX - active.start : event.clientY - active.start) /
         zoomRef.current;
@@ -6093,7 +6137,7 @@ export function CanvasGrid({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [minRowH]);
+  }, [minRowH, onEdit]);
 
   /** The boundary a pointer is within grabbing distance of, or null. */
   const resizeTargetAt = useCallback(
@@ -6164,6 +6208,7 @@ export function CanvasGrid({
         target.kind === "col"
           ? spanAt(cols.offsets, target.index)
           : spanAt(rows.offsets, displayOfRow(target.index)),
+      recorded: false,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };

@@ -57,6 +57,7 @@ export function SearchPanel({ path, sheet, focusSignal, seed, onJump, onClose }:
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeCell, setWholeCell] = useState(false);
+  const [regexMode, setRegexMode] = useState(false);
   const [scope, setScope] = useState<Scope>("sheet");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);
@@ -131,7 +132,7 @@ export function SearchPanel({ path, sheet, focusSignal, seed, onJump, onClose }:
   // A different search is a different list to walk.
   useEffect(() => {
     setCurrent(null);
-  }, [path, query, scope, caseSensitive, wholeCell]);
+  }, [path, query, scope, caseSensitive, wholeCell, regexMode]);
 
   useEffect(() => {
     currentRef.current?.scrollIntoView({ block: "nearest" });
@@ -152,6 +153,7 @@ export function SearchPanel({ path, sheet, focusSignal, seed, onJump, onClose }:
       searchWorkbook(path, query, scope === "sheet" ? sheet : null, {
         caseSensitive,
         wholeCell,
+        regex: regexMode,
       })
         .then((result) => {
           if (cancelled) return;
@@ -172,7 +174,7 @@ export function SearchPanel({ path, sheet, focusSignal, seed, onJump, onClose }:
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [path, sheet, query, caseSensitive, wholeCell, scope]);
+  }, [path, sheet, query, caseSensitive, wholeCell, scope, regexMode]);
 
   const toggleClass = (on: boolean) =>
     cn(
@@ -317,6 +319,15 @@ export function SearchPanel({ path, sheet, focusSignal, seed, onJump, onClose }:
           >
             {t("search.wholeCell")}
           </button>
+          <Hint label={t("search.regex")}>
+            <button
+              type="button"
+              className={toggleClass(regexMode)}
+              onClick={() => setRegexMode((v) => !v)}
+            >
+              .*
+            </button>
+          </Hint>
         </div>
 
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">

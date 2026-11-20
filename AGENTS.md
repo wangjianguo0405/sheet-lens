@@ -38,8 +38,6 @@ pnpm fmt:check   # 三项全查：prettier、cargo fmt、eslint（CI 用的是�
 cd src-tauri && cargo test
 ```
 
-套件针对 `samples/sample-design.xlsx` 运行。两个被忽略的测试会读取你自己机器上的工作簿，这是校对真实文档解析的唯一方式。
-
 ## 技术栈
 
 - Tauri 2（Rust，后端）
@@ -52,6 +50,7 @@ cd src-tauri && cargo test
 - 保持现有项目约定。
 - 文件变更较少、集中处理。
 - 非必要不引入新依赖。
+- 界面文案三份同时加、键名相同（`src/locales/en.json`、`zh-CN.json`、`ja.json`）；界面上有语言切换，默认跟随系统，选择会记住。
 - 右键菜单顺序固定，所有菜单共用一份（参照 Windows 资源管理器）；新加项按类别插入，菜单里没有的类别跳过：
   1. 打开 / 重新加载 / 打开方式——条目自己的动作
   2. 复制——子菜单固定「文件名 → 绝对路径 → 相对路径」，目录没有文件名
@@ -61,7 +60,7 @@ cd src-tauri && cargo test
 
 ## 标准对照
 
-清单在 `dev-harness/ooxml-inventory.md`，分两轴：字段（标准定义、文件在用、代码没读）和画法（Excel 怎么画）。
+清单在 `dev-harness/ooxml-inventory.md`，分两轴：字段（标准定义、文件在用、代码没读）和画法（Excel 怎么画）。它记录的是本机语料与标准文档的对照，含真实文档信息，按约定不入库（`dev-harness/` 在 gitignore 里），新克隆的仓库里没有这份文件。
 
 - 新字段落地前，先写清它和哪些既有功能共用同一块 XML 或同一块画面区域，并为组合造一张夹具（例：`<row hidden>` × `autoFilter`）。
 - 准绳是 Excel 自己：COM 读数、`CopyPicture`、`ExportAsFixedFormat` 导出的 PDF。`dump_web_fixture` 只覆盖解析层，前端绘制的改动要回到真实文档的页面上量。

@@ -1,4 +1,4 @@
-import { Download, FolderOpen, Languages, X } from "lucide-react";
+import { Download, FolderOpen, Languages, Redo2, Undo2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,11 @@ interface ToolbarProps {
   onForgetRecent: (path: string) => void;
   onClearRecents: () => void;
   onCloseWorkbook: () => void;
+  /** The session's own edits, taken back and put again; greyed when empty. */
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
   /** Which of the three panels the window shows; all read by the View menu. */
   fileTreeOpen: boolean;
   onToggleFileTree: () => void;
@@ -78,6 +83,10 @@ export function Toolbar({
   onForgetRecent,
   onClearRecents,
   onCloseWorkbook,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
   fileTreeOpen,
   onToggleFileTree,
   sidebarOpen,
@@ -184,6 +193,34 @@ export function Toolbar({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Undo and redo of the session's own edits, beside the File menu the way
+          Excel's quick-access pair sits beside its File tab. Nothing is written
+          to the workbook either way; the arrows walk the session's own history. */}
+      <Hint label={t("toolbar.undo")}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-1.5"
+          aria-label={t("toolbar.undo")}
+          disabled={!canUndo}
+          onClick={onUndo}
+        >
+          <Undo2 className="size-3.5" />
+        </Button>
+      </Hint>
+      <Hint label={t("toolbar.redo")}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-1.5"
+          aria-label={t("toolbar.redo")}
+          disabled={!canRedo}
+          onClick={onRedo}
+        >
+          <Redo2 className="size-3.5" />
+        </Button>
+      </Hint>
 
       {/* The View menu, beside the File menu as Excel's own 表示 sits beside
           ファイル: each entry is a panel, ticked while it shows. The tree is

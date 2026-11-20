@@ -4,7 +4,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { EllipsisVertical } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { CanvasGrid, type SheetViews } from "@/components/CanvasGrid";
+import { CanvasGrid, type SheetView, type SheetViews } from "@/components/CanvasGrid";
 import { FileTabs } from "@/components/FileTabs";
 import { FileTree } from "@/components/FileTree";
 import { Hint } from "@/components/Hint";
@@ -158,6 +158,23 @@ interface Tab {
    * cells come from the workbook as it used to be.
    */
   revision: number;
+}
+
+/** The part of a sheet the grid keeps for the session: sizes, hidden lines, shape offsets. */
+type GridSlice = Pick<SheetView, "sizes" | "hidden" | "shapes">;
+
+/** One undo step's state: everything a tab keeps by hand, plus the grid's slices. */
+interface SessionSnapshot {
+  path: string;
+  /** The sheet the edit was made on, which undo puts back on screen. */
+  sheet: string;
+  marks: Map<string, string>;
+  formats: Formats;
+  textColors: TextColors;
+  tabColors: Map<string, string>;
+  sheetHidden: Map<string, boolean>;
+  /** By sheet name, exactly the slices kept in the view store. */
+  grid: Map<string, GridSlice>;
 }
 
 const EXCEL_EXTENSIONS = ["xlsx", "xlsm", "xls", "xlsb", "ods"];
@@ -566,6 +583,123 @@ export default function App() {
   }, []);
 
   /**
+   * The undo history: a snapshot of the session's own editing state taken just
+   * before each edit. A tab keeps its marks, formats, text colours, tab colours
+   * and hidden sheets; the grid keeps each sheet's sizes, hidden lines and
+   * moved shapes in the view store. What a step puts back is exactly those.
+   * View decisions — scroll, zoom, freeze, filters — are outside it, as they
+   * are in Excel.
+   *
+   * A snapshot holds the state's own objects rather than copies: every edit
+   * builds new maps instead of changing old ones, so a step costs references.
+   */
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const undoStack = useRef<SessionSnapshot[]>([]);
+  const redoStack = useRef<SessionSnapshot[]>([]);
+  const [historyDepth, setHistoryDepth] = useState({ undo: 0, redo: 0 });
+
+  const snapshotSession = useCallback((path: string, sheet: string): SessionSnapshot | null => {
+    const tab = tabsRef.current.find((one) => one.info.path === path);
+    if (!tab) return null;
+    const grid = new Map<string, GridSlice>();
+    for (const [name, view] of views.current.get(path) ?? []) {
+      grid.set(name, { sizes: view.sizes, hidden: view.hidden, shapes: view.shapes });
+    }
+    return {
+      path,
+      sheet,
+      marks: tab.marks,
+      formats: tab.formats,
+      textColors: tab.textColors,
+      tabColors: tab.tabColors,
+      sheetHidden: tab.sheetHidden,
+      grid,
+    };
+  }, []);
+
+  /** Takes the step an edit is about to need. */
+  const recordEdit = useCallback(
+    (path: string, sheet: string) => {
+      const snapshot = snapshotSession(path, sheet);
+      if (!snapshot) return;
+      undoStack.current.push(snapshot);
+      redoStack.current = [];
+      setHistoryDepth({ undo: undoStack.current.length, redo: 0 });
+    },
+    [snapshotSession],
+  );
+
+  /** Puts a snapshot back — the tab's own state first, then the grid's. */
+  const applySnapshot = useCallback(
+    (snapshot: SessionSnapshot) => {
+      selectTab(snapshot.path);
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.info.path === snapshot.path
+            ? {
+                ...tab,
+                sheet: snapshot.sheet,
+                marks: snapshot.marks,
+                formats: snapshot.formats,
+                textColors: snapshot.textColors,
+                tabColors: snapshot.tabColors,
+                sheetHidden: snapshot.sheetHidden,
+                // The grid re-seeds the sheet's sizes, hidden lines and shape
+                // offsets from the view store on a revision bump; this is what
+                // draws the snapshot rather than the state it replaced.
+                revision: tab.revision + 1,
+              }
+            : tab,
+        ),
+      );
+      const bySheet = views.current.get(snapshot.path) ?? new Map<string, SheetView>();
+      for (const [name, slice] of snapshot.grid) {
+        const view = bySheet.get(name) ?? { top: 0, left: 0 };
+        bySheet.set(name, {
+          ...view,
+          sizes: slice.sizes,
+          hidden: slice.hidden,
+          shapes: slice.shapes,
+        });
+      }
+      views.current.set(snapshot.path, bySheet);
+    },
+    [selectTab],
+  );
+
+  const undo = useCallback(() => {
+    const step = undoStack.current.pop();
+    if (!step) return;
+    const now = snapshotSession(step.path, step.sheet);
+    if (now) redoStack.current.push(now);
+    applySnapshot(step);
+    setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
+  }, [applySnapshot, snapshotSession]);
+
+  const redo = useCallback(() => {
+    const step = redoStack.current.pop();
+    if (!step) return;
+    const now = snapshotSession(step.path, step.sheet);
+    if (now) undoStack.current.push(now);
+    applySnapshot(step);
+    setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
+  }, [applySnapshot, snapshotSession]);
+
+  /** A closed workbook takes its steps with it. */
+  const forgetHistory = useCallback((path: string) => {
+    undoStack.current = undoStack.current.filter((step) => step.path !== path);
+    redoStack.current = redoStack.current.filter((step) => step.path !== path);
+    setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
+  }, []);
+
+  /** A grid-side session edit, recorded against the sheet showing. */
+  const recordGridEdit = useCallback(() => {
+    if (!active) return;
+    recordEdit(active.info.path, active.sheet);
+  }, [active, recordEdit]);
+
+  /**
    * A tab dragged along the strip. It moves in this list and nowhere else —
    * the order is the reader's, not the workbook's — and the tab showing stays
    * the tab showing, since the cursors travel with their own entry.
@@ -616,16 +750,17 @@ export default function App() {
     (path: string) => {
       void closeWorkbook(path).catch(() => {});
       views.current.delete(path);
+      forgetHistory(path);
       const remaining = tabs.filter((tab) => tab.info.path !== path);
       setTabs(remaining);
       if (activePath === path) setActivePath(remaining.at(-1)?.info.path ?? null);
     },
-    [tabs, activePath],
+    [tabs, activePath, forgetHistory],
   );
 
   /**
    * Closes several tabs at once: the strip's menu takes away the others, the
-   * ones to its right, or all of them. `activate` is the tab the menu was
+   * ones on one side of it, or all of them. `activate` is the tab the menu was
    * opened on — it survives the sweep and is the one left showing, the way a
    * browser leaves the tab you cleared the rest out from.
    */
@@ -636,6 +771,7 @@ export default function App() {
       for (const path of paths) {
         void closeWorkbook(path).catch(() => {});
         views.current.delete(path);
+        forgetHistory(path);
       }
       const remaining = tabs.filter((tab) => !gone.has(tab.info.path));
       setTabs(remaining);
@@ -644,7 +780,7 @@ export default function App() {
         setActivePath(remaining.at(-1)?.info.path ?? null);
       }
     },
-    [tabs, activePath],
+    [tabs, activePath, forgetHistory],
   );
 
   /**
@@ -742,6 +878,7 @@ export default function App() {
   const applyMark = useCallback(
     (fill: string | null) => {
       if (!active || !activeSheet) return;
+      recordEdit(active.info.path, active.sheet);
       // The bucket then holds what was just used, Excel's own behaviour: the
       // next press of the bucket is the same colour without opening anything.
       if (fill !== null) setMarkColor(fill);
@@ -768,7 +905,7 @@ export default function App() {
         ),
       );
     },
-    [active, activeSheet, extent],
+    [active, activeSheet, extent, recordEdit],
   );
 
   /**
@@ -779,6 +916,7 @@ export default function App() {
   const applyFormat = useCallback(
     (patch: CellFormat | null) => {
       if (!active || !activeSheet) return;
+      recordEdit(active.info.path, active.sheet);
       const bounds = extent ?? { rows: activeSheet.rows, cols: activeSheet.cols };
       const cursor = active.cursors[active.sheet] ?? ORIGIN;
       setTabs((prev) =>
@@ -792,7 +930,7 @@ export default function App() {
         ),
       );
     },
-    [active, activeSheet, extent],
+    [active, activeSheet, extent, recordEdit],
   );
 
   /**
@@ -803,6 +941,7 @@ export default function App() {
   const applyTextColor = useCallback(
     (at: { row: number; col: number; from: number; to: number }, color: string | null) => {
       if (!active) return;
+      recordEdit(active.info.path, active.sheet);
       const key = formatKey(active.sheet, at.row, at.col);
       setTabs((prev) =>
         prev.map((tab) => {
@@ -815,7 +954,7 @@ export default function App() {
         }),
       );
     },
-    [active],
+    [active, recordEdit],
   );
 
   /**
@@ -1001,6 +1140,7 @@ export default function App() {
   const applyTabColor = useCallback(
     (sheet: string, color: string | null) => {
       if (!active) return;
+      recordEdit(active.info.path, sheet);
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.info.path !== active.info.path) return tab;
@@ -1011,7 +1151,7 @@ export default function App() {
         }),
       );
     },
-    [active],
+    [active, recordEdit],
   );
 
   /**
@@ -1075,6 +1215,7 @@ export default function App() {
   const applySheetsHidden = useCallback(
     (names: string[]) => {
       if (!active) return;
+      recordEdit(active.info.path, active.sheet);
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.info.path !== active.info.path) return tab;
@@ -1098,7 +1239,7 @@ export default function App() {
       );
       setSheetGroup(null);
     },
-    [active],
+    [active, recordEdit],
   );
 
   const handleHideSheet = useCallback(
@@ -1120,8 +1261,11 @@ export default function App() {
    * and reading `ActiveSheet` back.
    */
   const applySheetHidden = useCallback(
-    (sheet: string, hidden: boolean) => {
+    (sheet: string, hidden: boolean, record = true) => {
       if (!active) return;
+      // A sweep — the Unhide dialog bringing several back at once — takes its
+      // one step itself, rather than a step per name that all restore the same.
+      if (record) recordEdit(active.info.path, sheet);
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.info.path !== active.info.path) return tab;
@@ -1138,7 +1282,7 @@ export default function App() {
         }),
       );
     },
-    [active],
+    [active, recordEdit],
   );
 
   /**
@@ -1147,11 +1291,12 @@ export default function App() {
    */
   const handleUnhideSheets = useCallback(
     (names: string[]) => {
-      for (const name of names) applySheetHidden(name, false);
+      if (names.length > 0 && active) recordEdit(active.info.path, active.sheet);
+      for (const name of names) applySheetHidden(name, false, false);
       setSheetGroup(null);
       if (names.length) updateActive({ sheet: names[names.length - 1] });
     },
-    [applySheetHidden, updateActive],
+    [active, applySheetHidden, recordEdit, updateActive],
   );
 
   const handleSheetSelect = useCallback(
@@ -1392,7 +1537,13 @@ export default function App() {
       // a meaning of its own: the hidden readout, dev builds only, like the
       // panel itself.
       if (event.shiftKey) {
-        if (key === "d" && import.meta.env.DEV) {
+        if (key === "z") {
+          const target = event.target;
+          if (target instanceof Element && target.closest("input, textarea, [contenteditable]"))
+            return;
+          event.preventDefault();
+          redo();
+        } else if (key === "d" && import.meta.env.DEV) {
           event.preventDefault();
           toggleShapeDebug();
         } else if (key === "l") {
@@ -1426,6 +1577,31 @@ export default function App() {
           event.preventDefault();
           closeTab(activePath);
           break;
+        // The webview's own Ctrl+R would reload the page and take every open
+        // workbook's view with it. The key reads the file again instead — the
+        // tab menu's R — and is held back even with nothing open, so it never
+        // lands as a page reload.
+        case "r": {
+          event.preventDefault();
+          if (!activePath) return;
+          const target = event.target;
+          if (target instanceof Element && target.closest("input, textarea, [contenteditable]"))
+            return;
+          void reloadTab(activePath);
+          break;
+        }
+        // Ctrl+Z takes back the last session edit; Ctrl+Y puts it back. A field
+        // being typed into keeps both keys: that undo is the field's own.
+        case "z":
+        case "y": {
+          const target = event.target;
+          if (target instanceof Element && target.closest("input, textarea, [contenteditable]"))
+            return;
+          event.preventDefault();
+          if (key === "z") undo();
+          else redo();
+          break;
+        }
         // Excel's typing keys, applied to what is selected. The formats are
         // the session's own — the ribbon writes the same ones. A field being
         // typed into keeps them: that text is not the sheet's.
@@ -1449,7 +1625,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleOpen, activePath, closeTab, selectTab]);
+  }, [handleOpen, activePath, closeTab, selectTab, reloadTab, undo, redo]);
 
   const startPanelDrag = useCallback(
     (which: "fileTree" | "sheetList" | "search", event: React.PointerEvent<HTMLDivElement>) => {
@@ -1564,6 +1740,10 @@ export default function App() {
           onForgetRecent={handleForgetRecent}
           onClearRecents={handleClearRecents}
           onCloseWorkbook={handleCloseWorkbook}
+          canUndo={historyDepth.undo > 0}
+          canRedo={historyDepth.redo > 0}
+          onUndo={undo}
+          onRedo={redo}
           fileTreeOpen={treeShown}
           onToggleFileTree={() => setTreeShown((shown) => !shown)}
           welcomeDirsOpen={welcomeColumns.folders}
@@ -1771,6 +1951,7 @@ export default function App() {
                         onPreviewNote={handleNotePreview}
                         onSearchValue={searchFor}
                         onSelect={handleSelect}
+                        onEdit={recordGridEdit}
                         onDetail={setDetail}
                         onExtent={handleExtent}
                         onFiltered={handleFiltered}

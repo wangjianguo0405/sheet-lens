@@ -46,6 +46,7 @@ import {
   readTreeNames,
   readTreeOpen,
   readTreeRoots,
+  relativeUnderRoots,
   searchTree,
   storeTreeAutoLocate,
   storeTreeNames,
@@ -396,21 +397,10 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
 
   /**
    * The row's path without the root it sits under — what a command run from
-   * that root expects. A root is relative to the folder holding it, so it still
-   * names something there.
+   * that root expects. A row always sits under one, but a path that somehow
+   * does not still has to name something, so it falls back to itself.
    */
-  const relativePath = (path: string) => {
-    const key = folderKey(path);
-    let best: string | null = null;
-    for (const root of roots) {
-      const trimmed = root.replace(/[\\/]+$/, "");
-      const rootKey = folderKey(trimmed);
-      if (key === rootKey) return fileName(trimmed);
-      const under = key.startsWith(rootKey) && /^[\\/]/.test(key.slice(rootKey.length));
-      if (under && (best === null || trimmed.length > best.length)) best = trimmed;
-    }
-    return best === null ? path : path.slice(best.length).replace(/^[\\/]+/, "");
-  };
+  const relativePath = (path: string) => relativeUnderRoots(roots, path) ?? path;
 
   /** Puts one form of a row's path on the clipboard, and says how it went. */
   const copy = (text: string) => {

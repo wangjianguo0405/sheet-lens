@@ -9,6 +9,8 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 
+import { fileName, folderKey } from "@/lib/recent";
+
 export interface DirEntry {
   name: string;
   path: string;
@@ -73,6 +75,27 @@ export function readTreeRoots(): string[] {
 
 export function storeTreeRoots(paths: string[]): string[] {
   return writeList(ROOTS_KEY, paths);
+}
+
+/**
+ * `path` without the root it sits under — what a command run from that root
+ * expects, and the shortest way to name a file that lives below one. A root is
+ * relative to the folder holding it, so it still names something there.
+ *
+ * Null when no root contains it: a workbook opened from elsewhere has no
+ * relative form, and one invented for it would only repeat the absolute path.
+ */
+export function relativeUnderRoots(roots: string[], path: string): string | null {
+  const key = folderKey(path);
+  let best: string | null = null;
+  for (const root of roots) {
+    const trimmed = root.replace(/[\\/]+$/, "");
+    const rootKey = folderKey(trimmed);
+    if (key === rootKey) return fileName(trimmed);
+    const under = key.startsWith(rootKey) && /^[\\/]/.test(key.slice(rootKey.length));
+    if (under && (best === null || trimmed.length > best.length)) best = trimmed;
+  }
+  return best === null ? null : path.slice(best.length).replace(/^[\\/]+/, "");
 }
 
 /** The folders left open, so the tree comes back as it was left. */

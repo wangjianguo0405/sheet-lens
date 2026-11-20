@@ -17,13 +17,25 @@ read, so they fall back to plain defaults.
 
 ## What it does
 
-- Sheets, search, go-to, column filters and a formula bar
-- A File menu: open a workbook, reopen one from the list of those opened lately,
-  close the one showing, or take an entry out of that list. A tab is closed by a
-  middle click
+- Several workbooks open at once, each a tab that drags to reorder and closes on
+  a middle click or from its own menu; a File menu reopens one from the list of
+  those opened lately, and a start page pins the workbooks and folders you keep
+  coming back to
+- A folder tree of your own, beside the grid or on the start page: open folders
+  a level at a time, find a workbook by name across every root, open one with a
+  click
+- The workbook's sheet list: hidden and pinned sheets, tab colours, hide and
+  unhide, and a sheet tab strip with a "…" at either end
+- Workbook search, go-to, column filters and a formula bar
 - Cell, row/column and rectangular-block selection, by dragging or with Shift
   and the arrows; Ctrl+A takes the region around the cursor, then the whole sheet
 - Ctrl+C in Excel's own format: tabs between columns, newlines between rows
+- A ribbon for formatting — font, size, bold, italic, underline, alignment,
+  fill and font colour, freeze and split — for the session only, never written
+  back to the file
+- Freeze panes and Excel's split view, and each sheet opens where the file left it
+- Conditional formatting, notes, validation lists and outline groups drawn as
+  Excel draws them
 - Ctrl+wheel zoom, on Excel's zoom steps, with its bottom-right control
 - Shapes and pictures above the cells: callouts, connectors, braces, gradients —
   drawn from ECMA-376's preset geometry table rather than reverse-engineered
@@ -31,6 +43,9 @@ read, so they fall back to plain defaults.
   heavy blue rule on its boundary
 - Merged regions, text spilling into empty neighbours, indentation, and borders
   resolved the way Excel resolves a shared edge
+- English, Chinese and Japanese — the system's language at first, switchable in
+  the app
+- A portable Windows build that updates itself from signed releases
 
 ## Running it
 
@@ -51,8 +66,11 @@ to exercise the parser: four sheets, a merged title, explicit column widths, an
 autofilter, borders, fills, alignment and indent, and a 12,000-row sheet for
 paging.
 
-Two ignored tests read a workbook from your own machine instead, which is the
-only way to check parsing against documents that are real:
+Seven ignored tests read a workbook from your own machine instead
+(`SHEETLENS_XLSX`), which is the only way to check parsing against documents
+that are real — the profile switch, a long sheet's row styles, rich text,
+drawings, conditional formatting, and two dumps: a browser fixture and the
+resolved cell borders.
 
 ```bash
 SHEETLENS_XLSX="/path/to/book.xlsx" SHEETLENS_SHEET="Sheet1" \
@@ -81,8 +99,7 @@ are points; and the cell's padding is derived from that same digit.
 
 ## Not implemented
 
-Regex search, split view, bookmarks and compare. Comments and legacy VML (form
-controls) are not read. A radial gradient is drawn as a linear one and a pattern
-fill as no fill; a preset the table does not name, or one whose path uses a
-command the renderer does not handle, falls back to a rectangle. WMF and EMF
-pictures cannot be drawn at all.
+Bookmarks and comparing two workbooks. Threaded comments and legacy VML form
+controls are not read — the older notes Excel keeps in VML are. A preset the
+table does not name, or one whose path uses a command the renderer does not
+handle, falls back to a rectangle. WMF and EMF pictures cannot be drawn at all.

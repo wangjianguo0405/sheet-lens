@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Copy,
   FolderOpen,
+  PanelLeftClose,
   PanelRightClose,
   Plus,
   RotateCw,
@@ -41,6 +42,7 @@ import {
 import { Hint } from "@/components/Hint";
 import { Accelerated, acceleratorOf, pickByAccelerator } from "@/components/Accelerated";
 import { copyText } from "@/lib/clipboard";
+import { readTreeRoots, relativeUnderRoots } from "@/lib/fileTree";
 import { toast } from "sonner";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { cn } from "@/lib/utils";
@@ -257,6 +259,10 @@ export function FileTabs({
 
   if (tabs.length === 0 && !homeOpen) return null;
 
+  // A relative path is measured from a folder the tree starts at, so only a
+  // workbook below one of those roots has a shorter name to offer.
+  const roots = readTreeRoots();
+
   return (
     <div className="flex shrink-0 items-stretch border-b border-border bg-muted/40">
       {/*
@@ -285,7 +291,9 @@ export function FileTabs({
         {tabs.map((tab, index) => {
           const isActive = tab.path === active;
           const others = tabs.filter((one) => one.path !== tab.path);
+          const left = tabs.slice(0, index);
           const right = tabs.slice(index + 1);
+          const relative = relativeUnderRoots(roots, tab.path);
           return (
             <ContextMenu key={tab.path}>
               <ContextMenuTrigger asChild>
@@ -322,7 +330,7 @@ export function FileTabs({
               </ContextMenuTrigger>
               {/* The menu follows the one order every context menu in the app
                   keeps: what the entry itself does, then what the system opens
-                  it with, then its name and path — the two things worth having
+                  it with, then its name and paths — what is worth having
                   somewhere else, a bug report or a chat message — then where it
                   sits on disk. Reading a tab again is the one thing a tab can
                   *do*: for the workbook that changed underneath us, which Excel
@@ -383,6 +391,22 @@ export function FileTabs({
                     >
                       {t("tabs.copyPath")}
                     </ContextMenuItem>
+                    {/* Only below one of the tree's roots: nowhere else is
+                        there a shorter name than the absolute one above. */}
+                    {relative !== null && (
+                      <ContextMenuItem
+                        className="text-xs"
+                        onSelect={() => {
+                          void copyText(relative).then((ok) =>
+                            ok
+                              ? toast.success(t("toast.copied"))
+                              : toast.error(t("toast.copyFailed")),
+                          );
+                        }}
+                      >
+                        {t("tabs.copyRelativePath")}
+                      </ContextMenuItem>
+                    )}
                   </ContextMenuSubContent>
                 </ContextMenuSub>
                 <ContextMenuItem
@@ -423,6 +447,19 @@ export function FileTabs({
                   }
                 >
                   {t("tabs.closeOthers")}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs"
+                  icon={<PanelLeftClose />}
+                  disabled={left.length === 0}
+                  onSelect={() =>
+                    onCloseMany(
+                      left.map((one) => one.path),
+                      tab.path,
+                    )
+                  }
+                >
+                  {t("tabs.closeLeft")}
                 </ContextMenuItem>
                 <ContextMenuItem
                   className="text-xs"

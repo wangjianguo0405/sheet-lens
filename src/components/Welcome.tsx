@@ -360,6 +360,8 @@ export function Welcome({
   const shortcuts: { keys: string[]; label: string }[] = [
     { keys: ["Ctrl+O"], label: t("welcome.sc.open") },
     { keys: ["Ctrl+W"], label: t("welcome.sc.close") },
+    { keys: ["Ctrl+R"], label: t("welcome.sc.reload") },
+    { keys: ["Ctrl+Z", "Ctrl+Y"], label: t("welcome.sc.undoRedo") },
     { keys: ["Ctrl+Tab", "Ctrl+Shift+Tab"], label: t("welcome.sc.workbook") },
     { keys: ["Ctrl+F"], label: t("welcome.sc.search") },
     { keys: ["Ctrl+G", "F5"], label: t("welcome.sc.goTo") },

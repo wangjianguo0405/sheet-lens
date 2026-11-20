@@ -105,11 +105,12 @@ fn search_workbook(
     sheet: Option<String>,
     case_sensitive: bool,
     whole_cell: bool,
+    regex: bool,
     store: State<'_, Shared>,
 ) -> Result<Vec<Hit>, String> {
     let books = store.0.lock().unwrap();
     let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
-    let matcher = Matcher::new(&query, case_sensitive, whole_cell);
+    let matcher = Matcher::new(&query, case_sensitive, whole_cell, regex);
     Ok(book.search(sheet.as_deref(), &matcher))
 }
 

@@ -63,6 +63,8 @@ export interface SearchHit {
 export interface SearchOptions {
   caseSensitive: boolean;
   wholeCell: boolean;
+  /** Whether `query` is a pattern rather than a piece of text. */
+  regex: boolean;
 }
 
 export interface BorderEdge {
@@ -811,6 +813,7 @@ export function searchWorkbook(
     sheet,
     caseSensitive: options.caseSensitive,
     wholeCell: options.wholeCell,
+    regex: options.regex,
   });
 }
 

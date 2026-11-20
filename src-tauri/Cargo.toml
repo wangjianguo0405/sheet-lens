@@ -28,6 +28,9 @@ calamine = { version = "=0.36.1", features = ["dates"] }
 # Same versions calamine already pulls in, so nothing new is compiled. Used to
 # read column widths and row heights, which calamine does not expose.
 quick-xml = "=0.41.0"
+# The search panel's regular-expression mode. Unicode-aware by default, which
+# is what a document with Japanese text asks of it.
+regex = "=1.13.2"
 zip = "=8.6.0"
 # Already in the tree via calamine's `dates` feature; used to render them.
 chrono = "=0.4.45"

@@ -3,6 +3,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use calamine::{open_workbook_auto, Data, ExcelDateTime, Range, Reader};
+use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 
 use crate::layout::{self, SheetLayout};
@@ -599,10 +600,30 @@ pub struct Matcher {
     needle: String,
     case_sensitive: bool,
     whole_cell: bool,
+    /// Whether the query is a pattern rather than a word.
+    regex: bool,
+    /// Compiled in regex mode; `None` otherwise, and also when the pattern is
+    /// one the engine refuses — nothing matches then, rather than everything.
+    pattern: Option<Regex>,
 }
 
 impl Matcher {
-    pub fn new(query: &str, case_sensitive: bool, whole_cell: bool) -> Self {
+    pub fn new(query: &str, case_sensitive: bool, whole_cell: bool, regex: bool) -> Self {
+        // A whole-cell pattern is anchored here rather than compared after the
+        // fact: a regex match is a match anywhere, which is the other mode.
+        let pattern = if regex && !query.is_empty() {
+            let source = if whole_cell {
+                format!("^(?:{query})$")
+            } else {
+                query.to_owned()
+            };
+            RegexBuilder::new(&source)
+                .case_insensitive(!case_sensitive)
+                .build()
+                .ok()
+        } else {
+            None
+        };
         Self {
             needle: if case_sensitive {
                 query.to_owned()
@@ -611,12 +632,17 @@ impl Matcher {
             },
             case_sensitive,
             whole_cell,
+            regex,
+            pattern,
         }
     }
 
     fn is_match(&self, text: &str) -> bool {
         if self.needle.is_empty() {
             return false;
+        }
+        if self.regex {
+            return self.pattern.as_ref().is_some_and(|pattern| pattern.is_match(text));
         }
         if self.case_sensitive {
             if self.whole_cell {
@@ -1127,7 +1153,7 @@ mod tests {
         assert_eq!(cell[0][0].text, "先頭");
 
         // And a hit points at the cell it was found in.
-        let hits = book.search(None, &Matcher::new("次", true, true));
+        let hits = book.search(None, &Matcher::new("次", true, true, false));
         assert_eq!((hits[0].row, hits[0].col), (2, 1));
     }
 
@@ -1264,14 +1290,36 @@ mod tests {
     #[test]
     fn search_covers_japanese_text_across_sheets() {
         let Some(book) = sample() else { return };
-        let hits = book.search(None, &Matcher::new("サンプル日付項目", false, false));
+        let hits = book.search(None, &Matcher::new("サンプル日付項目", false, false, false));
         assert!(hits.iter().any(|h| h.sheet == "Query"));
         assert!(hits.iter().any(|h| h.sheet == "History"));
 
-        let scoped = book.search(Some("History"), &Matcher::new("サンプル日付項目", false, false));
+        let scoped = book.search(Some("History"), &Matcher::new("サンプル日付項目", false, false, false));
         assert!(scoped.iter().all(|h| h.sheet == "History"));
 
-        assert!(book.search(None, &Matcher::new("", false, false)).is_empty());
+        assert!(book.search(None, &Matcher::new("", false, false, false)).is_empty());
+    }
+
+    /// The pattern mode: a match anywhere unless the whole-cell switch asks for
+    /// one covering the value, case folded unless the case switch says not to,
+    /// and a pattern the engine refuses simply finds nothing.
+    #[test]
+    fn search_regex_reads_patterns() {
+        let Some(book) = sample() else { return };
+        let loose = book.search(Some("Query"), &Matcher::new("0400", false, false, true));
+        assert!(loose.iter().any(|hit| hit.text == "TBL_0400"));
+
+        let anchored = book.search(Some("Query"), &Matcher::new("0400", false, true, true));
+        assert!(anchored.is_empty());
+
+        let folded = book.search(Some("Query"), &Matcher::new("tbl_0399", false, false, true));
+        assert!(folded.iter().any(|hit| hit.text == "TBL_0399"));
+        let exact = book.search(Some("Query"), &Matcher::new("tbl_0399", true, false, true));
+        assert!(exact.is_empty());
+
+        assert!(book
+            .search(Some("Query"), &Matcher::new("(", false, false, true))
+            .is_empty());
     }
 
     /// A hidden sheet is not searched. Excel cannot put the cursor on one — the
@@ -1317,13 +1365,13 @@ mod tests {
             layout_cache: layout::Cache::default(),
         };
 
-        let hits = book.search(None, &Matcher::new("さがす", false, false));
+        let hits = book.search(None, &Matcher::new("さがす", false, false, false));
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].sheet, "表示");
         // Named outright it is still not read: the search panel can be pointed
         // at a sheet, and the answer is not a cursor on a hidden one.
         assert!(book
-            .search(Some("非表示"), &Matcher::new("さがす", false, false))
+            .search(Some("非表示"), &Matcher::new("さがす", false, false, false))
             .is_empty());
     }
 
