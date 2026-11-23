@@ -12,6 +12,16 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.31] - 2026-11-23
+
+### Added
+
+- The file tree folds from its menus: a folder can be expanded or collapsed from its right-click menu, along with everything below it, and the ⋯ menu at the top of the tree expands or collapses every root at once. A large folder opens without leaving the window stuck, and the folders left open come back on the next launch
+
+### Fixed
+
+- A workbook read again with Ctrl+R now takes the new file's row heights and column widths; the previous file's sizes used to stay in force. Heights and widths you dragged or fitted yourself still win over the file's
+
 ## [1.0.30] - 2026-11-20
 
 ### Fixed
