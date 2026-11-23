@@ -845,6 +845,16 @@ function sameCursor(at: { row: number; col: number }, selection: Selection): boo
   return anchor.row === at.row && anchor.col === at.col;
 }
 
+/** The sizes the reader themselves set, leaving the file's own out. */
+function changedSizes(sizes: Map<number, number>, touched: Set<number>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const index of touched) {
+    const size = sizes.get(index);
+    if (size !== undefined) out.set(index, size);
+  }
+  return out;
+}
+
 export function CanvasGrid({
   path,
   sheet,
@@ -1070,6 +1080,13 @@ export function CanvasGrid({
   const [baseRowH, setBaseRowH] = useState(24);
   const [colOverrides, setColOverrides] = useState<Map<number, number>>(() => new Map());
   const [rowOverrides, setRowOverrides] = useState<Map<number, number>>(() => new Map());
+  /**
+   * The rows and columns whose size the reader changed here, by hand or by
+   * fitting. Only these belong to the session; the rest of the overrides is
+   * where the file put them, and a file read again says where they go now.
+   */
+  const touchedCols = useRef(new Set<number>());
+  const touchedRows = useRef(new Set<number>());
   /**
    * Heights worked out from the text, for the rows the file gives none. Excel
    * does the same when it opens a sheet: a row it did not store a height for
@@ -2812,8 +2829,18 @@ export function CanvasGrid({
         // hid: the sheet comes back as it was left, not as the file has it.
         const saved = views.get(path)?.get(sheet.name);
         setHiddenOverride(saved?.hidden ?? { rows: new Map(), cols: new Map() });
-        setColOverrides(saved?.sizes?.col ?? toOverrides(parsed.colWidthsChars, colPx));
-        setRowOverrides(saved?.sizes?.row ?? toOverrides(parsed.rowHeightsPx));
+        // The file's own sizes, with the ones the reader changed on top. The
+        // saved maps hold only their changes, so a workbook read again brings
+        // every row and column it re-sized with it instead of keeping the
+        // previous file's heights pinned over the new ones.
+        const cols = toOverrides(parsed.colWidthsChars, colPx);
+        const rows = toOverrides(parsed.rowHeightsPx);
+        const savedCols = saved?.sizes?.col;
+        const savedRows = saved?.sizes?.row;
+        touchedCols.current = new Set(savedCols?.keys() ?? []);
+        touchedRows.current = new Set(savedRows?.keys() ?? []);
+        setColOverrides(savedCols ? new Map([...cols, ...savedCols]) : cols);
+        setRowOverrides(savedRows ? new Map([...rows, ...savedRows]) : rows);
         setShapeMoves((current) =>
           new Map(current).set(
             shapeMovesKey,
@@ -2891,7 +2918,12 @@ export function CanvasGrid({
     const view = bySheet.get(sheet.name) ?? { ...scrollRef.current };
     bySheet.set(sheet.name, {
       ...view,
-      sizes: { col: colOverrides, row: rowOverrides },
+      // Only the sizes the reader set. The rest of the overrides are the
+      // file's own, and a workbook read again may have changed them.
+      sizes: {
+        col: changedSizes(colOverrides, touchedCols.current),
+        row: changedSizes(rowOverrides, touchedRows.current),
+      },
       hidden: hiddenOverride,
       shapes: shapeMoves.get(shapeMovesKey) ?? new Map(),
     });
@@ -5605,6 +5637,7 @@ export function CanvasGrid({
         if (text) widest = Math.max(widest, estimateWidth(text));
       }
     }
+    touchedCols.current.add(index);
     setColOverrides((prev) => new Map(prev).set(index, Math.min(MAX_COL_W, Math.ceil(widest))));
   };
 
@@ -5677,6 +5710,7 @@ export function CanvasGrid({
   const autofitRows = (indices: number[]) => {
     onEdit?.();
     const tallest = measureRowHeights(indices);
+    for (const row of tallest.keys()) touchedRows.current.add(row);
     setRowOverrides((prev) => {
       const map = new Map(prev);
       for (const [row, measured] of tallest) map.set(row, Math.ceil(measured.px));
@@ -6118,9 +6152,11 @@ export function CanvasGrid({
         zoomRef.current;
       if (active.kind === "col") {
         const next = Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(active.size + moved)));
+        touchedCols.current.add(active.index);
         setColOverrides((prev) => new Map(prev).set(active.index, next));
       } else {
         const next = Math.max(minRowH, Math.round(active.size + moved));
+        for (const row of active.rows) touchedRows.current.add(row);
         setRowOverrides((prev) => {
           const map = new Map(prev);
           for (const row of active.rows) map.set(row, next);
