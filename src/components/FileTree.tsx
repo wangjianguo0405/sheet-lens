@@ -7,9 +7,11 @@ import {
   AppWindow,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Copy,
   EllipsisVertical,
   FileSpreadsheet,
+  FoldVertical,
   Folder,
   FolderOpen,
   Loader2,
@@ -18,6 +20,7 @@ import {
   Plus,
   RotateCw,
   Search,
+  UnfoldVertical,
   X,
 } from "lucide-react";
 
@@ -36,6 +39,8 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -72,11 +77,20 @@ const HEAD_ACTION =
 /** What a workbook's row is coloured — the Excel green the app links in. */
 const LINK = "text-[#107C41]";
 
+/** How many folders a sweep asks the disk for at once. */
+const SWEEP_BATCH = 16;
+
+/** How many rows a sweep opens at once, between paints. */
+const SWEEP_COMMIT = 256;
+
 /** One folder's level: the listing, or the read that failed. */
 type Node =
   | { state: "loading" }
   | { state: "error"; message: string }
   | { state: "ready"; entries: DirEntry[] };
+
+/** What one folder's read answered: its listing, or why it could not be read. */
+type ReadResult = { entries: DirEntry[] } | { error: string };
 
 /** One folder a search passed through, and the workbooks that matched in it. */
 interface SearchNode {
@@ -137,6 +151,30 @@ function foldersTo(root: string, file: string): string[] {
   return folders;
 }
 
+/** Whether folder key `other` sits inside `key` — the separator matters, so `work\ab` is not under `work\a`. */
+function underFolder(key: string, other: string): boolean {
+  if (!other.startsWith(key)) return false;
+  const rest = other.slice(key.length);
+  return rest.startsWith("\\") || rest.startsWith("/");
+}
+
+/** Every key in a search branch, the branch's own included. */
+function searchKeys(key: string, node: SearchNode): string[] {
+  const keys = [key];
+  for (const [name, child] of node.folders) {
+    keys.push(...searchKeys(`${key}\\${name}`, child));
+  }
+  return keys;
+}
+
+/** What a folder's menu offers for opening and folding the rows below it. */
+interface FoldActions {
+  expanded: boolean;
+  toggle: () => void;
+  expand: () => void;
+  collapse: () => void;
+}
+
 interface FileTreeProps {
   /** The workbook on screen, marked when the tree reaches it. */
   currentPath: string | null;
@@ -157,8 +195,18 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const [roots, setRoots] = useState<string[]>(readTreeRoots);
   const [open, setOpen] = useState<Set<string>>(() => new Set(readTreeOpen()));
   const [nodes, setNodes] = useState<Map<string, Node>>(new Map());
-  /** The reads on their way, so a second expand of the same row asks once. */
-  const [inflight] = useState(() => new Set<string>());
+  /**
+   * The reads on their way, by path. A second ask — the same row clicked
+   * twice, or a sweep reaching a folder that is already opening — waits on the
+   * first and gets the same answer rather than asking the disk again.
+   */
+  const inflight = useRef(new Map<string, Promise<ReadResult>>());
+  /** `open` as the latest render left it, for the asynchronous sweeps below. */
+  const openRef = useRef(open);
+  openRef.current = open;
+  /** `nodes` likewise, so a sweep can reuse a listing it already has. */
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<FoundFile[]>([]);
@@ -180,36 +228,109 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   /** The workbook still to be brought into sight, once its rows exist. */
   const [reveal, setReveal] = useState<string | null>(null);
 
-  const load = useCallback(
-    (path: string, keep = false) => {
-      if (inflight.has(path)) return;
-      inflight.add(path);
-      setNodes((prev) => {
-        // A refresh leaves the listing it is replacing on screen until the new
-        // one arrives: folding the rows away for a frame takes the reader's
-        // scroll position with them.
-        if (keep && prev.get(path)?.state === "ready") return prev;
-        return new Map(prev).set(path, { state: "loading" });
+  const load = useCallback((path: string, keep = false): Promise<ReadResult> => {
+    const running = inflight.current.get(path);
+    if (running) return running;
+    setNodes((prev) => {
+      // A refresh leaves the listing it is replacing on screen until the new
+      // one arrives: folding the rows away for a frame takes the reader's
+      // scroll position with them.
+      if (keep && prev.get(path)?.state === "ready") return prev;
+      return new Map(prev).set(path, { state: "loading" });
+    });
+    const read = listDirectory(path)
+      .then((entries): ReadResult => {
+        ready.current.add(folderKey(path));
+        setNodes((prev) => new Map(prev).set(path, { state: "ready", entries }));
+        return { entries };
+      })
+      .catch((reason: unknown): ReadResult => {
+        ready.current.delete(folderKey(path));
+        setNodes((prev) => new Map(prev).set(path, { state: "error", message: String(reason) }));
+        return { error: String(reason) };
+      })
+      .finally(() => {
+        inflight.current.delete(path);
       });
-      listDirectory(path)
-        .then((entries) => {
-          ready.current.add(folderKey(path));
-          setNodes((prev) => new Map(prev).set(path, { state: "ready", entries }));
-        })
-        .catch((reason: unknown) => {
-          ready.current.delete(folderKey(path));
-          setNodes((prev) => new Map(prev).set(path, { state: "error", message: String(reason) }));
-        })
-        .finally(() => inflight.delete(path));
+    inflight.current.set(path, read);
+    return read;
+  }, []);
+
+  /**
+   * Reads a folder for a sweep, committing nothing of its own: a sweep lands a
+   * whole level's listings in one update, where a render per folder made a
+   * large expand re-render the tree once per read and crawl.
+   *
+   * A listing the tree already holds is reused — expanding is not refreshing.
+   */
+  const readQuiet = useCallback((path: string): Promise<ReadResult> => {
+    const running = inflight.current.get(path);
+    if (running) return running;
+    const held = nodesRef.current.get(path);
+    if (held?.state === "ready") return Promise.resolve({ entries: held.entries });
+    const read = listDirectory(path)
+      .then((entries): ReadResult => {
+        ready.current.add(folderKey(path));
+        return { entries };
+      })
+      .catch((reason: unknown): ReadResult => {
+        ready.current.delete(folderKey(path));
+        return { error: String(reason) };
+      })
+      .finally(() => {
+        inflight.current.delete(path);
+      });
+    inflight.current.set(path, read);
+    return read;
+  }, []);
+
+  /** Reads a list of folders, a batch at a time, answering in the order given. */
+  const readMany = useCallback(
+    async (folders: string[]): Promise<ReadResult[]> => {
+      const results: ReadResult[] = [];
+      for (let at = 0; at < folders.length; at += SWEEP_BATCH) {
+        const batch = folders.slice(at, at + SWEEP_BATCH);
+        results.push(...(await Promise.all(batch.map((folder) => readQuiet(folder)))));
+      }
+      return results;
     },
-    [inflight],
+    [readQuiet],
   );
 
-  // The folders left open last time come back open, and their contents have to
-  // be asked for again: only the opening is remembered, not the listing.
+  /**
+   * The folders left open last time come back open, and their contents have to
+   * be asked for again: only the opening is remembered, not the listing. They
+   * are read and landed a batch at a time, for the same reason a sweep is: a
+   * tree left with thousands of folders open comes back without a render per
+   * folder.
+   */
   useEffect(() => {
-    for (const path of readTreeOpen()) load(path);
-  }, [load]);
+    const stored = readTreeOpen();
+    let cancelled = false;
+    void (async () => {
+      for (let at = 0; at < stored.length; at += SWEEP_COMMIT) {
+        const batch = stored.slice(at, at + SWEEP_COMMIT);
+        const results = await readMany(batch);
+        if (cancelled) return;
+        setNodes((prev) => {
+          const next = new Map(prev);
+          batch.forEach((folder, index) => {
+            const result = results[index];
+            next.set(
+              folder,
+              "entries" in result
+                ? { state: "ready", entries: result.entries }
+                : { state: "error", message: result.error },
+            );
+          });
+          return next;
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [readMany]);
 
   // The tree lists only what has been opened, so a workbook the reader has not
   // walked down to is found by sweeping the roots instead — a level at a time
@@ -274,7 +395,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       return next;
     });
     for (const folder of chain) {
-      if (!ready.current.has(folderKey(folder))) load(folder);
+      if (!ready.current.has(folderKey(folder))) void load(folder);
     }
     setReveal(currentPath);
   }, [currentPath, roots, load]);
@@ -311,7 +432,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     else {
       next.add(path);
       const node = nodes.get(path);
-      if (!node || node.state === "error") load(path);
+      if (!node || node.state === "error") void load(path);
     }
     setOpen(next);
     storeTreeOpen([...next]);
@@ -325,6 +446,33 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       else next.add(key);
       return next;
     });
+
+  /**
+   * The folding a folder of the results offers. There is nothing more to read
+   * — the matches are already in hand — so a sweep is over the keys the search
+   * tree drew, not over the disk.
+   */
+  const searchFold = (key: string, node: SearchNode, expanded: boolean): FoldActions => {
+    const keys = searchKeys(key, node);
+    return {
+      expanded,
+      toggle: () => toggleFold(key),
+      expand: () =>
+        setFolded((prev) => {
+          const next = new Set(prev);
+          for (const one of keys) next.delete(one);
+          return next;
+        }),
+      // The row the menu was opened on stays open; it is the folders below it
+      // that fold away, as they do in the tree itself.
+      collapse: () =>
+        setFolded((prev) => {
+          const next = new Set(prev);
+          for (const one of keys) if (one !== key) next.add(one);
+          return next;
+        }),
+    };
+  };
 
   const startRename = (path: string) => {
     cancelled.current = false;
@@ -350,7 +498,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
 
   /** Reads every open folder again — what an SVN update changed — in place. */
   const refresh = () => {
-    for (const path of open) load(path, true);
+    for (const path of open) void load(path, true);
   };
 
   /**
@@ -361,14 +509,120 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
    */
   const refreshFolder = (path: string) => {
     const key = folderKey(path);
-    const under = (other: string) => {
+    for (const other of open) {
       const otherKey = folderKey(other);
-      if (otherKey === key) return true;
-      const rest = otherKey.slice(key.length);
-      return otherKey.startsWith(key) && (rest.startsWith("\\") || rest.startsWith("/"));
-    };
-    for (const other of open) if (under(other)) load(other, true);
-    load(path, true);
+      if (otherKey === key || underFolder(key, otherKey)) void load(other, true);
+    }
+    void load(path, true);
+  };
+
+  /** Stores what is open, with the folders a sweep has just opened folded in. */
+  const persistOpen = useCallback((added: Iterable<string>) => {
+    const merged = new Set(openRef.current);
+    for (const folder of added) merged.add(folder);
+    storeTreeOpen([...merged]);
+  }, []);
+
+  /**
+   * Opens `path` and every folder under it, reading each listing on the way
+   * down.
+   *
+   * Each level is read a batch of folders at a time and lands in one update.
+   * Committing a folder at a time re-rendered the whole tree once per listing,
+   * which is what made expanding a large folder crawl: the work grew with the
+   * square of the tree.
+   *
+   * Folder keys are what the walk has seen: a junction pointing back at a
+   * folder already walked would otherwise keep it going forever.
+   */
+  const expandUnder = useCallback(
+    async (path: string) => {
+      const seen = new Set([folderKey(path)]);
+      const added = new Set<string>([path]);
+      // The row the menu was opened on opens first, so its children have
+      // somewhere to arrive; a folder with nothing under it still opens.
+      setOpen((prev) => {
+        if (prev.has(path)) return prev;
+        const merged = new Set(prev);
+        merged.add(path);
+        return merged;
+      });
+      let level = [path];
+      while (level.length > 0) {
+        const results = await readMany(level);
+        const answered = new Map<string, ReadResult>();
+        level.forEach((folder, index) => answered.set(folder, results[index]));
+        setNodes((prev) => {
+          const next = new Map(prev);
+          for (const [folder, result] of answered) {
+            next.set(
+              folder,
+              "entries" in result
+                ? { state: "ready", entries: result.entries }
+                : { state: "error", message: result.error },
+            );
+          }
+          return next;
+        });
+        const next: string[] = [];
+        for (const result of answered.values()) {
+          if (!("entries" in result)) continue;
+          for (const entry of result.entries) {
+            if (!entry.dir) continue;
+            const key = folderKey(entry.path);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            added.add(entry.path);
+            next.push(entry.path);
+          }
+        }
+        if (next.length === 0) break;
+        // A whole level can be thousands of rows; opening it in one go mounts
+        // them all inside one long task. A few hundred at a time, with a paint
+        // between, keeps the window answering while the tree grows.
+        for (let at = 0; at < next.length; at += SWEEP_COMMIT) {
+          const chunk = next.slice(at, at + SWEEP_COMMIT);
+          setOpen((prev) => {
+            const merged = new Set(prev);
+            for (const folder of chunk) merged.add(folder);
+            return merged;
+          });
+          // No paint is owed after the last one; it is the next chunk that
+          // needs this one on screen first.
+          if (at + SWEEP_COMMIT < next.length) {
+            await new Promise((resolve) => window.setTimeout(resolve, 0));
+          }
+        }
+        level = next;
+      }
+      persistOpen(added);
+      return added;
+    },
+    [persistOpen, readMany],
+  );
+
+  /** Folds every folder below `path` away, leaving `path` itself open. */
+  const collapseUnder = (path: string) => {
+    const key = folderKey(path);
+    const next = new Set(open);
+    for (const other of next) {
+      if (underFolder(key, folderKey(other))) next.delete(other);
+    }
+    if (next.size === open.size) return;
+    setOpen(next);
+    storeTreeOpen([...next]);
+  };
+
+  /** The ⋯ menu's 全部展开: every root, with everything under it. */
+  const expandAll = useCallback(async () => {
+    const sweeps = await Promise.all(roots.map((root) => expandUnder(root)));
+    persistOpen(sweeps.flatMap((one) => [...one]));
+  }, [roots, expandUnder, persistOpen]);
+
+  const collapseAll = () => {
+    if (open.size === 0) return;
+    setOpen(new Set());
+    storeTreeOpen([]);
   };
 
   /**
@@ -386,7 +640,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       next.add(picked);
       setOpen(next);
       storeTreeOpen([...next]);
-      load(picked);
+      void load(picked);
     } catch {
       // A dialog that cannot open leaves the tree with what it had.
     }
@@ -441,7 +695,9 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       >
         {t("tree.openWithDefault")}
       </ContextMenuItem>
+      <ContextMenuSeparator />
       {copyMenu(path, true)}
+      <ContextMenuSeparator />
       <ContextMenuItem
         icon={<FolderOpen className="size-3" />}
         onSelect={() => void revealItemInDir(path).catch(() => toast.error(t("toast.openFailed")))}
@@ -452,11 +708,32 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   );
 
   /**
-   * The menu a folder's row offers: the folder in the file manager, then what
-   * to copy. A folder the search drew has no listing to read again, so its
-   * menu leaves the refresh out.
+   * The folding block a folder's menu carries: the row itself — opened or
+   * folded, whichever it is not — then every folder below it.
    */
-  const folderMenu = (path: string, canRefresh = true) => (
+  const foldItems = (fold: FoldActions) => (
+    <>
+      <ContextMenuItem
+        icon={fold.expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+        onSelect={fold.toggle}
+      >
+        {fold.expanded ? t("tree.collapse") : t("tree.expand")}
+      </ContextMenuItem>
+      <ContextMenuItem icon={<UnfoldVertical className="size-3" />} onSelect={fold.expand}>
+        {t("tree.expandSubtree")}
+      </ContextMenuItem>
+      <ContextMenuItem icon={<FoldVertical className="size-3" />} onSelect={fold.collapse}>
+        {t("tree.collapseSubtree")}
+      </ContextMenuItem>
+    </>
+  );
+
+  /**
+   * The menu a folder's row offers: the folder in the file manager, the way to
+   * open or fold what is under it, then what to copy. A folder the search drew
+   * has no listing to read again, so its menu leaves the refresh out.
+   */
+  const folderMenu = (path: string, fold: FoldActions, canRefresh = true) => (
     <ContextMenuContent className="min-w-40">
       <ContextMenuItem
         icon={<FolderOpen className="size-3" />}
@@ -472,6 +749,9 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
           {t("tree.refresh")}
         </ContextMenuItem>
       )}
+      <ContextMenuSeparator />
+      {foldItems(fold)}
+      <ContextMenuSeparator />
       {copyMenu(path, false)}
     </ContextMenuContent>
   );
@@ -479,6 +759,12 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const folderRow = (path: string, depth: number, root: boolean) => {
     const node = nodes.get(path);
     const expanded = open.has(path);
+    const fold: FoldActions = {
+      expanded,
+      toggle: () => toggle(path),
+      expand: () => void expandUnder(path),
+      collapse: () => collapseUnder(path),
+    };
     const Chevron = expanded ? ChevronDown : ChevronRight;
     const Face = expanded ? FolderOpen : Folder;
     const alias = root ? names[folderKey(path)] : undefined;
@@ -597,6 +883,9 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               >
                 {t("tree.refresh")}
               </ContextMenuItem>
+              <ContextMenuSeparator />
+              {foldItems(fold)}
+              <ContextMenuSeparator />
               {copyMenu(path, false)}
               <ContextMenuSeparator />
               <ContextMenuItem
@@ -605,6 +894,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               >
                 {t("tree.rename")}
               </ContextMenuItem>
+              <ContextMenuSeparator />
               <ContextMenuItem icon={<X className="size-3" />} onSelect={() => removeRoot(path)}>
                 {t("tree.removeRootItem")}
               </ContextMenuItem>
@@ -613,7 +903,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
         ) : (
           <ContextMenu>
             <ContextMenuTrigger asChild>{head}</ContextMenuTrigger>
-            {folderMenu(path)}
+            {folderMenu(path, fold)}
           </ContextMenu>
         )}
         {/* A renamed root keeps the real name and where it lives in sight, one
@@ -743,7 +1033,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               </button>
             </div>
           </ContextMenuTrigger>
-          {folderMenu(key, false)}
+          {folderMenu(key, searchFold(key, node, expanded), false)}
         </ContextMenu>
         {expanded && (
           <ul>
@@ -787,7 +1077,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               </button>
             </div>
           </ContextMenuTrigger>
-          {folderMenu(root, false)}
+          {folderMenu(root, searchFold(root, node, expanded), false)}
         </ContextMenu>
         {expanded && (
           <ul>
@@ -896,32 +1186,52 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
                   <Plus className="size-3" />
                 </button>
               </Hint>
-              {/* The menu holds only the auto-locate switch, which the start
-                  page's tree has no workbook for. */}
-              {currentPath !== null && (
-                <DropdownMenu>
-                  <Hint label={t("tree.more")}>
-                    <DropdownMenuTrigger asChild>
-                      <button type="button" aria-label={t("tree.more")} className={HEAD_ACTION}>
-                        <EllipsisVertical className="size-3" />
-                      </button>
-                    </DropdownMenuTrigger>
-                  </Hint>
-                  <DropdownMenuContent align="end" className="min-w-48">
-                    <DropdownMenuCheckboxItem
-                      className="text-xs"
-                      checked={autoLocate}
-                      onCheckedChange={(checked) => {
-                        const next = checked === true;
-                        setAutoLocate(next);
-                        storeTreeAutoLocate(next);
-                      }}
-                    >
-                      {t("tree.autoLocate")}
-                    </DropdownMenuCheckboxItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              {/* Folding the whole tree belongs to the tree, not to the
+                  workbook on screen; the auto-locate switch below it is the
+                  start page's tree that has no workbook for. */}
+              <DropdownMenu>
+                <Hint label={t("tree.more")}>
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" aria-label={t("tree.more")} className={HEAD_ACTION}>
+                      <EllipsisVertical className="size-3" />
+                    </button>
+                  </DropdownMenuTrigger>
+                </Hint>
+                <DropdownMenuContent align="end" className="min-w-48">
+                  <DropdownMenuItem
+                    className="text-xs"
+                    icon={<UnfoldVertical className="size-3" />}
+                    disabled={roots.length === 0}
+                    onSelect={() => void expandAll()}
+                  >
+                    {t("tree.expandAll")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-xs"
+                    icon={<FoldVertical className="size-3" />}
+                    disabled={roots.length === 0}
+                    onSelect={collapseAll}
+                  >
+                    {t("tree.collapseAll")}
+                  </DropdownMenuItem>
+                  {currentPath !== null && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuCheckboxItem
+                        className="text-xs"
+                        checked={autoLocate}
+                        onCheckedChange={(checked) => {
+                          const next = checked === true;
+                          setAutoLocate(next);
+                          storeTreeAutoLocate(next);
+                        }}
+                      >
+                        {t("tree.autoLocate")}
+                      </DropdownMenuCheckboxItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
         </div>
