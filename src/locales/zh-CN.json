@@ -58,6 +58,7 @@
     "collapse": "折叠",
     "expandSubtree": "展开所有子文件夹",
     "collapseSubtree": "折叠所有子文件夹",
+    "collapseParent": "折叠该目录",
     "expandAll": "全部展开",
     "collapseAll": "全部折叠",
     "locate": "在树中定位当前工作簿",

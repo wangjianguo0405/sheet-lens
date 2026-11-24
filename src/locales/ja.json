@@ -58,6 +58,7 @@
     "collapse": "折りたたむ",
     "expandSubtree": "サブフォルダーをすべて展開",
     "collapseSubtree": "サブフォルダーをすべて折りたたむ",
+    "collapseParent": "このフォルダーを折りたたむ",
     "expandAll": "すべて展開",
     "collapseAll": "すべて折りたたむ",
     "locate": "開いているブックをツリーに表示",

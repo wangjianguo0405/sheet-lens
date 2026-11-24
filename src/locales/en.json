@@ -58,6 +58,7 @@
     "collapse": "Collapse",
     "expandSubtree": "Expand all subfolders",
     "collapseSubtree": "Collapse all subfolders",
+    "collapseParent": "Collapse the containing folder",
     "expandAll": "Expand all",
     "collapseAll": "Collapse all",
     "locate": "Show the open workbook in the tree",

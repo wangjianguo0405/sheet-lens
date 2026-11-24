@@ -686,14 +686,22 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     </ContextMenuSub>
   );
 
-  /** The menu a workbook's row offers: its own program, what to copy, where it lives. */
-  const workbookMenu = (path: string) => (
+  /**
+   * The menu a workbook's row offers: its own program, folding the folder it
+   * sits in, what to copy, where it lives. A long listing can leave no folder
+   * row in sight, so the file itself has to be able to put its folder away.
+   */
+  const workbookMenu = (path: string, collapseFolder: () => void) => (
     <ContextMenuContent className="min-w-40">
       <ContextMenuItem
         icon={<AppWindow className="size-3" />}
         onSelect={() => void openPath(path).catch(() => toast.error(t("toast.openFailed")))}
       >
         {t("tree.openWithDefault")}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem icon={<ChevronUp className="size-3" />} onSelect={collapseFolder}>
+        {t("tree.collapseParent")}
       </ContextMenuItem>
       <ContextMenuSeparator />
       {copyMenu(path, true)}
@@ -937,7 +945,9 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               </li>
             ) : (
               node.entries.map((entry) =>
-                entry.dir ? folderRow(entry.path, depth + 1, false) : fileRow(entry, depth + 1),
+                entry.dir
+                  ? folderRow(entry.path, depth + 1, false)
+                  : fileRow(entry, depth + 1, fold.toggle),
               )
             )}
           </ul>
@@ -946,7 +956,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     );
   };
 
-  const fileRow = (entry: DirEntry, depth: number) => {
+  const fileRow = (entry: DirEntry, depth: number, collapseFolder: () => void) => {
     const current = currentPath !== null && folderKey(currentPath) === folderKey(entry.path);
     return (
       <li key={entry.path}>
@@ -968,7 +978,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               <span className="whitespace-nowrap">{entry.name}</span>
             </button>
           </ContextMenuTrigger>
-          {workbookMenu(entry.path)}
+          {workbookMenu(entry.path, collapseFolder)}
         </ContextMenu>
       </li>
     );
@@ -977,7 +987,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   /**
    * A workbook the search matched, hung at the depth its folder sits at.
    */
-  const foundRow = (found: FoundFile, depth: number) => {
+  const foundRow = (found: FoundFile, depth: number, collapseFolder: () => void) => {
     const current = currentPath !== null && folderKey(currentPath) === folderKey(found.path);
     return (
       <li key={found.path}>
@@ -998,7 +1008,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               <span className="whitespace-nowrap">{found.name}</span>
             </button>
           </ContextMenuTrigger>
-          {workbookMenu(found.path)}
+          {workbookMenu(found.path, collapseFolder)}
         </ContextMenu>
       </li>
     );
@@ -1040,7 +1050,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
             {[...node.folders].map(([childName, child]) =>
               searchFolderRow(childName, child, depth + 1, `${key}\\${childName}`),
             )}
-            {node.files.map((file) => foundRow(file, depth + 1))}
+            {node.files.map((file) => foundRow(file, depth + 1, () => toggleFold(key)))}
           </ul>
         )}
       </li>
@@ -1084,7 +1094,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
             {[...node.folders].map(([name, child]) =>
               searchFolderRow(name, child, 1, `${root}\\${name}`),
             )}
-            {node.files.map((file) => foundRow(file, 1))}
+            {node.files.map((file) => foundRow(file, 1, () => toggleFold(root)))}
           </ul>
         )}
       </li>
