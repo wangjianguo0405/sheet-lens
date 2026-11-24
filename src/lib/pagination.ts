@@ -96,6 +96,23 @@ function titleSize(
 }
 
 /**
+ * The manual breaks an axis is actually laid out with.
+ *
+ * Excel ignores the breaks somebody placed on an axis Fit to constrains: a
+ * sheet fitted to one page wide prints every column on that page even though
+ * the file still stores a vertical break, and the same holds for a fitted
+ * height. The breaks stay in the file — `VPageBreaks` still reports them — but
+ * neither the print nor Page Break Preview uses them. Measured on a document
+ * fitted one page wide with a stored break after column 37 (its preview spans
+ * the whole print area and its PDF is one page wide) and on hand-made books
+ * fitted 1 × 1 (row break dropped) and 2 wide (column break dropped); a height
+ * left automatic keeps its row break.
+ */
+function keptBreaks(breaks: number[], fitted: boolean): number[] {
+  return fitted ? [] : breaks;
+}
+
+/**
  * Columns break whole, with no slack: a column that would run past the right
  * margin moves to the next page. Measured against Excel at 100% and 80%, and
  * on A4 landscape, where the arithmetic lands at 12.5 columns and Excel keeps
@@ -104,7 +121,7 @@ function titleSize(
 function cutColumns(setup: PageSetup, area: MergeRect, cols: Metrics, content: number): PageLine[] {
   const lines: PageLine[] = [];
   const last = area.col + area.cols - 1;
-  const manual = new Set(setup.colBreaks);
+  const manual = new Set(keptBreaks(setup.colBreaks, setup.fitToPage && setup.fitToWidth > 0));
   const title = titleSize(
     setup.printTitles?.cols,
     (index) => offsetAt(cols.offsets, index + 1) - offsetAt(cols.offsets, index),
@@ -155,7 +172,7 @@ function cutRows(
 ): PageLine[] {
   const lines: PageLine[] = [];
   const last = area.row + area.rows - 1;
-  const manual = new Set(setup.rowBreaks);
+  const manual = new Set(keptBreaks(setup.rowBreaks, setup.fitToPage && setup.fitToHeight > 0));
   const displays = rows.offsets.length - 1;
   const title = (() => {
     if (!setup.printTitles?.rows) return 0;
