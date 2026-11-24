@@ -12,6 +12,16 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.32] - 2026-11-24
+
+### Added
+
+- A workbook's row in the file tree can fold its folder away from the file's own right-click menu — a long listing that leaves the folder row out of sight no longer has to be scrolled back to
+
+### Fixed
+
+- Page Break Preview follows Excel when a sheet is fitted to a page count: a sheet fitted to one page wide shows and prints as one page wide even when the file still stores a column break, and a sheet with a fitted height ignores row breaks the same way. Such a sheet used to gain a stray vertical break and twice the pages
+
 ## [1.0.31] - 2026-11-23
 
 ### Added
