@@ -6072,28 +6072,33 @@ export function CanvasGrid({
     // press leaves from the anchor instead, which is Excel's active cell, and
     // collapses the block to whatever cell it lands on.
     const step = event.shiftKey ? edge : anchor;
-    const moveTo = (row: number, col: number) => {
+    /**
+     * A merged cell is one cell: a step that lands inside it again would be
+     * snapped back to its anchor and move nowhere. Excel steps to the cell
+     * just past the region on that side (merged `B2:C3`: Right lands on D2,
+     * Down on B4, and the walk keys go the same way), keeping the other axis
+     * on the anchor's own row/column.
+     */
+    const pastMerge = (row: number, col: number) => {
       const target = { row: clampRow(row), col: clampCol(col) };
-      if (!event.shiftKey) {
-        /**
-         * A merged cell is one cell: a step that lands inside it again would be
-         * snapped back to its anchor and move nowhere. Excel steps to the cell
-         * just past the region on that side (merged `B2:C3`: Right lands on D2,
-         * Down on B4), keeping the other axis on the anchor's own row/column.
-         */
-        const merge = mergeAt(anchor.row, anchor.col);
-        if (merge) {
-          if (row > anchor.row) target.row = Math.max(target.row, merge.row + merge.rows);
-          else if (row < anchor.row) target.row = Math.min(target.row, merge.row - 1);
-          if (col > anchor.col) target.col = Math.max(target.col, merge.col + merge.cols);
-          else if (col < anchor.col) target.col = Math.min(target.col, merge.col - 1);
-          target.row = clampRow(target.row);
-          target.col = clampCol(target.col);
-        }
-        select(target.row, target.col);
+      const merge = mergeAt(anchor.row, anchor.col);
+      if (merge) {
+        if (row > anchor.row) target.row = Math.max(target.row, merge.row + merge.rows);
+        else if (row < anchor.row) target.row = Math.min(target.row, merge.row - 1);
+        if (col > anchor.col) target.col = Math.max(target.col, merge.col + merge.cols);
+        else if (col < anchor.col) target.col = Math.min(target.col, merge.col - 1);
+        target.row = clampRow(target.row);
+        target.col = clampCol(target.col);
+      }
+      return target;
+    };
+    const moveTo = (row: number, col: number) => {
+      if (event.shiftKey) {
+        onSelect(rangeWithMerges(anchor, { row: clampRow(row), col: clampCol(col) }));
         return;
       }
-      onSelect(rangeWithMerges(anchor, target));
+      const target = pastMerge(row, col);
+      select(target.row, target.col);
     };
 
     switch (event.key) {
@@ -6124,12 +6129,16 @@ export function CanvasGrid({
       // Excel's own walk keys. They leave from the active cell whatever Shift
       // is doing — Shift here reverses the direction rather than growing the
       // block, which is what it means everywhere else on the sheet.
-      case "Enter":
-        select(clampRow(anchor.row + (event.shiftKey ? -1 : 1)), anchor.col);
+      case "Enter": {
+        const to = pastMerge(anchor.row + (event.shiftKey ? -1 : 1), anchor.col);
+        select(to.row, to.col);
         break;
-      case "Tab":
-        select(anchor.row, clampCol(anchor.col + (event.shiftKey ? -1 : 1)));
+      }
+      case "Tab": {
+        const to = pastMerge(anchor.row, anchor.col + (event.shiftKey ? -1 : 1));
+        select(to.row, to.col);
         break;
+      }
       default:
         return;
     }
