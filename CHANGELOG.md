@@ -12,6 +12,16 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.33] - 2026-11-25
+
+### Added
+
+- Choosing SheetLens from Windows' "Open with" now opens the file: with the app closed it starts on that workbook, and with a window already up the workbook opens as another tab in it
+
+### Fixed
+
+- Tab and Enter on a merged cell moved nowhere; they now step to the cell past the merge, as the arrow keys already did, reversing with Shift
+
 ## [1.0.32] - 2026-11-24
 
 ### Added
