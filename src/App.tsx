@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { EllipsisVertical } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -315,6 +317,33 @@ export default function App() {
       })
       .catch(() => {});
 
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [openPaths]);
+
+  /**
+   * A workbook the system handed over rather than the reader: the file behind
+   * Explorer's "Open with", at startup or — forwarded by the single-instance
+   * plugin — while this window is already up.
+   */
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void invoke<string | null>("startup_file")
+      .then((path) => {
+        if (path && looksLikeWorkbook(path)) void openPaths([path]);
+      })
+      .catch(() => {});
+    listen<string>("open-file", (event) => {
+      if (looksLikeWorkbook(event.payload)) void openPaths([event.payload]);
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
       unlisten?.();

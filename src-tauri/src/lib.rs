@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use excel::{Book, Cell, Hit, Matcher, ValueCount, WorkbookInfo};
 use layout::SheetLayout;
 use serde::Deserialize;
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 
 /// Distinct values returned for a filter dropdown.
 const MAX_VALUES: usize = 1000;
@@ -36,6 +36,11 @@ struct Store(Mutex<HashMap<String, Book>>);
 /// Shared, so the layout warmer can keep the store alive past the command that
 /// started it. The lock is only ever held for short map operations.
 type Shared = Arc<Store>;
+
+/// The workbook this launch was handed by the system — the file behind
+/// Explorer's "Open with" — taken by the front end once, when it mounts.
+#[derive(Default)]
+struct StartupFile(Mutex<Option<String>>);
 
 /// Parses every sheet's layout ahead of time.
 ///
@@ -444,6 +449,28 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// The file a launch named on its command line: the first argument that is
+/// one. Nothing else the executable is started with — a flag, an updater's own
+/// file names — is a document this app opens.
+fn launched_file<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    args.into_iter()
+        .skip(1)
+        .map(|arg| std::path::PathBuf::from(arg.as_ref()))
+        .find(|path| path.is_file())
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// The workbook this launch was handed, if any. Taken rather than read, so a
+/// second look cannot open it twice.
+#[tauri::command]
+fn startup_file(state: State<'_, StartupFile>) -> Option<String> {
+    state.0.lock().unwrap().take()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // An update that was interrupted leaves files named for exactly this; a
@@ -451,10 +478,30 @@ pub fn run() {
     update::sweep_leftovers();
 
     tauri::Builder::default()
+        // Registered ahead of everything else: a launch that finds this app
+        // already running forwards its workbook to that window, rather than
+        // starting an instance the WebView2 profile would refuse.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let Some(path) = launched_file(argv) else {
+                return;
+            };
+            let _ = app.emit("open-file", path);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::new(Store::default()))
+        .manage(StartupFile::default())
+        .setup(|app| {
+            if let Some(path) = launched_file(std::env::args_os()) {
+                *app.state::<StartupFile>().0.lock().unwrap() = Some(path);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             open_workbook,
             get_cells,
@@ -470,6 +517,7 @@ pub fn run() {
             close_workbook,
             list_directory,
             search_tree,
+            startup_file,
             fonts::list_fonts,
             update::update_status,
             update::update_check,
@@ -490,6 +538,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The path Explorer passes to "Open with" is the only argument that is a
+    /// file; a flag, or a path that no longer exists, is not a document.
+    #[test]
+    fn a_launch_names_a_workbook_as_its_first_file_argument() {
+        let dir = scratch("launched-file");
+        let book = dir.join("a.xlsx");
+        std::fs::write(&book, b"").unwrap();
+        let exe = std::ffi::OsString::from("SheetLens.exe");
+        let gone = dir.join("gone.xlsx").into_os_string();
+
+        let args = vec![exe.clone(), "--no-window".into(), gone, book.clone().into_os_string()];
+        assert_eq!(launched_file(args), Some(book.to_string_lossy().into_owned()));
+        assert_eq!(launched_file(vec![exe]), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Folders first, then only the workbooks, each run by name — the order
