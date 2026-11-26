@@ -12,6 +12,12 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.34] - 2026-11-26
+
+### Fixed
+
+- A cell border whose file names no colour was drawn almost as faint as a gridline, so a bordered table read as if it had no borders; it is now drawn in Excel's automatic ink, black
+
 ## [1.0.33] - 2026-11-25
 
 ### Added
