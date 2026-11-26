@@ -6999,6 +6999,7 @@ export function CanvasGrid({
                   width={usedColsTotal}
                   height={usedRowsTotal}
                   path={path}
+                  revision={revision}
                   frozenRows={layout.frozenRows ?? 0}
                   frozenCols={layout.frozenCols ?? 0}
                   zoom={zoom / 100}

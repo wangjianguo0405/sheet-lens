@@ -149,9 +149,12 @@ const MIME: Record<string, string> = {
   tiff: "image/tiff",
 };
 
-/** Images already read, keyed by workbook and part, so a sheet switch does not
- * ask for them again. */
+/** Images already read, keyed by workbook, read and part, so a sheet switch
+ * does not ask for them again — and so a file read again does not answer with
+ * the pictures it had the first time. */
 const mediaCache = new Map<string, string>();
+
+const mediaKey = (path: string, revision: number, part: string) => `${path}#${revision}#${part}`;
 
 function mimeOf(part: string): string | null {
   const extension = part.split(".").pop()?.toLowerCase() ?? "";
@@ -159,17 +162,28 @@ function mimeOf(part: string): string | null {
 }
 
 /** Reads every image a sheet's shapes refer to, once each, in one call. */
-function useMedia(path: string, parts: string[]): Map<string, string> {
+function useMedia(path: string, parts: string[], revision: number): Map<string, string> {
   const [, bump] = useState(0);
+
+  // A workbook read again is another workbook wearing the same path: the parts
+  // it names are the same parts (`xl/media/image3.png`), and they now hold
+  // something else. Everything cached for the previous read goes, and nothing
+  // will ask for it again.
+  useEffect(() => {
+    const mine = `${path}#${revision}#`;
+    for (const key of [...mediaCache.keys()]) {
+      if (key.startsWith(`${path}#`) && !key.startsWith(mine)) mediaCache.delete(key);
+    }
+  }, [path, revision]);
 
   useEffect(() => {
     let alive = true;
-    const missing = parts.filter((part) => !mediaCache.has(`${path}#${part}`));
+    const missing = parts.filter((part) => !mediaCache.has(mediaKey(path, revision, part)));
     if (missing.length > 0) {
       readMedia(path, missing)
         .then((found) => {
           for (const [part, data] of Object.entries(found)) {
-            mediaCache.set(`${path}#${part}`, data);
+            mediaCache.set(mediaKey(path, revision, part), data);
           }
           if (alive) bump((tick) => tick + 1);
         })
@@ -180,11 +194,11 @@ function useMedia(path: string, parts: string[]): Map<string, string> {
     return () => {
       alive = false;
     };
-  }, [path, parts]);
+  }, [path, revision, parts]);
 
   const ready = new Map<string, string>();
   for (const part of parts) {
-    const data = mediaCache.get(`${path}#${part}`);
+    const data = mediaCache.get(mediaKey(path, revision, part));
     if (data) ready.set(part, data);
   }
   return ready;
@@ -357,6 +371,12 @@ export interface ShapeLayerProps {
   height: number;
   path: string;
   /**
+   * How many times the workbook has been read. A file read again keeps its path
+   * and its part names, so this is the only thing that tells the pictures of
+   * the new read from the ones cached for the old one.
+   */
+  revision: number;
+  /**
    * A shape whose anchor is inside a frozen band is pinned: the layer is
    * translated by the scroll, so its own position has to add it back. Zero
    * unless the sheet freezes something, which is what keeps a scroll from
@@ -396,6 +416,7 @@ export const ShapeLayer = memo(function ShapeLayer({
   width,
   height,
   path,
+  revision,
   frozenRows = 0,
   frozenCols = 0,
   zoom = 1,
@@ -410,7 +431,7 @@ export const ShapeLayer = memo(function ShapeLayer({
         .filter((part): part is string => part !== null && mimeOf(part) !== null),
     [shapes],
   );
-  const media = useMedia(path, parts);
+  const media = useMedia(path, parts, revision);
   // Gradients are referenced by id from the shapes that use them, so the layer
   // needs a prefix of its own. React's ids carry colons, which a `url(#…)`
   // fragment cannot.
