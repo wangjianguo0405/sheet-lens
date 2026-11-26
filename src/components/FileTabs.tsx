@@ -300,6 +300,11 @@ export function FileTabs({
                 <div
                   data-file-tab={tab.path}
                   onPointerDown={(event) => holdTab(event, tab.path, index)}
+                  // The whole tab is the target, not just the name inside it:
+                  // the padding, the room the × leaves, and the rule under the
+                  // tab are all part of the tab as it reads on screen, and a
+                  // press on any of them means this tab.
+                  onClick={() => onSelect(tab.path)}
                   className={cn(
                     "group flex max-w-64 shrink-0 items-center gap-1 border-r border-b-2 border-border px-2 py-1 text-xs select-none",
                     isActive
@@ -310,7 +315,7 @@ export function FileTabs({
                   onAuxClick={middleClose(() => onClose(tab.path))}
                 >
                   <Hint label={tab.path}>
-                    <button type="button" className="truncate" onClick={() => onSelect(tab.path)}>
+                    <button type="button" className="truncate">
                       {tab.fileName}
                     </button>
                   </Hint>
@@ -322,7 +327,12 @@ export function FileTabs({
                       "rounded-sm p-0.5 transition-opacity hover:bg-accent",
                       isActive ? "opacity-60" : "opacity-0 group-hover:opacity-60",
                     )}
-                    onClick={() => onClose(tab.path)}
+                    onClick={(event) => {
+                      // The tab under it would otherwise take the press as a
+                      // click of its own and switch to the tab being closed.
+                      event.stopPropagation();
+                      onClose(tab.path);
+                    }}
                   >
                     <X className="size-3" />
                   </button>
@@ -497,9 +507,10 @@ export function FileTabs({
               "group flex shrink-0 items-center gap-1 border-r border-border px-2 py-1 text-xs",
               atHome ? "bg-background text-foreground" : "text-muted-foreground hover:bg-accent/40",
             )}
+            onClick={onHome}
             onAuxClick={middleClose(onCloseHome)}
           >
-            <button type="button" className="truncate" onClick={onHome}>
+            <button type="button" className="truncate">
               {t("tabs.new")}
             </button>
             <button
@@ -509,7 +520,10 @@ export function FileTabs({
                 "rounded-sm p-0.5 transition-opacity hover:bg-accent",
                 atHome ? "opacity-60" : "opacity-0 group-hover:opacity-60",
               )}
-              onClick={onCloseHome}
+              onClick={(event) => {
+                event.stopPropagation();
+                onCloseHome();
+              }}
             >
               <X className="size-3" />
             </button>
