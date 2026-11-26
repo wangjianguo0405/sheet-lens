@@ -36,7 +36,7 @@ export interface CanvasTheme {
    * #E0E0E0 gridline.
    */
   freezeLine: string;
-  /** The full-strength border colour, for an explicit cell border of no colour. */
+  /** The full-strength border colour, for the controls the grid draws itself. */
   border: string;
   /** Gutter background. */
   muted: string;

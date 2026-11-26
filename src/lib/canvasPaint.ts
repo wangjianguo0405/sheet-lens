@@ -756,7 +756,10 @@ function paintEdges(
   h: number,
   origin: { x: number; y: number },
 ): void {
-  const fallback = view.theme.border;
+  // A file that names no colour means Excel's automatic ink, which is the
+  // window text colour — black. A producer that writes `<left style="thin"/>`
+  // with no `<color>` child is leaving it out, not asking for a faint rule.
+  const fallback = view.theme.foreground;
   if (edges.top) strokeEdge(ctx, edges.top, "h", x, y, w, fallback, origin.x);
   if (edges.bottom) strokeEdge(ctx, edges.bottom, "h", x, y + h, w, fallback, origin.x);
   if (edges.left) strokeEdge(ctx, edges.left, "v", x, y, h, fallback, origin.y);
@@ -2096,7 +2099,7 @@ function paintSpanSurface(
       y,
       w,
       h,
-      view.theme.border,
+      view.theme.foreground,
     );
     // The region is one cell, so a note on its anchor carries its mark in the
     // region's top-right corner — not the anchor cell's, which would sit in
@@ -2242,7 +2245,7 @@ function paintCellSurface(
     y,
     w,
     h,
-    view.theme.border,
+    view.theme.foreground,
   );
 
   // A note's mark goes over the fill and the borders, in the corner Excel puts
