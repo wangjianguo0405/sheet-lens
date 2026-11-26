@@ -2178,7 +2178,7 @@ export function CanvasGrid({
    */
   const pagination = useMemo(() => {
     if (!printArea || !layout?.pageSetup) return null;
-    return paginate(layout.pageSetup, printArea, cols, rows, displayOfRow);
+    return paginate(layout.pageSetup, printArea, cols, rows, displayOfRow, layout.fontFamily);
   }, [printArea, layout, cols, rows, displayOfRow]);
 
   /** What Page Break Preview writes in the middle of each page. */

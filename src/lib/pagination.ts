@@ -59,19 +59,44 @@ export interface Pagination {
 }
 
 /** One page's printable area, in sheet pixels at the given scale. */
-function printable(setup: PageSetup, scale: number) {
+function printable(setup: PageSetup, scale: number, grid: number) {
   const [w, h] = PAPER_PT[setup.paperSize] ?? PAPER_PT[1];
   const width = ((setup.landscape ? h : w) * PX_PER_IN) / PT_PER_IN;
   const height = ((setup.landscape ? w : h) * PX_PER_IN) / PT_PER_IN;
   return {
-    width: (width - (setup.margins.left + setup.margins.right) * PX_PER_IN) / scale,
+    width: (width - (setup.margins.left + setup.margins.right) * PX_PER_IN) / scale / grid,
     // Excel's body is a shade taller than the margins leave it: six pixels,
     // measured as the only amount that reproduces every break on the design
     // documents this was checked against. Nothing in the file explains it, and
     // it does not scale with the paper (Letter, Legal and A3 each want a
     // different number), so it stays a measured constant rather than a rule.
-    height: (height - (setup.margins.top + setup.margins.bottom) * PX_PER_IN + PAGE_SLACK) / scale,
+    height:
+      (height - (setup.margins.top + setup.margins.bottom) * PX_PER_IN + PAGE_SLACK) / scale / grid,
   };
+}
+
+/**
+ * How much smaller than its stored size Excel prints the grid, by the workbook's
+ * own font.
+ *
+ * A workbook set in ＭＳ Ｐゴシック comes out of Excel with every page holding
+ * about a tenth more rows and columns than the file's sizes allow, while one set
+ * in 游ゴシック holds exactly what they allow. It is the grid that is laid out
+ * smaller and not the page that is bigger: an exported PDF draws a 12pt row
+ * 10.8pt tall at 100% and the text at its full size, and the column pitch is
+ * short by the same share. Measured across the corpus — 24 workbooks in
+ * ＭＳ Ｐゴシック need 1.09× the page (p25 1.095, median 1.096, p75 1.105) and
+ * 22 in 游ゴシック need 1.00× (p25 1.008, median 1.014) — with nothing between
+ * the two groups, and the same split whether or not the pages repeat title rows.
+ *
+ * Nothing in the file says why, so this is the measurement and not a rule. 0.9
+ * is the row pitch a PDF exported from Excel shows — 12pt drawn 10.8pt at 100%
+ * — and it is also the constant that reproduces the most first breaks across
+ * the corpus. Sheets in any other font keep 1.
+ */
+function gridPrintFactor(fontFamily: string | null): number {
+  const family = (fontFamily ?? "").replace(/\s+/g, "");
+  return family === "ＭＳＰゴシック" ? 0.9 : 1;
 }
 
 /** How much taller than paper-minus-margins Excel's page body is. */
@@ -221,8 +246,9 @@ function pageCount(
   cols: Metrics,
   rows: Metrics,
   displayOfRow: (row: number) => number,
+  grid: number,
 ) {
-  const page = printable(setup, scale);
+  const page = printable(setup, scale, grid);
   return {
     wide: cutColumns(setup, area, cols, page.width).length + 1,
     tall: cutRows(setup, area, rows, displayOfRow, page.height).length + 1,
@@ -245,10 +271,16 @@ function contentWidth(area: MergeRect, cols: Metrics): number {
  * exactly this reason; their page breaks only line up once that is applied.
  * Sheets whose content already fits are left alone.
  */
-function widthFit(scale: number, setup: PageSetup, area: MergeRect, cols: Metrics): number {
+function widthFit(
+  scale: number,
+  setup: PageSetup,
+  area: MergeRect,
+  cols: Metrics,
+  grid: number,
+): number {
   const width = contentWidth(area, cols);
   if (width <= 0) return scale;
-  const pageWidth = printable(setup, 1).width;
+  const pageWidth = printable(setup, 1, grid).width;
   if (width * scale <= pageWidth + EPSILON) return scale;
   const fit = Math.floor((pageWidth / width) * 100) / 100;
   return scale * Math.max(0.1, fit);
@@ -267,6 +299,7 @@ function resolveScale(
   cols: Metrics,
   rows: Metrics,
   displayOfRow: (row: number) => number,
+  grid: number,
 ): number {
   const fixed = Math.min(4, Math.max(0.1, (setup.scale || 100) / 100));
   // Excel works in whole percents: the width fit is taken at the largest
@@ -274,13 +307,13 @@ function resolveScale(
   // too. Keeping the fraction (93% x 93% = 86.49) lands a row short on the
   // design documents' fit sheets; 86 does not. Measured over the 04 営業支援
   // corpus: 573 of 1173 breaks follow this way, 549 without the floor.
-  if (!setup.fitToPage) return Math.floor(widthFit(fixed, setup, area, cols) * 100) / 100;
+  if (!setup.fitToPage) return Math.floor(widthFit(fixed, setup, area, cols, grid) * 100) / 100;
   // Both bounds automatic leaves the scale alone; Excel prints at 100%.
   if (setup.fitToWidth === 0 && setup.fitToHeight === 0) return 1;
 
   for (let percent = 400; percent >= 10; percent -= 1) {
     const scale = percent / 100;
-    const { wide, tall } = pageCount(scale, setup, area, cols, rows, displayOfRow);
+    const { wide, tall } = pageCount(scale, setup, area, cols, rows, displayOfRow, grid);
     const fitsWide = setup.fitToWidth === 0 || wide <= setup.fitToWidth;
     const fitsTall = setup.fitToHeight === 0 || tall <= setup.fitToHeight;
     if (fitsWide && fitsTall) return scale;
@@ -294,6 +327,9 @@ function resolveScale(
  *
  * Page numbers run down a column of pages before moving right, unless the file
  * asked for `overThenDown`.
+ *
+ * `fontFamily` is the workbook's own font, which is what decides how much of
+ * the sheet Excel fits on a page — see `gridPrintFactor`.
  */
 export function paginate(
   setup: PageSetup,
@@ -301,9 +337,11 @@ export function paginate(
   cols: Metrics,
   rows: Metrics,
   displayOfRow: (sheetRow: number) => number,
+  fontFamily: string | null,
 ): Pagination {
-  const scale = resolveScale(setup, area, cols, rows, displayOfRow);
-  const page = printable(setup, scale);
+  const grid = gridPrintFactor(fontFamily);
+  const scale = resolveScale(setup, area, cols, rows, displayOfRow, grid);
+  const page = printable(setup, scale, grid);
   const colLines = cutColumns(setup, area, cols, page.width);
   const rowLines = cutRows(setup, area, rows, displayOfRow, page.height);
 
