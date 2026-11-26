@@ -12,6 +12,15 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.35] - 2026-11-26
+
+### Fixed
+
+- Clicking a file tab anywhere but on its name — the padding around it, the rule under it — did nothing; the whole tab switches now
+- A workbook set in ＭＳ Ｐゴシック came out with a page break too many: Excel fits about a tenth more rows on each page than the file's own row heights add up to, and SheetLens now lays the pages out that way too
+- Reloading a workbook left its floating pictures as they were while the rest of it followed the file; they are read again with it
+- A release published while the app stayed open went unnoticed until the next restart, since the check only ran at startup; it now runs again every four hours
+
 ## [1.0.34] - 2026-11-26
 
 ### Fixed
