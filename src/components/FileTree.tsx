@@ -158,6 +158,13 @@ function underFolder(key: string, other: string): boolean {
   return rest.startsWith("\\") || rest.startsWith("/");
 }
 
+/** The folder a workbook sits in: the path with its own name taken off. */
+function parentOf(path: string): string {
+  const cut = path.replace(/[\\/]+$/, "");
+  const at = Math.max(cut.lastIndexOf("\\"), cut.lastIndexOf("/"));
+  return at > 0 ? cut.slice(0, at) : cut;
+}
+
 /** Every key in a search branch, the branch's own included. */
 function searchKeys(key: string, node: SearchNode): string[] {
   const keys = [key];
@@ -687,9 +694,12 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   );
 
   /**
-   * The menu a workbook's row offers: its own program, folding the folder it
-   * sits in, what to copy, where it lives. A long listing can leave no folder
-   * row in sight, so the file itself has to be able to put its folder away.
+   * The menu a workbook's row offers: its own program, reading its folder again,
+   * folding that folder, what to copy, where it lives. A long listing can leave
+   * no folder row in sight, so the file itself has to be able to put its folder
+   * away — and the same goes for reading it again, which is what a workbook
+   * added beside it needs: reaching the folder's own menu would mean folding it
+   * first, and losing the place in the listing.
    */
   const workbookMenu = (path: string, collapseFolder: () => void) => (
     <ContextMenuContent className="min-w-40">
@@ -698,6 +708,12 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
         onSelect={() => void openPath(path).catch(() => toast.error(t("toast.openFailed")))}
       >
         {t("tree.openWithDefault")}
+      </ContextMenuItem>
+      <ContextMenuItem
+        icon={<RotateCw className="size-3" />}
+        onSelect={() => refreshFolder(parentOf(path))}
+      >
+        {t("tree.refresh")}
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem icon={<ChevronUp className="size-3" />} onSelect={collapseFolder}>
