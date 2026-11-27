@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
@@ -6,7 +7,7 @@ use calamine::{open_workbook_auto, Data, ExcelDateTime, Range, Reader};
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 
-use crate::formula::{At, Formula, Value};
+use crate::formula::{Formula, Value};
 use crate::layout::{self, SheetLayout};
 use crate::numfmt;
 
@@ -172,8 +173,65 @@ impl Book {
 }
 
 impl Book {
+    /// Reads the layouts of the other sheets this one's formulas name.
+    ///
+    /// A formula here may take its value from another sheet, and what it finds
+    /// there may be another formula the file left empty — which only the other
+    /// sheet's layout knows. Parsed up front, so evaluating one sheet's cells
+    /// never needs a layout the book has not read yet.
+    fn load_formula_sheets(&mut self, sheet: &str) {
+        let Some(layout) = self.layouts.get(sheet) else {
+            return;
+        };
+        // `INDIRECT` names its sheet only when it runs — the name comes out of
+        // a cell — so a sheet that uses one may read any of them, and all of
+        // their layouts are read here. A sheet without one names its sheets in
+        // the formulas themselves.
+        let named: HashSet<String> = if layout
+            .formulas
+            .values()
+            .any(|text| text.to_ascii_uppercase().contains("INDIRECT("))
+        {
+            self.info.sheets.iter().map(|info| info.name.clone()).collect()
+        } else {
+            layout.formulas.values().flat_map(|text| sheets_named(text)).collect()
+        };
+        if named.is_empty() {
+            return;
+        }
+        let path = self.info.path.clone();
+        for name in named {
+            if self.layouts.contains_key(&name) {
+                continue;
+            }
+            if let Ok(parsed) = layout::read_cached(&mut self.layout_cache, &path, &name) {
+                self.layouts.insert(name, parsed);
+            }
+        }
+    }
+}
+
+/// The sheets a formula text names, taken from the `Sheet!` prefixes in it.
+fn sheets_named(formula: &str) -> Vec<String> {
+    let chars: Vec<char> = formula.chars().collect();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < chars.len() {
+        match crate::formula::sheet_name(&chars, at) {
+            Some((name, next)) => {
+                out.push(name);
+                at = next;
+            }
+            None => at += 1,
+        }
+    }
+    out
+}
+
+impl Book {
     /// A window of cells, addressed by zero-based offset from the sheet's top-left.
-    pub fn cells(&self, sheet: &str, row: u32, col: u32, rows: u32, cols: u32) -> Result<Vec<Vec<Cell>>, String> {
+    pub fn cells(&mut self, sheet: &str, row: u32, col: u32, rows: u32, cols: u32) -> Result<Vec<Vec<Cell>>, String> {
+        self.load_formula_sheets(sheet);
         let height_width = self
             .sheets
             .get(sheet)
@@ -206,6 +264,17 @@ impl Book {
 
         // The number format lives in the layout, which the grid loads before
         // it asks for any cells.
+        let known: RefCell<HashMap<(String, u32, u32), Value>> = RefCell::new(HashMap::new());
+        let open: RefCell<HashSet<(String, u32, u32)>> = RefCell::new(HashSet::new());
+        let depth = std::cell::Cell::new(0);
+        let values = CellValues {
+            book: self,
+            sheet: sheet.to_owned(),
+            here: std::cell::Cell::new((0, 0)),
+            known: &known,
+            open: &open,
+            depth: &depth,
+        };
         let mut out = Vec::with_capacity(row_end.saturating_sub(row) as usize);
         for r in row..row_end {
             let mut line = Vec::with_capacity(col_end.saturating_sub(col) as usize);
@@ -219,16 +288,15 @@ impl Book {
                     None => {
                         let mut cell = cell_at(value);
                         // The file states a formula and shipped no value for
-                        // it — Excel works it out at open. Only a formula that
-                        // needs nothing but its own address is answered here;
-                        // everything else stays as blank as the file left it.
+                        // it — Excel works it out at open. It is worked out
+                        // here too, from the cells around it, with anything
+                        // unreadable left as blank as the file left it.
                         if cell.kind == "empty" {
-                            if let Some(Some(number)) = layout
-                                .and_then(|found| found.formulas.get(&(r, c)))
-                                .map(|formula| formula_number(formula, r, c))
-                            {
-                                write_float(number, &mut cell.text);
-                                cell.kind = "number";
+                            if let Some(text) = layout.and_then(|found| found.formulas.get(&(r, c))) {
+                                values.here.set((r, c));
+                                if let Some(worked) = Formula::parse(text).and_then(|formula| formula.eval(&values)) {
+                                    write_formula(&worked, &mut cell);
+                                }
                             }
                         }
                         cell
@@ -702,22 +770,146 @@ fn write_float(f: f64, out: &mut String) {
     }
 }
 
-/// Works out a formula that depends on nothing but the cell it sits in.
+/// How deep a chain of formulas may reach before it is given up on, and how
+/// many cells one rectangle may cover. Both exist so a malformed or hostile
+/// workbook cannot turn one screen of cells into an endless walk.
+const FORMULA_DEPTH: u32 = 512;
+const FORMULA_AREA: u64 = 200_000;
+
+/// The cells a sheet's formulas can read: its own, and whichever other sheet a
+/// reference names.
 ///
-/// `ROW()` and `COLUMN()` are how a generated sheet numbers its lines, and
-/// arithmetic around them is what those formulas are made of; `crate::formula`
-/// answers those, and anything else it can do without looking at another cell.
-/// A formula that reads one is left unanswered for now — a blank cell is what
-/// the file itself carries, while a number the viewer worked out for itself
-/// would be its own invention.
-fn formula_number(text: &str, row: u32, col: u32) -> Option<f64> {
-    let formula = Formula::parse(text)?;
-    if formula.reads_a_cell() {
-        return None;
+/// Values are worked out once and kept for as long as the call that asked for
+/// them lasts. A generated sheet counts its rows off the row above — a whole
+/// column is one chain of references — so without the memo every cell would
+/// walk the column again and the cost would be the square of its length.
+struct CellValues<'a> {
+    book: &'a Book,
+    /// The sheet the formula being worked out sits on, which is the one a
+    /// reference without a sheet names.
+    sheet: String,
+    /// The cell being worked out: what `ROW()` and `COLUMN()` answer, and the
+    /// anchor a relative reference counts from. A cell, not a field, so one of
+    /// these can serve a whole window of cells.
+    here: std::cell::Cell<(u32, u32)>,
+    known: &'a RefCell<HashMap<(String, u32, u32), Value>>,
+    open: &'a RefCell<HashSet<(String, u32, u32)>>,
+    depth: &'a std::cell::Cell<u32>,
+}
+
+impl CellValues<'_> {
+    fn read(&self, sheet: &str, row: u32, col: u32) -> Value {
+        let key = (sheet.to_owned(), row, col);
+        if let Some(value) = self.known.borrow().get(&key).cloned() {
+            return value;
+        }
+        // A formula that reaches itself, directly or round a ring of cells,
+        // stops here rather than running forever.
+        let entered = self.open.borrow_mut().insert(key.clone());
+        if !entered || self.depth.get() >= FORMULA_DEPTH {
+            // Not a zero and not a blank: a value that is not there, so every
+            // formula that leans on this one is left unanswered as well.
+            return Value::Error("#CIRCULAR");
+        }
+        self.depth.set(self.depth.get() + 1);
+        let value = self.work_out(sheet, row, col);
+        self.depth.set(self.depth.get() - 1);
+        self.open.borrow_mut().remove(&key);
+        self.known.borrow_mut().insert(key, value.clone());
+        value
     }
-    match formula.eval(&At { row, col })? {
-        Value::Number(value) if value.is_finite() => Some(value),
-        _ => None,
+
+    fn work_out(&self, sheet: &str, row: u32, col: u32) -> Value {
+        let Some(found) = self.book.sheets.get(sheet) else {
+            return Value::Blank;
+        };
+        match found.range.get_value((row, col)) {
+            Some(value) if !matches!(value, Data::Empty) => held(value),
+            // No value of its own: a formula the file left for Excel to work
+            // out, or a cell that really is empty.
+            _ => {
+                let Some(layout) = self.book.layouts.get(sheet) else {
+                    return Value::Blank;
+                };
+                let Some(text) = layout.formulas.get(&(row, col)) else {
+                    return Value::Blank;
+                };
+                let Some(formula) = Formula::parse(text) else {
+                    return Value::Blank;
+                };
+                let nested = CellValues {
+                    book: self.book,
+                    sheet: sheet.to_owned(),
+                    here: std::cell::Cell::new((row, col)),
+                    known: self.known,
+                    open: self.open,
+                    depth: self.depth,
+                };
+                formula.eval(&nested).unwrap_or(Value::Blank)
+            }
+        }
+    }
+}
+
+impl crate::formula::Context for CellValues<'_> {
+    fn here(&self) -> (u32, u32) {
+        self.here.get()
+    }
+    fn anchor(&self) -> (u32, u32) {
+        self.here.get()
+    }
+    fn value_in(&self, sheet: Option<&str>, row: u32, col: u32) -> Value {
+        let name = sheet.unwrap_or(&self.sheet).to_owned();
+        self.read(&name, row, col)
+    }
+    fn area_in(&self, sheet: Option<&str>, from: (u32, u32), to: (u32, u32)) -> Vec<Value> {
+        let rows = to.0.saturating_sub(from.0) + 1;
+        let cols = to.1.saturating_sub(from.1) + 1;
+        if u64::from(rows) * u64::from(cols) > FORMULA_AREA {
+            return Vec::new();
+        }
+        let name = sheet.unwrap_or(&self.sheet).to_owned();
+        let mut out = Vec::with_capacity((rows * cols) as usize);
+        for row in from.0..=to.0 {
+            for col in from.1..=to.1 {
+                out.push(self.read(&name, row, col));
+            }
+        }
+        out
+    }
+}
+
+/// A stored value as a formula sees it. A date in a formula is its serial
+/// number, which is what arithmetic on one means.
+fn held(value: &Data) -> Value {
+    match value {
+        Data::Float(number) => Value::Number(*number),
+        Data::Int(number) => Value::Number(*number as f64),
+        Data::String(text) => Value::Text(text.clone()),
+        Data::Bool(flag) => Value::Bool(*flag),
+        Data::DateTime(when) => Value::Number(when.as_f64()),
+        _ => Value::Blank,
+    }
+}
+
+/// A formula's answer, as the cell that carries it shows it.
+fn write_formula(value: &Value, cell: &mut Cell) {
+    match value {
+        Value::Number(number) if number.is_finite() => {
+            write_float(*number, &mut cell.text);
+            cell.kind = "number";
+        }
+        Value::Text(text) if !text.is_empty() => {
+            cell.text = text.clone();
+            cell.kind = "text";
+        }
+        Value::Bool(flag) => {
+            cell.text = if *flag { "TRUE" } else { "FALSE" }.to_owned();
+            cell.kind = "bool";
+        }
+        // A blank, an unreadable value or an error leaves the cell as the file
+        // carried it: the viewer does not invent numbers Excel never computed.
+        _ => {}
     }
 }
 
@@ -910,7 +1102,7 @@ mod tests {
     /// document's shape, since the sample is the only workbook a test may open.
     #[test]
     fn a_current_region_is_bounded_by_blank_rows_and_columns() {
-        let Some(book) = sample() else { return };
+        let Some(mut book) = sample() else { return };
         for sheet in ["Summary", "Logic", "History"] {
             for (row, col) in [(0, 0), (2, 1), (17, 3), (500, 0), (11999, 3)] {
                 let region = book.current_region(sheet, row, col).expect("sheet exists");
@@ -927,7 +1119,7 @@ mod tests {
 
                 // An empty reply means the position is off the stored range,
                 // which is the scan's own boundary rather than a blank cell.
-                let blank = |r: u32, c: u32| -> Option<bool> {
+                let mut blank = |r: u32, c: u32| -> Option<bool> {
                     let line = book.cells(sheet, r, c, 1, 1).ok()?.pop()?;
                     Some(line.into_iter().next()?.kind == "empty")
                 };
@@ -966,7 +1158,7 @@ mod tests {
 
     #[test]
     fn reads_cells_by_offset_and_keeps_numbers_typed() {
-        let Some(book) = sample() else { return };
+        let Some(mut book) = sample() else { return };
 
         // Row 0 is the merged title, so the header row is row 1.
         let title = book.cells("Summary", 0, 0, 1, 1).unwrap();
@@ -1022,7 +1214,7 @@ mod tests {
 
     #[test]
     fn addresses_cells_where_the_grid_draws_them_not_where_the_range_starts() {
-        let book = offset_sample();
+        let mut book = offset_sample();
 
         // B2 is row 1, column 1, so the window comes back with it in slot
         // [1][1] — adding the range's origin put it in [0][0], one row up and
@@ -1165,7 +1357,7 @@ mod tests {
 
     #[test]
     fn paging_clamps_at_the_last_row() {
-        let Some(book) = sample() else { return };
+        let Some(mut book) = sample() else { return };
         let tail = book.cells("History", 2, 0, 128, 32).unwrap();
         assert_eq!(tail.len(), 1);
         assert_eq!(tail[0][2].text, "サンプル日付項目 の条件を追加");
@@ -1223,7 +1415,7 @@ mod tests {
             print_area: false,
             state: layout::SheetState::default(),
         };
-        let book = Book {
+        let mut book = Book {
             info: WorkbookInfo {
                 path: "fixture".to_owned(),
                 file_name: "fixture".to_owned(),
@@ -1340,28 +1532,55 @@ mod tests {
         assert!(none.is_empty());
     }
 
+    /// The formulas a file leaves for Excel to work out: values are read off
+    /// the cells around them, one is built on another, and a pair that names
+    /// each other stops instead of running forever.
     #[test]
-    fn works_out_a_formula_that_names_only_its_own_cell() {
-        // The line counter a generated sheet writes: row 10, one-based 10.
-        assert_eq!(formula_number("ROW()-3", 9, 1), Some(7.0));
-        assert_eq!(formula_number("ROW()", 46, 0), Some(47.0));
-        assert_eq!(formula_number("COLUMN()*2+ROW()", 0, 0), Some(3.0));
-        // Precedence, parentheses and the right-associative power.
-        assert_eq!(formula_number("1+2*3", 0, 0), Some(7.0));
-        assert_eq!(formula_number("(1+2)*3", 0, 0), Some(9.0));
-        assert_eq!(formula_number("2^3^2", 0, 0), Some(512.0));
-        assert_eq!(formula_number("-ROW()+1", 4, 0), Some(-4.0));
-        // A function the evaluator knows, used without reaching for a neighbour,
-        // is answered too — this one could not be before.
-        assert_eq!(formula_number("IF(ROW()>1,1,2)", 0, 0), Some(2.0));
-        assert_eq!(formula_number("MOD(ROW(),43)", 47, 0), Some(5.0));
-        // Anything that reads another cell, or a function this does not know,
-        // stays unanswered rather than guessed at.
-        assert_eq!(formula_number("ROW(A5)", 0, 0), None);
-        assert_eq!(formula_number("A1+1", 0, 0), None);
-        assert_eq!(formula_number("SUM(A1:A3)", 0, 0), None);
-        assert_eq!(formula_number("NORMINV(1,2,3)", 0, 0), None);
-        assert_eq!(formula_number("ROW())", 0, 0), None);
-        assert_eq!(formula_number("1/0", 0, 0), None);
+    fn works_out_the_formulas_the_file_left_for_excel() {
+        let range: Range<Data> = Range::from_sparse(vec![
+            calamine::Cell::new((0, 0), Data::Float(2.0)),
+            calamine::Cell::new((1, 0), Data::Float(3.0)),
+            calamine::Cell::new((4, 0), Data::String("x".to_owned())),
+        ]);
+        let origin = range.start().unwrap_or((0, 0));
+        let mut layout = SheetLayout::empty();
+        layout.rows = 6;
+        layout.cols = 3;
+        layout.formulas.insert((0, 1), "SUM(A1:A2)".to_owned());
+        layout.formulas.insert((1, 1), "B1*2".to_owned());
+        layout.formulas.insert((2, 1), "COUNTA(A1:A3)".to_owned());
+        layout.formulas.insert((3, 1), "IF(A1>1,\"big\",\"small\")".to_owned());
+        // A cell that holds nothing counts as zero in arithmetic, as it does in
+        // Excel.
+        layout.formulas.insert((4, 1), "A3+1".to_owned());
+        // Two cells that name each other.
+        layout.formulas.insert((0, 2), "C2+1".to_owned());
+        layout.formulas.insert((1, 2), "C1+1".to_owned());
+        let mut book = Book {
+            info: WorkbookInfo {
+                path: "fixture".to_owned(),
+                file_name: "fixture".to_owned(),
+                sheets: vec![SheetInfo {
+                    name: "Sheet1".to_owned(),
+                    rows: 6,
+                    cols: 3,
+                    tab_color: None,
+                    hidden: false,
+                    print_area: false,
+                    state: layout::SheetState::default(),
+                }],
+            },
+            sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
+            layouts: HashMap::from([("Sheet1".to_owned(), layout)]),
+            layout_cache: layout::Cache::default(),
+        };
+        let cells = book.cells("Sheet1", 0, 0, 6, 3).unwrap();
+        assert_eq!(cells[0][1].text, "5", "SUM over A1:A2");
+        assert_eq!(cells[1][1].text, "10", "B1*2, read off the formula above");
+        assert_eq!(cells[2][1].text, "2", "COUNTA counts what holds a value");
+        assert_eq!(cells[3][1].text, "big", "a text result shows its text");
+        assert_eq!(cells[4][1].text, "1", "a blank counts as zero");
+        assert_eq!(cells[0][2].kind, "empty", "a cycle stops");
+        assert_eq!(cells[1][2].kind, "empty", "a cycle stops");
     }
 }

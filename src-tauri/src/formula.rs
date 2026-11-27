@@ -18,6 +18,10 @@ pub(crate) enum Value {
     Text(String),
     Bool(bool),
     Blank,
+    /// Something that has no value at all — a formula that reaches itself, say.
+    /// Arithmetic over one has no answer, which is how the cell that carries it
+    /// stays blank instead of being given a number the sheet never had.
+    Error(&'static str),
 }
 
 /// What a formula is evaluated against: the cell it belongs to, the anchor its
@@ -28,8 +32,12 @@ pub(crate) trait Context {
     /// Where a relative reference counts from. A rule's anchor is its own; a
     /// cell's formula counts from the cell, which makes `A1` mean A1.
     fn anchor(&self) -> (u32, u32);
-    /// The value of a cell. One the sheet never mentions is `Blank`.
-    fn value_at(&self, row: u32, col: u32) -> Value;
+    /// The value of a cell, on this formula's own sheet (`None`) or the one a
+    /// reference names.
+    fn value_in(&self, sheet: Option<&str>, row: u32, col: u32) -> Value;
+    /// A rectangle of cells, row by row, both corners included. `from` and `to`
+    /// are already in sheet order, whichever way the formula wrote them.
+    fn area_in(&self, sheet: Option<&str>, from: (u32, u32), to: (u32, u32)) -> Vec<Value>;
 }
 
 /// A cell with nothing to read beside it: the formula is evaluated for where it
@@ -49,8 +57,14 @@ impl Context for At {
     fn anchor(&self) -> (u32, u32) {
         (self.row, self.col)
     }
-    fn value_at(&self, _row: u32, _col: u32) -> Value {
+    fn value_in(&self, _sheet: Option<&str>, _row: u32, _col: u32) -> Value {
         Value::Blank
+    }
+    fn area_in(&self, _sheet: Option<&str>, _from: (u32, u32), _to: (u32, u32)) -> Vec<Value> {
+        // Nothing can be read, so a rectangle has no cells to offer: the range
+        // functions then see an empty set, which is what a sheet with nothing
+        // in it would give them.
+        Vec::new()
     }
 }
 
@@ -58,20 +72,29 @@ impl Context for At {
 // The formula
 // ---------------------------------------------------------------------------
 
+/// One corner of a reference, as the formula spells it. An absolute row or
+/// column addresses the sheet directly; a relative one is the distance from the
+/// anchor the context gives.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Ref {
+    pub row: i64,
+    pub col: i64,
+    pub row_absolute: bool,
+    pub col_absolute: bool,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum Formula {
     Number(f64),
     Text(String),
     Bool(bool),
-    /// A cell reference. An absolute row or column addresses the sheet directly;
-    /// a relative one is the distance from the rule's anchor, laid on the cell
-    /// being asked about.
-    Cell {
-        row: i64,
-        col: i64,
-        row_absolute: bool,
-        col_absolute: bool,
-    },
+    /// A cell reference, and the sheet it names when it names one.
+    Cell(Option<Box<str>>, Ref),
+    /// A rectangle: `A1:B2`, both corners as written, and the sheet it names.
+    Area(Option<Box<str>>, Ref, Ref),
+    /// An argument that is not there: `IF(a,b,)` names an empty third one,
+    /// which Excel reads as zero.
+    Missing,
     Call(String, Vec<Formula>),
     Negate(Box<Formula>),
     Binary(Op, Box<Formula>, Box<Formula>),
@@ -102,20 +125,15 @@ impl Formula {
     }
 
     /// Every column this can read, given that a relative reference moves with
-    /// the cell it is evaluated for.
+    /// the cell it is evaluated for. A rectangle is taken to reach every column
+    /// there is: only the rules ask, and a rule spanning a range is rare enough
+    /// that reading the whole sheet is the cheaper answer.
     pub(crate) fn columns(&self, width: u32, out: &mut HashSet<u32>) {
         match self {
-            Formula::Cell { col, col_absolute, .. } => {
-                if *col_absolute {
-                    if *col >= 0 {
-                        out.insert(*col as u32);
-                    }
-                } else {
-                    for step in 0..width as i64 {
-                        if *col + step >= 0 {
-                            out.insert((*col + step) as u32);
-                        }
-                    }
+            Formula::Cell(_, at) => add_columns(at, width, out),
+            Formula::Area(..) => {
+                for col in 0..width {
+                    out.insert(col);
                 }
             }
             Formula::Call(_, args) => {
@@ -132,12 +150,11 @@ impl Formula {
         }
     }
 
-    /// Whether this reads another cell's value, which nothing here can answer
-    /// yet: a formula that only knows where it stands can be worked out, one
-    /// that reaches for a neighbour is left as blank as the file left it.
+    /// Whether this reads another cell's value — what a formula cannot be
+    /// answered without once its references can be followed.
     pub(crate) fn reads_a_cell(&self) -> bool {
         match self {
-            Formula::Cell { .. } => true,
+            Formula::Cell(..) | Formula::Area(..) => true,
             Formula::Call(_, args) => args.iter().any(Formula::reads_a_cell),
             Formula::Negate(inner) => inner.reads_a_cell(),
             Formula::Binary(_, left, right) => left.reads_a_cell() || right.reads_a_cell(),
@@ -150,22 +167,56 @@ impl Formula {
             Formula::Number(value) => Some(Value::Number(*value)),
             Formula::Text(text) => Some(Value::Text(text.clone())),
             Formula::Bool(value) => Some(Value::Bool(*value)),
-            Formula::Cell {
-                row,
-                col,
-                row_absolute,
-                col_absolute,
-            } => {
-                let (here_row, here_col) = context.here();
-                let (anchor_row, anchor_col) = context.anchor();
-                let row = address(*row, *row_absolute, here_row, anchor_row)?;
-                let col = address(*col, *col_absolute, here_col, anchor_col)?;
-                Some(context.value_at(row, col))
+            // An omitted argument is a zero, as it is in Excel.
+            Formula::Missing => Some(Value::Number(0.0)),
+            Formula::Cell(sheet, at) => {
+                let (row, col) = locate(at, context)?;
+                Some(context.value_in(sheet.as_deref(), row, col))
             }
+            // A rectangle is not a value: only a function takes one, and it asks
+            // for the cells rather than for this.
+            Formula::Area(..) => None,
             Formula::Negate(inner) => Some(Value::Number(-number(&inner.eval(context)?)?)),
             Formula::Binary(op, left, right) => binary(*op, left.eval(context)?, right.eval(context)?),
             Formula::Call(name, args) => call(name, args, context),
         }
+    }
+}
+
+fn add_columns(at: &Ref, width: u32, out: &mut HashSet<u32>) {
+    if at.col_absolute {
+        if at.col >= 0 {
+            out.insert(at.col as u32);
+        }
+    } else {
+        for step in 0..width as i64 {
+            if at.col + step >= 0 {
+                out.insert((at.col + step) as u32);
+            }
+        }
+    }
+}
+
+/// Where a reference points, with a relative row and column laid on the anchor.
+fn locate(at: &Ref, context: &dyn Context) -> Option<(u32, u32)> {
+    let (here_row, here_col) = context.here();
+    let (anchor_row, anchor_col) = context.anchor();
+    Some((
+        address(at.row, at.row_absolute, here_row, anchor_row)?,
+        address(at.col, at.col_absolute, here_col, anchor_col)?,
+    ))
+}
+
+/// The values an argument stands for: a rectangle's cells, or the single value
+/// anything else evaluates to.
+fn spread(args: &[Formula], index: usize, context: &dyn Context) -> Option<Vec<Value>> {
+    match args.get(index)? {
+        Formula::Area(sheet, from, to) => {
+            let (r0, c0) = locate(from, context)?;
+            let (r1, c1) = locate(to, context)?;
+            Some(context.area_in(sheet.as_deref(), (r0.min(r1), c0.min(c1)), (r0.max(r1), c0.max(c1))))
+        }
+        other => Some(vec![other.eval(context)?]),
     }
 }
 
@@ -179,6 +230,13 @@ fn address(reference: i64, absolute: bool, at: u32, anchor: u32) -> Option<u32> 
 }
 
 fn binary(op: Op, a: Value, b: Value) -> Option<Value> {
+    // An error on either side is the answer: nothing can be worked out of it.
+    if let Value::Error(code) = &a {
+        return Some(Value::Error(code));
+    }
+    if let Value::Error(code) = &b {
+        return Some(Value::Error(code));
+    }
     match op {
         Op::Add | Op::Subtract | Op::Multiply | Op::Divide | Op::Power => {
             let (a, b) = (number(&a)?, number(&b)?);
@@ -284,9 +342,140 @@ fn call(name: &str, args: &[Formula], context: &dyn Context) -> Option<Value> {
             }
             Some(Value::Text(out))
         }
+        "SUM" | "MAX" | "MIN" => {
+            let numbers = numbers_in(args, context)?;
+            Some(Value::Number(match name {
+                "SUM" => numbers.iter().sum(),
+                // Excel answers 0 for a maximum or minimum over nothing.
+                "MAX" => numbers.iter().copied().fold(0.0, f64::max),
+                _ => numbers.iter().copied().fold(0.0, f64::min),
+            }))
+        }
+        "COUNTA" => {
+            let mut count = 0.0;
+            for index in 0..args.len() {
+                for value in spread(args, index, context)? {
+                    if value != Value::Blank {
+                        count += 1.0;
+                    }
+                }
+            }
+            Some(Value::Number(count))
+        }
+        "COUNTIF" => {
+            let values = spread(args, 0, context)?;
+            let criteria = arg(1)?;
+            let hits = values.iter().filter(|value| criteria_holds(value, &criteria)).count();
+            Some(Value::Number(hits as f64))
+        }
+        "TEXT" => {
+            let value = arg(0)?;
+            let code = text(&arg(1)?);
+            Some(Value::Text(format_as(&value, &code)?))
+        }
+        "INDIRECT" => {
+            // The address is built at run time — `"A"&ROW()-1` is how a
+            // generated sheet walks up its own column — so it is parsed here
+            // rather than with the rest of the formula.
+            match Formula::parse(&text(&arg(0)?))? {
+                Formula::Cell(sheet, at) => {
+                    let (row, col) = locate(&at, context)?;
+                    Some(context.value_in(sheet.as_deref(), row, col))
+                }
+                _ => None,
+            }
+        }
         // A function this cannot answer is one it must not guess at.
         _ => None,
     }
+}
+
+/// The numbers a set of arguments holds: a rectangle contributes the numbers
+/// among its cells, anything else its own value. Text is skipped rather than
+/// refused, which is what Excel does inside SUM and MAX.
+fn numbers_in(args: &[Formula], context: &dyn Context) -> Option<Vec<f64>> {
+    let mut out = Vec::new();
+    for index in 0..args.len() {
+        for value in spread(args, index, context)? {
+            if let Value::Number(number) = value {
+                out.push(number);
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Whether a value answers `COUNTIF`'s criterion: a value, `">=5"`, or text with
+/// Excel's `*` and `?` wildcards in it.
+fn criteria_holds(value: &Value, criteria: &Value) -> bool {
+    let Value::Text(rule) = criteria else {
+        return compare(value, criteria).is_some_and(|order| order.is_eq());
+    };
+    const SIGNS: [&str; 6] = [">=", "<=", "<>", ">", "<", "="];
+    let (test, rest) = SIGNS
+        .iter()
+        .find_map(|sign| rule.strip_prefix(sign).map(|rest| (*sign, rest)))
+        .unwrap_or(("=", rule));
+    let wanted = match number_text(rest) {
+        Some(wanted) => Value::Number(wanted),
+        None => Value::Text(rest.to_owned()),
+    };
+    if test == "=" && matches!(&wanted, Value::Text(text) if text.contains(['*', '?'])) {
+        let Value::Text(have) = value else {
+            return false;
+        };
+        return wildcard(&text_string(&wanted), have);
+    }
+    match compare(value, &wanted) {
+        Some(order) => match test {
+            "=" => order.is_eq(),
+            "<>" => !order.is_eq(),
+            ">" => order.is_gt(),
+            ">=" => order.is_ge(),
+            "<" => order.is_lt(),
+            _ => order.is_le(),
+        },
+        // Across kinds there is no order; only "not equal" can be answered.
+        None => test == "<>",
+    }
+}
+
+fn text_string(value: &Value) -> String {
+    match value {
+        Value::Text(text) => text.clone(),
+        other => text(other),
+    }
+}
+
+/// A number written out in the criterion, or `None` when it is text.
+fn number_text(text: &str) -> Option<f64> {
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.parse().ok()).flatten()
+}
+
+/// Excel's own wildcards: `*` for a run of characters, `?` for one, both
+/// ignoring case.
+fn wildcard(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.to_uppercase().chars().collect();
+    let text: Vec<char> = text.to_uppercase().chars().collect();
+    fn go(pattern: &[char], text: &[char]) -> bool {
+        match pattern.first() {
+            None => text.is_empty(),
+            Some('*') => (0..=text.len()).any(|skip| go(&pattern[1..], &text[skip..])),
+            Some('?') => !text.is_empty() && go(&pattern[1..], &text[1..]),
+            Some(wanted) => text.first() == Some(wanted) && go(&pattern[1..], &text[1..]),
+        }
+    }
+    go(&pattern, &text)
+}
+
+/// `TEXT(value, "yyyy/mm/dd")`: a number rendered through a format code. The
+/// codes are the number formats the rest of the app already reads, so a date is
+/// the same serial turned the same way.
+fn format_as(value: &Value, code: &str) -> Option<String> {
+    let serial = number(value)?;
+    let when = calamine::ExcelDateTime::new(serial, calamine::ExcelDateTimeType::DateTime, false);
+    crate::numfmt::apply(&calamine::Data::DateTime(when), code)
 }
 
 fn truth(value: &Value) -> Option<bool> {
@@ -299,6 +488,8 @@ fn truth(value: &Value) -> Option<bool> {
             "FALSE" => Some(false),
             _ => None,
         },
+        // A value that is not there at all cannot be true or false.
+        Value::Error(_) => None,
     }
 }
 
@@ -336,6 +527,8 @@ fn text(value: &Value) -> String {
         }
         Value::Bool(value) => value.to_string().to_uppercase(),
         Value::Blank => String::new(),
+        // Excel carries the code through a concatenation as its text.
+        Value::Error(code) => (*code).to_owned(),
     }
 }
 
@@ -346,7 +539,7 @@ pub(crate) fn number(value: &Value) -> Option<f64> {
         Value::Blank => Some(0.0),
         // Excel refuses a text-to-number coercion outright where it matters, and
         // inventing one would invent an answer with it.
-        Value::Text(_) => None,
+        Value::Text(_) | Value::Error(_) => None,
     }
 }
 
@@ -358,12 +551,10 @@ pub(crate) fn number(value: &Value) -> Option<f64> {
 enum Token {
     Number(f64),
     Text(String),
-    Cell {
-        row: i64,
-        col: i64,
-        row_absolute: bool,
-        col_absolute: bool,
-    },
+    /// A cell, and the sheet it names when it names one.
+    Cell(Option<String>, Ref),
+    /// A rectangle, `A1:B2`, both corners as written.
+    Area(Option<String>, Ref, Ref),
     Name(String),
     Op(Op),
     Open,
@@ -406,8 +597,20 @@ fn tokenize(source: &str) -> Option<Vec<Token>> {
             out.push(Token::Text(text));
             continue;
         }
-        if let Some((token, next)) = reference(&chars, at) {
-            out.push(token);
+        // A sheet prefix belongs to the reference that follows it, and a
+        // reference followed by `:` takes a second one into a rectangle.
+        let prefix = sheet_name(&chars, at);
+        let start = prefix.as_ref().map_or(at, |(_, next)| *next);
+        if let Some((from, next)) = reference(&chars, start) {
+            let sheet = prefix.map(|(name, _)| name);
+            if chars.get(next) == Some(&':') {
+                if let Some((to, end)) = reference(&chars, next + 1) {
+                    out.push(Token::Area(sheet, from, to));
+                    at = end;
+                    continue;
+                }
+            }
+            out.push(Token::Cell(sheet, from));
             at = next;
             continue;
         }
@@ -483,7 +686,7 @@ fn tokenize(source: &str) -> Option<Vec<Token>> {
 ///
 /// Letters alone are a name — `MOD`, `TRUE` — so a cell is only a cell when a
 /// row number follows it and no `(` does.
-fn reference(chars: &[char], at: usize) -> Option<(Token, usize)> {
+fn reference(chars: &[char], at: usize) -> Option<(Ref, usize)> {
     let mut cursor = at;
     let col_absolute = chars.get(cursor) == Some(&'$');
     if col_absolute {
@@ -516,7 +719,7 @@ fn reference(chars: &[char], at: usize) -> Option<(Token, usize)> {
         return None;
     }
     Some((
-        Token::Cell {
+        Ref {
             // Stored zero based, so an absolute reference is already the sheet's
             // own coordinate and a relative one is already an offset.
             row: row - 1,
@@ -526,6 +729,44 @@ fn reference(chars: &[char], at: usize) -> Option<(Token, usize)> {
         },
         cursor,
     ))
+}
+
+/// A sheet name followed by `!`, as `Sheet1!` or `'A sheet'!` — the doubled
+/// quote inside the quoted form standing for one quote.
+pub(crate) fn sheet_name(chars: &[char], at: usize) -> Option<(String, usize)> {
+    let (name, cursor) = if chars.get(at) == Some(&'\'') {
+        let mut cursor = at + 1;
+        let mut name = String::new();
+        loop {
+            let ch = *chars.get(cursor)?;
+            cursor += 1;
+            if ch == '\'' {
+                if chars.get(cursor) == Some(&'\'') {
+                    name.push('\'');
+                    cursor += 1;
+                    continue;
+                }
+                break;
+            }
+            name.push(ch);
+        }
+        (name, cursor)
+    } else {
+        let mut cursor = at;
+        while chars
+            .get(cursor)
+            .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '.' | '-'))
+        {
+            cursor += 1;
+        }
+        (chars[at..cursor].iter().collect(), cursor)
+    };
+    if name.is_empty() || chars.get(cursor) != Some(&'!') {
+        return None;
+    }
+    // Only a reference can follow the `!`: `A1!=1` is a comparison, not a sheet.
+    let after = *chars.get(cursor + 1)?;
+    (after.is_ascii_alphabetic() || after == '$').then_some((name, cursor + 1))
 }
 
 fn column_index(letters: &str) -> Option<i64> {
@@ -640,17 +881,8 @@ impl Parser {
         match token {
             Token::Number(value) => Some(Formula::Number(value)),
             Token::Text(text) => Some(Formula::Text(text)),
-            Token::Cell {
-                row,
-                col,
-                row_absolute,
-                col_absolute,
-            } => Some(Formula::Cell {
-                row,
-                col,
-                row_absolute,
-                col_absolute,
-            }),
+            Token::Cell(sheet, at) => Some(Formula::Cell(sheet.map(String::into_boxed_str), at)),
+            Token::Area(sheet, from, to) => Some(Formula::Area(sheet.map(String::into_boxed_str), from, to)),
             Token::Name(name) if name == "TRUE" => Some(Formula::Bool(true)),
             Token::Name(name) if name == "FALSE" => Some(Formula::Bool(false)),
             Token::Name(name) => {
@@ -658,7 +890,13 @@ impl Parser {
                 let mut args = Vec::new();
                 if !self.eat(&Token::Close) {
                     loop {
-                        args.push(self.expression()?);
+                        // An argument may be left out: `IF(a,b,)` has three,
+                        // the last of them empty.
+                        if matches!(self.peek(), Some(Token::Comma) | Some(Token::Close)) {
+                            args.push(Formula::Missing);
+                        } else {
+                            args.push(self.expression()?);
+                        }
                         if self.eat(&Token::Comma) {
                             continue;
                         }

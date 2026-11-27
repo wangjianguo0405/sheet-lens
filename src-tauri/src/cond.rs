@@ -1544,8 +1544,18 @@ impl crate::formula::Context for Context<'_> {
     fn anchor(&self) -> (u32, u32) {
         (self.anchor_row, self.anchor_col)
     }
-    fn value_at(&self, row: u32, col: u32) -> Value {
+    fn value_in(&self, sheet: Option<&str>, row: u32, col: u32) -> Value {
+        // A rule is asked about one sheet and cannot reach another; a reference
+        // that names one is as unreadable as a missing cell.
+        if sheet.is_some() {
+            return Value::Blank;
+        }
         self.values.get(&(row, col)).cloned().unwrap_or(Value::Blank)
+    }
+    fn area_in(&self, _sheet: Option<&str>, _from: (u32, u32), _to: (u32, u32)) -> Vec<Value> {
+        // Only the columns a rule can reach are fetched, and a rule spanning a
+        // rectangle has none of them here.
+        Vec::new()
     }
 }
 
@@ -1571,6 +1581,8 @@ impl ValueKey {
             }),
             Value::Text(text) => ValueKey::Text(text.to_uppercase()),
             Value::Bool(flag) => ValueKey::Bool(*flag),
+            // A value that is not there has no key either, like a blank.
+            Value::Error(_) => return None,
         })
     }
 }
@@ -2135,8 +2147,9 @@ mod tests {
     }
 
     /// A rule this cannot evaluate must not be guessed at: a colour scale is a
-    /// drawing, and a formula that reads another sheet has an answer here that
-    /// is not the right one.
+    /// drawing, and a whole-column reference is not something the value sweep
+    /// reads. A rule that names another sheet is read now — it parses — but a
+    /// rule can only see its own sheet, so it answers nothing and never fires.
     #[test]
     fn drops_rules_it_cannot_read() {
         let xml = r#"<worksheet><conditionalFormatting sqref="A1:A5">
@@ -2144,7 +2157,9 @@ mod tests {
             <cfRule type="expression" dxfId="0" priority="2"><formula>Sheet2!A1&gt;0</formula></cfRule>
             <cfRule type="expression" dxfId="7" priority="3"><formula>COUNTIF($A:$A,$A1)&gt;1</formula></cfRule>
         </conditionalFormatting></worksheet>"#;
-        assert!(rules(xml, Palette::EMPTY).is_empty());
+        // The colour scale and the whole-column rule are dropped; the sheet one
+        // stays, and cannot answer.
+        assert_eq!(rules(xml, Palette::EMPTY).len(), 1);
     }
 
     #[test]

@@ -99,8 +99,10 @@ fn get_cells(
     cols: u32,
     store: State<'_, Shared>,
 ) -> Result<Vec<Vec<Cell>>, String> {
-    let books = store.0.lock().unwrap();
-    let book = books.get(&path).ok_or_else(|| format!("workbook not open: {path}"))?;
+    let mut books = store.0.lock().unwrap();
+    let book = books
+        .get_mut(&path)
+        .ok_or_else(|| format!("workbook not open: {path}"))?;
     book.cells(&sheet, row, col, rows, cols)
 }
 
