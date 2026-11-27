@@ -6101,18 +6101,37 @@ export function CanvasGrid({
       select(target.row, target.col);
     };
 
+    /** A row the grid leaves out: the file's own `hidden`, or a filter's. */
+    const offScreenRow = (row: number) =>
+      row >= 0 && row < sheetRows && (hiddenRows.has(row) || displayOfRow(row) < 0);
+    const stillShownRow = (from: number, dir: 1 | -1) => {
+      let row = from + dir;
+      while (offScreenRow(row)) row += dir;
+      return row < 0 ? from : row;
+    };
+    const stillShownCol = (from: number, dir: 1 | -1) => {
+      let col = from + dir;
+      while (col >= 0 && col < sheetCols && hiddenCols.has(col)) col += dir;
+      return col < 0 ? from : col;
+    };
+
     switch (event.key) {
+      // Excel steps over a row or column that is not on screen — one the file
+      // hid, or one a filter took out — and lands on the next that is. With
+      // nothing shown in that direction the cursor stays put rather than
+      // moving into a row the grid never draws, which read as the arrow key
+      // doing nothing at all.
       case "ArrowUp":
-        moveTo(step.row - 1, step.col);
+        moveTo(stillShownRow(step.row, -1), step.col);
         break;
       case "ArrowDown":
-        moveTo(step.row + 1, step.col);
+        moveTo(stillShownRow(step.row, 1), step.col);
         break;
       case "ArrowLeft":
-        moveTo(step.row, step.col - 1);
+        moveTo(step.row, stillShownCol(step.col, -1));
         break;
       case "ArrowRight":
-        moveTo(step.row, step.col + 1);
+        moveTo(step.row, stillShownCol(step.col, 1));
         break;
       case "PageUp":
         moveTo(step.row - page, step.col);
