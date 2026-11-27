@@ -3782,6 +3782,14 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
                     slot.push_str(&content);
                 }
             }
+            // `&` between two references arrives as its own event: without this
+            // the formula is stored with the concatenations missing, and what
+            // is left cannot be parsed at all.
+            Ok(Event::GeneralRef(reference)) if in_cell_formula => {
+                if let (Some(slot), Some(ch)) = (cell_formula.as_mut(), entity_text(&reference)) {
+                    slot.push(ch);
+                }
+            }
             Ok(Event::Text(text)) if in_cell_value => {
                 if let (Some((row, col)), Ok(value)) = (rich_cell, text.xml_content(XmlVersion::default())) {
                     if let Some(Some(runs)) = value.trim().parse::<usize>().ok().and_then(|index| rich.get(index)) {
@@ -4448,6 +4456,29 @@ mod tests {
             "a shared formula states its text on the run's first cell"
         );
         assert_eq!(layout.formulas.get(&(9, 4)), None, "an inline string is a value");
+    }
+
+    /// The entities inside a formula arrive as events of their own, and a
+    /// formula that loses one is a formula nothing can parse — `&` is how a
+    /// generated sheet builds an address out of a cell.
+    #[test]
+    fn keeps_the_entities_inside_a_formula() {
+        let styles = parse_styles("<styleSheet/>", Palette::EMPTY);
+        let sheet = br#"<worksheet><sheetData>
+            <row r="10">
+                <c r="B10"><f>INDIRECT("'"&amp;J10&amp;"'!U4")</f><v/></c>
+                <c r="C10"><f>IF(A1&lt;&gt;B1,"&lt;","&gt;")</f><v/></c>
+            </row>
+        </sheetData></worksheet>"#;
+        let layout = parse_sheet(&sheet[..], &styles, &[]).expect("layout");
+        assert_eq!(
+            layout.formulas.get(&(9, 1)).map(String::as_str),
+            Some(r#"INDIRECT("'"&J10&"'!U4")"#)
+        );
+        assert_eq!(
+            layout.formulas.get(&(9, 2)).map(String::as_str),
+            Some(r#"IF(A1<>B1,"<",">")"#)
+        );
     }
 
     /// Excel writes an autofilter over its header row and opens it over the
@@ -5298,9 +5329,10 @@ mod tests {
         let Ok(path) = std::env::var("SHEETLENS_XLSX") else {
             return;
         };
-        let book = crate::excel::load(&path).expect("open");
+        let mut book = crate::excel::load(&path).expect("open");
         let mut cache = Cache::default();
-        for sheet in &book.info.sheets {
+        let sheets = book.info.sheets.clone();
+        for sheet in &sheets {
             let Ok(layout) = read_cached(&mut cache, &path, &sheet.name) else {
                 continue;
             };
