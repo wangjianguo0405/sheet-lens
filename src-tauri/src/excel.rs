@@ -6,6 +6,7 @@ use calamine::{open_workbook_auto, Data, ExcelDateTime, Range, Reader};
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 
+use crate::formula::{At, Formula, Value};
 use crate::layout::{self, SheetLayout};
 use crate::numfmt;
 
@@ -704,136 +705,19 @@ fn write_float(f: f64, out: &mut String) {
 /// Works out a formula that depends on nothing but the cell it sits in.
 ///
 /// `ROW()` and `COLUMN()` are how a generated sheet numbers its lines, and
-/// arithmetic around them is what those formulas are made of. Anything else —
-/// a reference, a name, a function not listed — is left unanswered: a blank
-/// cell is what the file itself carries, while a number Excel never computed
-/// would be the viewer's own invention.
+/// arithmetic around them is what those formulas are made of; `crate::formula`
+/// answers those, and anything else it can do without looking at another cell.
+/// A formula that reads one is left unanswered for now — a blank cell is what
+/// the file itself carries, while a number the viewer worked out for itself
+/// would be its own invention.
 fn formula_number(text: &str, row: u32, col: u32) -> Option<f64> {
-    let mut parser = FormulaParser {
-        bytes: text.as_bytes(),
-        at: 0,
-        row: f64::from(row) + 1.0,
-        col: f64::from(col) + 1.0,
-    };
-    let value = parser.expression()?;
-    parser.skip_space();
-    (parser.at == parser.bytes.len() && value.is_finite()).then_some(value)
-}
-
-struct FormulaParser<'a> {
-    bytes: &'a [u8],
-    at: usize,
-    /// What `ROW()` and `COLUMN()` answer, which is where the cell is.
-    row: f64,
-    col: f64,
-}
-
-impl FormulaParser<'_> {
-    fn skip_space(&mut self) {
-        while matches!(self.bytes.get(self.at), Some(b' ')) {
-            self.at += 1;
-        }
+    let formula = Formula::parse(text)?;
+    if formula.reads_a_cell() {
+        return None;
     }
-
-    fn eat(&mut self, wanted: u8) -> bool {
-        self.skip_space();
-        if self.bytes.get(self.at) == Some(&wanted) {
-            self.at += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn expression(&mut self) -> Option<f64> {
-        let mut value = self.term()?;
-        loop {
-            if self.eat(b'+') {
-                value += self.term()?;
-            } else if self.eat(b'-') {
-                value -= self.term()?;
-            } else {
-                return Some(value);
-            }
-        }
-    }
-
-    fn term(&mut self) -> Option<f64> {
-        let mut value = self.power()?;
-        loop {
-            if self.eat(b'*') {
-                value *= self.power()?;
-            } else if self.eat(b'/') {
-                let divisor = self.power()?;
-                if divisor == 0.0 {
-                    return None;
-                }
-                value /= divisor;
-            } else {
-                return Some(value);
-            }
-        }
-    }
-
-    /// Right associative, the way Excel reads `2^3^2`.
-    fn power(&mut self) -> Option<f64> {
-        let value = self.unary()?;
-        if self.eat(b'^') {
-            return Some(value.powf(self.power()?));
-        }
-        Some(value)
-    }
-
-    fn unary(&mut self) -> Option<f64> {
-        if self.eat(b'-') {
-            return Some(-self.unary()?);
-        }
-        if self.eat(b'+') {
-            return self.unary();
-        }
-        self.primary()
-    }
-
-    fn primary(&mut self) -> Option<f64> {
-        self.skip_space();
-        match self.bytes.get(self.at)? {
-            b'(' => {
-                self.at += 1;
-                let value = self.expression()?;
-                self.eat(b')').then_some(value)
-            }
-            b'0'..=b'9' | b'.' => self.number(),
-            b'A'..=b'Z' | b'a'..=b'z' => self.call(),
-            _ => None,
-        }
-    }
-
-    fn number(&mut self) -> Option<f64> {
-        let start = self.at;
-        while matches!(self.bytes.get(self.at), Some(b'0'..=b'9' | b'.')) {
-            self.at += 1;
-        }
-        std::str::from_utf8(&self.bytes[start..self.at]).ok()?.parse().ok()
-    }
-
-    /// `ROW()` or `COLUMN()`, with the parentheses empty: a reference inside
-    /// them names another cell, which this parser does not follow.
-    fn call(&mut self) -> Option<f64> {
-        let start = self.at;
-        while matches!(self.bytes.get(self.at), Some(byte) if byte.is_ascii_alphabetic()) {
-            self.at += 1;
-        }
-        let name = std::str::from_utf8(&self.bytes[start..self.at])
-            .ok()?
-            .to_ascii_uppercase();
-        if !self.eat(b'(') || !self.eat(b')') {
-            return None;
-        }
-        match name.as_str() {
-            "ROW" => Some(self.row),
-            "COLUMN" => Some(self.col),
-            _ => None,
-        }
+    match formula.eval(&At { row, col })? {
+        Value::Number(value) if value.is_finite() => Some(value),
+        _ => None,
     }
 }
 
@@ -1467,12 +1351,16 @@ mod tests {
         assert_eq!(formula_number("(1+2)*3", 0, 0), Some(9.0));
         assert_eq!(formula_number("2^3^2", 0, 0), Some(512.0));
         assert_eq!(formula_number("-ROW()+1", 4, 0), Some(-4.0));
+        // A function the evaluator knows, used without reaching for a neighbour,
+        // is answered too — this one could not be before.
+        assert_eq!(formula_number("IF(ROW()>1,1,2)", 0, 0), Some(2.0));
+        assert_eq!(formula_number("MOD(ROW(),43)", 47, 0), Some(5.0));
         // Anything that reads another cell, or a function this does not know,
         // stays unanswered rather than guessed at.
         assert_eq!(formula_number("ROW(A5)", 0, 0), None);
         assert_eq!(formula_number("A1+1", 0, 0), None);
         assert_eq!(formula_number("SUM(A1:A3)", 0, 0), None);
-        assert_eq!(formula_number("IF(ROW()>1,1,2)", 0, 0), None);
+        assert_eq!(formula_number("NORMINV(1,2,3)", 0, 0), None);
         assert_eq!(formula_number("ROW())", 0, 0), None);
         assert_eq!(formula_number("1/0", 0, 0), None);
     }

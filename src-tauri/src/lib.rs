@@ -2,6 +2,7 @@ mod cond;
 mod drawing;
 mod excel;
 mod fonts;
+mod formula;
 mod layout;
 mod numfmt;
 mod update;
