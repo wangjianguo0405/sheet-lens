@@ -12,6 +12,17 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.36] - 2026-11-27
+
+### Added
+
+- A workbook's row in the file tree has a Refresh of its own, so a file that appeared beside the one being read can be brought in without folding the folder to reach its menu; the filtered view refreshes by running the search again
+
+### Fixed
+
+- Holding a sheet tab against either end of the strip keeps it scrolling, so a sheet can be dragged past the tabs that are on screen
+- Arrow keys did nothing on a filtered sheet: the cursor stepped onto a row the filter hides, where it cannot be seen. It now lands on the next row or column that is shown
+
 ## [1.0.35] - 2026-11-26
 
 ### Fixed
