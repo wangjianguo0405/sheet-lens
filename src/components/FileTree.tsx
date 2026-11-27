@@ -218,6 +218,10 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<FoundFile[]>([]);
   const [busy, setBusy] = useState(false);
+  /** Bumped by the filtered view's refresh: the same query, asked again. */
+  const [searchTick, setSearchTick] = useState(0);
+  /** The query the results on screen answer, so a refresh can keep the folds. */
+  const searched = useRef("");
   /** The result folders folded away; every one is open until pointed at. */
   const [folded, setFolded] = useState<Set<string>>(new Set());
   /** The names the roots are shown under, given by hand and keyed by folderKey. */
@@ -346,6 +350,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
   useEffect(() => {
     const text = query.trim();
     if (!text) {
+      searched.current = "";
       setResults([]);
       setBusy(false);
       return;
@@ -353,8 +358,12 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     let cancelled = false;
     setBusy(true);
     // A new query finds its own branches; a folder folded for the old one would
-    // hide matches the reader has not seen yet.
-    setFolded(new Set());
+    // hide matches the reader has not seen yet. Asking the same one again keeps
+    // them: a refresh is not a new search.
+    if (searched.current !== text) {
+      searched.current = text;
+      setFolded(new Set());
+    }
 
     const timer = window.setTimeout(() => {
       searchTree(roots, text)
@@ -373,7 +382,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [roots, query]);
+  }, [roots, query, searchTick]);
 
   /**
    * Brings the workbook on screen back into the tree: every folder above it is
@@ -522,6 +531,14 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
     }
     void load(path, true);
   };
+
+  /**
+   * The filtered view's own refresh: the same query, swept again. The rows it
+   * lists come from the search rather than from a folder's listing, so reading
+   * one again would move nothing — what a workbook added since needs is another
+   * sweep.
+   */
+  const refreshSearch = () => setSearchTick((tick) => tick + 1);
 
   /** Stores what is open, with the folders a sweep has just opened folded in. */
   const persistOpen = useCallback((added: Iterable<string>) => {
@@ -701,7 +718,11 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
    * added beside it needs: reaching the folder's own menu would mean folding it
    * first, and losing the place in the listing.
    */
-  const workbookMenu = (path: string, collapseFolder: () => void) => (
+  const workbookMenu = (
+    path: string,
+    collapseFolder: () => void,
+    refresh: () => void = () => refreshFolder(parentOf(path)),
+  ) => (
     <ContextMenuContent className="min-w-40">
       <ContextMenuItem
         icon={<AppWindow className="size-3" />}
@@ -709,10 +730,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       >
         {t("tree.openWithDefault")}
       </ContextMenuItem>
-      <ContextMenuItem
-        icon={<RotateCw className="size-3" />}
-        onSelect={() => refreshFolder(parentOf(path))}
-      >
+      <ContextMenuItem icon={<RotateCw className="size-3" />} onSelect={refresh}>
         {t("tree.refresh")}
       </ContextMenuItem>
       <ContextMenuSeparator />
@@ -754,10 +772,11 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
 
   /**
    * The menu a folder's row offers: the folder in the file manager, the way to
-   * open or fold what is under it, then what to copy. A folder the search drew
-   * has no listing to read again, so its menu leaves the refresh out.
+   * read it again, then what to open, fold and copy. `refresh` is what reading
+   * it again means for this row: the folder's own listing in the tree, the
+   * sweep in the filtered view.
    */
-  const folderMenu = (path: string, fold: FoldActions, canRefresh = true) => (
+  const folderMenu = (path: string, fold: FoldActions, refresh?: () => void) => (
     <ContextMenuContent className="min-w-40">
       <ContextMenuItem
         icon={<FolderOpen className="size-3" />}
@@ -765,11 +784,8 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
       >
         {t("tree.openInExplorer")}
       </ContextMenuItem>
-      {canRefresh && (
-        <ContextMenuItem
-          icon={<RotateCw className="size-3" />}
-          onSelect={() => refreshFolder(path)}
-        >
+      {refresh && (
+        <ContextMenuItem icon={<RotateCw className="size-3" />} onSelect={refresh}>
           {t("tree.refresh")}
         </ContextMenuItem>
       )}
@@ -927,7 +943,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
         ) : (
           <ContextMenu>
             <ContextMenuTrigger asChild>{head}</ContextMenuTrigger>
-            {folderMenu(path, fold)}
+            {folderMenu(path, fold, () => refreshFolder(path))}
           </ContextMenu>
         )}
         {/* A renamed root keeps the real name and where it lives in sight, one
@@ -1024,7 +1040,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               <span className="whitespace-nowrap">{found.name}</span>
             </button>
           </ContextMenuTrigger>
-          {workbookMenu(found.path, collapseFolder)}
+          {workbookMenu(found.path, collapseFolder, refreshSearch)}
         </ContextMenu>
       </li>
     );
@@ -1059,7 +1075,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               </button>
             </div>
           </ContextMenuTrigger>
-          {folderMenu(key, searchFold(key, node, expanded), false)}
+          {folderMenu(key, searchFold(key, node, expanded), refreshSearch)}
         </ContextMenu>
         {expanded && (
           <ul>
@@ -1103,7 +1119,7 @@ export function FileTree({ currentPath, onOpenFile }: FileTreeProps) {
               </button>
             </div>
           </ContextMenuTrigger>
-          {folderMenu(root, searchFold(root, node, expanded), false)}
+          {folderMenu(root, searchFold(root, node, expanded), refreshSearch)}
         </ContextMenu>
         {expanded && (
           <ul>
