@@ -146,11 +146,13 @@ export function SheetTabs({
   const moreRight = useRef<HTMLButtonElement>(null);
   /** Where the tabs are scrolled to, which decides what the arrows can do. */
   const [bar, setBar] = useState({ left: 0, view: 0, total: 0, more: 0 });
-  /** The tab a press is holding, where it started, and the gap it is over now. */
+  /** The tab a press is holding, where it started, where the pointer is now,
+   * and the gap it is over. */
   const drag = useRef<{
     name: string;
     from: number;
     x: number;
+    last: number;
     moved: boolean;
     gap: number | null;
   } | null>(null);
@@ -373,15 +375,55 @@ export function SheetTabs({
    * which are the gaps it is choosing between.
    */
   useEffect(() => {
+    /** How close to an end the pointer has to be for the strip to keep moving,
+     * and how far it moves each frame with the pointer held right against it. */
+    const EDGE = 32;
+    const STEP = 16;
+    let frame = 0;
+
+    /**
+     * Scrolls the strip while the pointer is held against either end, so a sheet
+     * can be dragged past the tabs that are on screen — without it the drag
+     * stops at the last tab in sight, and the ones scrolled away cannot be
+     * reached at all. The gap under the pointer is re-read as the tabs move, so
+     * the marker lands where the sheet would actually drop.
+     */
+    const tick = () => {
+      frame = 0;
+      const held = drag.current;
+      const el = strip.current;
+      if (!held || !el || !held.moved) return;
+      const box = el.getBoundingClientRect();
+      const reach = (side: "left" | "right") => {
+        const slack = side === "left" ? held.last - box.left : box.right - held.last;
+        return slack < EDGE ? Math.min(1, (EDGE - slack) / EDGE) : 0;
+      };
+      const push = reach("right") - reach("left");
+      if (push !== 0) {
+        const before = el.scrollLeft;
+        el.scrollLeft = before + Math.sign(push) * Math.ceil(Math.abs(push) * STEP);
+        if (el.scrollLeft !== before) {
+          const gap = gapAt(held.last);
+          if (gap) {
+            held.gap = gap.gap;
+            setDrop(gap);
+          }
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+
     const onMove = (event: PointerEvent) => {
       const held = drag.current;
       if (!held) return;
+      held.last = event.clientX;
       // A press is not a drag until it has travelled. A tab that took the
       // dragged look for every click would flicker on the way to somewhere.
       if (!held.moved) {
         if (Math.abs(event.clientX - held.x) < DRAG_SLOP) return;
         held.moved = true;
         setDragged(held.name);
+        if (!frame) frame = requestAnimationFrame(tick);
       }
       const gap = gapAt(event.clientX);
       if (!gap) return;
@@ -393,6 +435,8 @@ export function SheetTabs({
       drag.current = null;
       setDragged(null);
       setDrop(null);
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
       if (!held || !held.moved || held.gap === null) return;
       // A gap counts the tabs as they stand, the dragged one included, so a
       // drop to its own right lands one place short of it.
@@ -403,6 +447,7 @@ export function SheetTabs({
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
     return () => {
+      if (frame) cancelAnimationFrame(frame);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -687,6 +732,7 @@ export function SheetTabs({
                     name: sheet.name,
                     from: index,
                     x: event.clientX,
+                    last: event.clientX,
                     moved: false,
                     gap: null,
                   };
