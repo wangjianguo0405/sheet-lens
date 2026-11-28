@@ -2147,9 +2147,10 @@ mod tests {
     }
 
     /// A rule this cannot evaluate must not be guessed at: a colour scale is a
-    /// drawing, and a whole-column reference is not something the value sweep
-    /// reads. A rule that names another sheet is read now — it parses — but a
-    /// rule can only see its own sheet, so it answers nothing and never fires.
+    /// drawing, and is dropped. A rule that names another sheet is read now —
+    /// it parses — but a rule can only see its own sheet, so it answers
+    /// nothing and never fires. A whole-column reference parses too since the
+    /// formula grew one; what it reads is up to the context's used range.
     #[test]
     fn drops_rules_it_cannot_read() {
         let xml = r#"<worksheet><conditionalFormatting sqref="A1:A5">
@@ -2157,9 +2158,9 @@ mod tests {
             <cfRule type="expression" dxfId="0" priority="2"><formula>Sheet2!A1&gt;0</formula></cfRule>
             <cfRule type="expression" dxfId="7" priority="3"><formula>COUNTIF($A:$A,$A1)&gt;1</formula></cfRule>
         </conditionalFormatting></worksheet>"#;
-        // The colour scale and the whole-column rule are dropped; the sheet one
-        // stays, and cannot answer.
-        assert_eq!(rules(xml, Palette::EMPTY).len(), 1);
+        // Only the colour scale goes; the other two stay, and answer what
+        // their context can see.
+        assert_eq!(rules(xml, Palette::EMPTY).len(), 2);
     }
 
     #[test]

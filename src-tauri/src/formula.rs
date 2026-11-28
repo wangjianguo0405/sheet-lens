@@ -50,6 +50,12 @@ pub(crate) trait Context {
     fn filename(&self, _sheet: Option<&str>) -> Option<String> {
         None
     }
+    /// How many rows and columns a sheet uses, when the call site can tell.
+    /// A whole-column reference is clamped to it: the cells past the end are
+    /// empty, and walking a million of them answers what walking none does.
+    fn used_bounds(&self, _sheet: Option<&str>) -> Option<(u32, u32)> {
+        None
+    }
 }
 
 /// A cell with nothing to read beside it: the formula is evaluated for where it
@@ -372,6 +378,90 @@ fn call(name: &str, args: &[Formula], context: &dyn Context) -> Option<Value> {
             }
             Some(context.value_in(sheet, row as u32, col as u32))
         }
+        // `VLOOKUP` reads one column of a rectangle by finding the lookup
+        // value in its first one. The correlation sheets ask only for exact
+        // matches; approximate matching is modelled as the last row that is
+        // not greater than the value, which is what Excel answers on the
+        // sorted columns it is meant for.
+        "VLOOKUP" => {
+            let wanted = arg(0)?;
+            let (sheet, from, to) = match args.get(1)? {
+                Formula::Area(sheet, from, to) => {
+                    let (Some(from), Some(to)) = (locate(from, context), locate(to, context)) else {
+                        return Some(Value::Error("#REF!"));
+                    };
+                    (sheet.as_deref(), from, to)
+                }
+                Formula::Cell(sheet, at) => {
+                    let Some(at) = locate(at, context) else {
+                        return Some(Value::Error("#REF!"));
+                    };
+                    (sheet.as_deref(), at, at)
+                }
+                _ => return Some(Value::Error("#VALUE!")),
+            };
+            let (r0, r1) = (from.0.min(to.0), from.0.max(to.0));
+            let (c0, c1) = (from.1.min(to.1), from.1.max(to.1));
+            // A whole-column table reaches as far as the sheet does, not as
+            // far as the reference says.
+            let bounds = context.used_bounds(sheet);
+            let (r1, c1) = match bounds {
+                Some((rows, cols)) => (r1.min(rows.saturating_sub(1)), c1.min(cols.saturating_sub(1))),
+                None => (r1, c1),
+            };
+            // With no sheet to measure, a whole-column table would be a walk
+            // over a million empty cells; leave it unanswered instead.
+            if bounds.is_none() && u64::from(r1 - r0 + 1) > 200_000 {
+                return None;
+            }
+            if r0 > r1 || c0 > c1 {
+                return Some(Value::Error("#N/A"));
+            }
+            let index = count(2)?.trunc();
+            let columns = f64::from(c1 - c0 + 1);
+            if index < 1.0 {
+                return Some(Value::Error("#VALUE!"));
+            }
+            if index > columns {
+                return Some(Value::Error("#REF!"));
+            }
+            let exact = if args.len() > 3 { !truth(&arg(3)?)? } else { false };
+            let target = c0 + index as u32 - 1;
+            let mut best: Option<u32> = None;
+            for row in r0..=r1 {
+                let key = context.value_in(sheet, row, c0);
+                if exact {
+                    if lookup_matches(&key, &wanted) {
+                        return Some(context.value_in(sheet, row, target));
+                    }
+                } else if compare(&key, &wanted).is_some_and(|order| !order.is_gt()) {
+                    best = Some(row);
+                }
+            }
+            Some(match best {
+                Some(row) => context.value_in(sheet, row, target),
+                None => Value::Error("#N/A"),
+            })
+        }
+        // `IFERROR` answers its value, or the second argument when that value
+        // is an error. A function this cannot answer leaves nothing to catch.
+        "IFERROR" => match args.first().and_then(|value| value.eval(context)) {
+            Some(Value::Error(_)) => arg(1),
+            Some(value) => Some(value),
+            None => None,
+        },
+        // `CHAR` spells one character by its code — the documents use it to put
+        // a line break inside a concatenation.
+        "CHAR" => {
+            let code = count(0)?.trunc();
+            if !(1.0..=255.0).contains(&code) {
+                return Some(Value::Error("#VALUE!"));
+            }
+            Some(match char::from_u32(code as u32) {
+                Some(ch) => Value::Text(ch.to_string()),
+                None => Value::Error("#VALUE!"),
+            })
+        }
         "MOD" => {
             let (a, b) = (count(0)?, count(1)?);
             (b != 0.0).then(|| Value::Number(a - b * (a / b).floor()))
@@ -459,12 +549,19 @@ fn call(name: &str, args: &[Formula], context: &dyn Context) -> Option<Value> {
         }
         "SUM" | "MAX" | "MIN" => {
             let numbers = numbers_in(args, context)?;
-            Some(Value::Number(match name {
-                "SUM" => numbers.iter().sum(),
-                // Excel answers 0 for a maximum or minimum over nothing.
-                "MAX" => numbers.iter().copied().fold(0.0, f64::max),
-                _ => numbers.iter().copied().fold(0.0, f64::min),
-            }))
+            // Excel answers zero for a maximum or minimum over nothing, but a
+            // session of positive numbers must not be folded from zero or the
+            // smallest would always be that zero.
+            let value = if numbers.is_empty() {
+                0.0
+            } else {
+                match name {
+                    "SUM" => numbers.iter().sum(),
+                    "MAX" => numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                    _ => numbers.iter().copied().fold(f64::INFINITY, f64::min),
+                }
+            };
+            Some(Value::Number(value))
         }
         "COUNTA" => {
             let mut count = 0.0;
@@ -582,6 +679,17 @@ fn wildcard(pattern: &str, text: &str) -> bool {
         }
     }
     go(&pattern, &text)
+}
+
+/// Exact `VLOOKUP` matching: text against text ignores case and honors the
+/// same wildcards `COUNTIF` does; everything else compares by value.
+fn lookup_matches(key: &Value, wanted: &Value) -> bool {
+    if let (Value::Text(key), Value::Text(wanted)) = (key, wanted) {
+        if wanted.contains(['*', '?']) {
+            return wildcard(wanted, key);
+        }
+    }
+    compare(key, wanted).is_some_and(|order| order.is_eq())
 }
 
 /// Whether `SEARCH`'s pattern matches at the start of this text: `*` for a run
@@ -786,6 +894,13 @@ fn tokenize(source: &str) -> Option<Vec<Token>> {
             at = next;
             continue;
         }
+        // `C:C` names whole columns: the rectangle is as tall as the sheet,
+        // and a caller that reads it clamps it to what the sheet uses.
+        if let Some((from, to, end)) = column_area(&chars, start) {
+            out.push(Token::Area(prefix.map(|(name, _)| name), from, to));
+            at = end;
+            continue;
+        }
         if ch.is_ascii_digit() || ch == '.' {
             let start = at;
             while chars.get(at).is_some_and(|ch| ch.is_ascii_digit() || *ch == '.') {
@@ -852,6 +967,57 @@ fn tokenize(source: &str) -> Option<Vec<Token>> {
         }
     }
     Some(out)
+}
+
+/// A run of whole columns as a rectangle — `$C:$C`, `C:D` — reaching the
+/// sheet's full height. Whoever reads the cells clamps it to the used range.
+fn column_area(chars: &[char], at: usize) -> Option<(Ref, Ref, usize)> {
+    let (from, next) = column_only(chars, at)?;
+    if chars.get(next) != Some(&':') {
+        return None;
+    }
+    let (mut to, end) = column_only(chars, next + 1)?;
+    // The second corner is the sheet's last row, not its first.
+    to.row = SHEET_ROWS - 1;
+    Some((from, to, end))
+}
+
+/// One column name as a reference spells it without a row: `C`, `$C`.
+fn column_only(chars: &[char], at: usize) -> Option<(Ref, usize)> {
+    let mut cursor = at;
+    let col_absolute = chars.get(cursor) == Some(&'$');
+    if col_absolute {
+        cursor += 1;
+    }
+    let letters = cursor;
+    while chars.get(cursor).is_some_and(|ch| ch.is_ascii_alphabetic()) {
+        cursor += 1;
+        if cursor - letters > 3 {
+            return None;
+        }
+    }
+    if cursor == letters {
+        return None;
+    }
+    // A digit or a `$` after the letters makes it a cell, which `reference`
+    // has already read.
+    if chars.get(cursor).is_some_and(|ch| ch.is_ascii_digit() || *ch == '$') {
+        return None;
+    }
+    let name: String = chars[letters..cursor].iter().collect();
+    let col = column_index(&name)?;
+    if col >= SHEET_COLS {
+        return None;
+    }
+    Some((
+        Ref {
+            row: 0,
+            col,
+            row_absolute: true,
+            col_absolute,
+        },
+        cursor,
+    ))
 }
 
 /// Reads `$G8`, `G$8`, `$G$8` or `G8` at `at`, and says where it ended.
@@ -1111,6 +1277,26 @@ mod tests {
         assert_eq!(binary(Op::Greater, string("a"), number(1.0)), None);
     }
 
+    #[test]
+    fn minimums_and_maximums_do_not_start_from_zero() {
+        assert_eq!(answer("MIN(5,3)"), Some(number(3.0)));
+        assert_eq!(answer("MIN(5)"), Some(number(5.0)));
+        assert_eq!(answer("MAX(-1,-2)"), Some(number(-1.0)));
+        // Over nothing Excel answers zero.
+        assert_eq!(answer("MIN(A1:A2)"), Some(number(0.0)));
+    }
+
+    /// Measured from Excel (`probe-char.ps1`).
+    #[test]
+    fn reads_characters_by_code_the_way_excel_does() {
+        assert_eq!(answer("CHAR(10)"), Some(string("\n")));
+        assert_eq!(answer("CHAR(65)"), Some(string("A")));
+        assert_eq!(answer("CHAR(13)"), Some(string("\r")));
+        assert_eq!(answer("CHAR(10.9)"), Some(string("\n")));
+        assert_eq!(answer("CHAR(0)"), Some(Value::Error("#VALUE!")));
+        assert_eq!(answer("CHAR(256)"), Some(Value::Error("#VALUE!")));
+    }
+
     /// What a formula answers with nothing around it to read.
     fn answer(source: &str) -> Option<Value> {
         Formula::parse(source)?.eval(&At { row: 0, col: 0 })
@@ -1213,8 +1399,26 @@ mod tests {
                 .map(|(_, _, _, value)| value.clone())
                 .unwrap_or(Value::Blank)
         }
-        fn area_in(&self, _sheet: Option<&str>, _from: (u32, u32), _to: (u32, u32)) -> Vec<Value> {
-            Vec::new()
+        fn area_in(&self, sheet: Option<&str>, from: (u32, u32), to: (u32, u32)) -> Vec<Value> {
+            let to = match self.used_bounds(sheet) {
+                Some((rows, cols)) => (to.0.min(rows.saturating_sub(1)), to.1.min(cols.saturating_sub(1))),
+                None => to,
+            };
+            if from.0 > to.0 || from.1 > to.1 {
+                return Vec::new();
+            }
+            let mut out = Vec::new();
+            for row in from.0..=to.0 {
+                for col in from.1..=to.1 {
+                    out.push(self.value_in(sheet, row, col));
+                }
+            }
+            out
+        }
+        fn used_bounds(&self, _sheet: Option<&str>) -> Option<(u32, u32)> {
+            let rows = self.cells.iter().map(|(_, row, _, _)| *row + 1).max().unwrap_or(0);
+            let cols = self.cells.iter().map(|(_, _, col, _)| *col + 1).max().unwrap_or(0);
+            Some((rows, cols))
         }
     }
 
@@ -1257,5 +1461,58 @@ mod tests {
         );
         assert_eq!(eval("TYPE(OFFSET(B9,0,0))"), Some(number(1.0)));
         assert_eq!(eval("TYPE(A1:A2)"), Some(number(16.0)), "a range is refused");
+    }
+
+    /// Measured from Excel (`probe-vlookup.ps1`): A1:B3 is a/b/c against
+    /// 10/20/30, D1:E3 is 1/2/3 against 100/200/300.
+    #[test]
+    fn looks_up_and_catches_errors_the_way_excel_does() {
+        let grid = Grid {
+            here: (0, 0),
+            cells: vec![
+                (None, 0, 0, string("a")),
+                (None, 0, 1, number(10.0)),
+                (None, 1, 0, string("b")),
+                (None, 1, 1, number(20.0)),
+                (None, 2, 0, string("c")),
+                (None, 2, 1, number(30.0)),
+                (None, 0, 3, number(1.0)),
+                (None, 0, 4, number(100.0)),
+                (None, 1, 3, number(2.0)),
+                (None, 1, 4, number(200.0)),
+                (None, 2, 3, number(3.0)),
+                (None, 2, 4, number(300.0)),
+            ],
+        };
+        let eval = |source: &str| Formula::parse(source).and_then(|formula| formula.eval(&grid));
+
+        assert_eq!(eval(r#"VLOOKUP("b",$A$1:$B$3,2,FALSE)"#), Some(number(20.0)));
+        assert_eq!(eval(r#"VLOOKUP("B",$A$1:$B$3,2,FALSE)"#), Some(number(20.0)));
+        assert_eq!(eval(r#"VLOOKUP("z",$A$1:$B$3,2,FALSE)"#), Some(Value::Error("#N/A")));
+        assert_eq!(eval(r#"VLOOKUP("b",$A$1:$B$3,0,FALSE)"#), Some(Value::Error("#VALUE!")));
+        assert_eq!(eval(r#"VLOOKUP("b",$A$1:$B$3,3,FALSE)"#), Some(Value::Error("#REF!")));
+        assert_eq!(eval(r#"VLOOKUP("b*",$A$1:$B$3,2,FALSE)"#), Some(number(20.0)));
+        // A whole-column table reaches only as far as the sheet uses.
+        assert_eq!(eval(r#"VLOOKUP("b",$A:$B,2,FALSE)"#), Some(number(20.0)));
+        assert_eq!(eval(r#"VLOOKUP("a"&"",$A$1:$B$3,2,FALSE)"#), Some(number(10.0)));
+        assert_eq!(eval(r#"VLOOKUP(2,$D$1:$E$3,2,FALSE)"#), Some(number(200.0)));
+        assert_eq!(
+            eval(r#"VLOOKUP("b",$A$1:$B$3,2.9,FALSE)"#),
+            Some(number(20.0)),
+            "a fractional column is cut to its whole part"
+        );
+        // Sorted columns answer the last value at or below the key.
+        assert_eq!(eval(r#"VLOOKUP("bb",$A$1:$B$3,2,TRUE)"#), Some(number(20.0)));
+        assert_eq!(eval(r#"VLOOKUP("b",$A$1:$B$3,2)"#), Some(number(20.0)));
+
+        assert_eq!(
+            eval(r#"IFERROR(VLOOKUP("z",$A$1:$B$3,2,FALSE),"none")"#),
+            Some(string("none"))
+        );
+        assert_eq!(eval(r#"IFERROR(1/0,"x")"#), Some(string("x")));
+        assert_eq!(eval(r#"IFERROR("ok","x")"#), Some(string("ok")));
+
+        // A whole column in a range function reaches the used cells only.
+        assert_eq!(eval("MAX($E:$E)"), Some(number(300.0)));
     }
 }

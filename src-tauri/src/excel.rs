@@ -889,12 +889,21 @@ impl crate::formula::Context for CellValues<'_> {
         self.read(&name, row, col)
     }
     fn area_in(&self, sheet: Option<&str>, from: (u32, u32), to: (u32, u32)) -> Vec<Value> {
-        let rows = to.0.saturating_sub(from.0) + 1;
-        let cols = to.1.saturating_sub(from.1) + 1;
+        let name = sheet.unwrap_or(&self.sheet).to_owned();
+        // A whole-column reference reaches the sheet's full height; the cells
+        // past what it uses are empty, and reading them answers nothing.
+        let to = match self.used_bounds(Some(&name)) {
+            Some((rows, cols)) => (to.0.min(rows.saturating_sub(1)), to.1.min(cols.saturating_sub(1))),
+            None => to,
+        };
+        if from.0 > to.0 || from.1 > to.1 {
+            return Vec::new();
+        }
+        let rows = to.0 - from.0 + 1;
+        let cols = to.1 - from.1 + 1;
         if u64::from(rows) * u64::from(cols) > FORMULA_AREA {
             return Vec::new();
         }
-        let name = sheet.unwrap_or(&self.sheet).to_owned();
         let mut out = Vec::with_capacity((rows * cols) as usize);
         for row in from.0..=to.0 {
             for col in from.1..=to.1 {
@@ -902,6 +911,24 @@ impl crate::formula::Context for CellValues<'_> {
             }
         }
         out
+    }
+    fn used_bounds(&self, sheet: Option<&str>) -> Option<(u32, u32)> {
+        let name = sheet.unwrap_or(&self.sheet);
+        let found = self.book.sheets.get(name)?;
+        let (height, width) = found.range.get_size();
+        let layout = self.book.layouts.get(name);
+        Some((
+            found
+                .origin
+                .0
+                .saturating_add(height as u32)
+                .max(layout.map_or(0, |found| found.rows)),
+            found
+                .origin
+                .1
+                .saturating_add(width as u32)
+                .max(layout.map_or(0, |found| found.cols)),
+        ))
     }
     fn filename(&self, sheet: Option<&str>) -> Option<String> {
         let path = Path::new(&self.book.info.path);
