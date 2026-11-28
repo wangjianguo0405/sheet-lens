@@ -11,6 +11,10 @@ use std::collections::HashSet;
 
 use chrono::{Datelike, NaiveDate};
 
+/// Excel's sheet bounds, which `OFFSET` has to stay inside.
+const SHEET_ROWS: i64 = 1_048_576;
+const SHEET_COLS: i64 = 16_384;
+
 /// The value a cell holds, as far as a comparison is concerned. A cell the sheet
 /// never mentions is `Blank` rather than missing: that is what an empty cell is
 /// to a formula.
@@ -321,6 +325,53 @@ fn call(name: &str, args: &[Formula], context: &dyn Context) -> Option<Value> {
         "ISNUMBER" => Some(Value::Bool(matches!(arg(0)?, Value::Number(_)))),
         "ISTEXT" => Some(Value::Bool(matches!(arg(0)?, Value::Text(_)))),
         "ISERROR" => Some(Value::Bool(matches!(arg(0)?, Value::Error(_)))),
+        // `TYPE` answers what kind of value it was given. A blank cell counts
+        // as a number, and a range is refused as Excel refuses one.
+        "TYPE" => {
+            if matches!(args.first(), Some(Formula::Area(..))) {
+                return Some(Value::Number(16.0));
+            }
+            Some(Value::Number(match arg(0)? {
+                Value::Number(_) | Value::Blank => 1.0,
+                Value::Text(_) => 2.0,
+                Value::Bool(_) => 4.0,
+                Value::Error(_) => 16.0,
+            }))
+        }
+        // `OFFSET` answers a reference rather than a value: the cell it names
+        // is read here, so arithmetic sees what is in it and `TYPE` sees its
+        // kind. A rectangle (height or width beyond one) has no value to carry
+        // here and is left unanswered.
+        "OFFSET" => {
+            let (sheet, base) = match args.first()? {
+                Formula::Cell(sheet, reference) => {
+                    let Some(base) = locate(reference, context) else {
+                        return Some(Value::Error("#REF!"));
+                    };
+                    (sheet.as_deref(), base)
+                }
+                Formula::Area(..) => return None,
+                _ => return Some(Value::Error("#VALUE!")),
+            };
+            let down = count(1)?.trunc() as i64;
+            let right = count(2)?.trunc() as i64;
+            if args.len() > 3 {
+                let height = count(3)?.trunc() as i64;
+                let width = if args.len() > 4 { count(4)?.trunc() as i64 } else { 1 };
+                if height < 1 || width < 1 {
+                    return Some(Value::Error("#REF!"));
+                }
+                if height != 1 || width != 1 {
+                    return None;
+                }
+            }
+            let row = i64::from(base.0) + down;
+            let col = i64::from(base.1) + right;
+            if !(0..SHEET_ROWS).contains(&row) || !(0..SHEET_COLS).contains(&col) {
+                return Some(Value::Error("#REF!"));
+            }
+            Some(context.value_in(sheet, row as u32, col as u32))
+        }
         "MOD" => {
             let (a, b) = (count(0)?, count(1)?);
             (b != 0.0).then(|| Value::Number(a - b * (a / b).floor()))
@@ -1139,5 +1190,72 @@ mod tests {
         assert_eq!(formula.eval(&Named), Some(string(r"C:\work\[book.xlsx]Sheet1")));
         let formula = Formula::parse(r#"FIND("]",CELL("filename",A1))"#).expect("parse");
         assert_eq!(formula.eval(&Named), Some(number(19.0)));
+    }
+
+    /// A handful of cells a formula can read, on the formula's own sheet or on
+    /// one it names.
+    struct Grid {
+        here: (u32, u32),
+        cells: Vec<(Option<&'static str>, u32, u32, Value)>,
+    }
+
+    impl Context for Grid {
+        fn here(&self) -> (u32, u32) {
+            self.here
+        }
+        fn anchor(&self) -> (u32, u32) {
+            self.here
+        }
+        fn value_in(&self, sheet: Option<&str>, row: u32, col: u32) -> Value {
+            self.cells
+                .iter()
+                .find(|(at, r, c, _)| *at == sheet && *r == row && *c == col)
+                .map(|(_, _, _, value)| value.clone())
+                .unwrap_or(Value::Blank)
+        }
+        fn area_in(&self, _sheet: Option<&str>, _from: (u32, u32), _to: (u32, u32)) -> Vec<Value> {
+            Vec::new()
+        }
+    }
+
+    /// Measured from Excel (`probe-offset.ps1`): A1=10, A2=20, B1="x", the
+    /// formula sits at B9 with 5 in B8, and Sheet2!A2 holds 6.
+    #[test]
+    fn offsets_and_types_the_way_excel_does() {
+        let grid = Grid {
+            here: (8, 1),
+            cells: vec![
+                (None, 0, 0, number(10.0)),
+                (None, 1, 0, number(20.0)),
+                (None, 0, 1, string("x")),
+                (None, 7, 1, number(5.0)),
+                (Some("Sheet2"), 1, 0, number(6.0)),
+            ],
+        };
+        let eval = |source: &str| Formula::parse(source).and_then(|formula| formula.eval(&grid));
+
+        assert_eq!(eval("TYPE(1)"), Some(number(1.0)));
+        assert_eq!(eval("TYPE(\"5\")"), Some(number(2.0)));
+        assert_eq!(eval("TYPE(TRUE)"), Some(number(4.0)));
+        assert_eq!(eval("TYPE(1/0)"), Some(number(16.0)));
+        assert_eq!(eval("TYPE($A$3)"), Some(number(1.0)), "an empty cell is a number");
+
+        assert_eq!(eval("OFFSET($A$1,1,0)"), Some(number(20.0)));
+        assert_eq!(
+            eval("OFFSET($A$1,1.9,0)"),
+            Some(number(20.0)),
+            "a fractional offset is cut to its whole part"
+        );
+        assert_eq!(eval("OFFSET($A$1,0,1)"), Some(string("x")));
+        assert_eq!(eval("OFFSET(Sheet2!$A$1,1,0)"), Some(number(6.0)));
+        assert_eq!(eval("OFFSET($A$1,-1,0)"), Some(Value::Error("#REF!")));
+        assert_eq!(eval("TYPE(OFFSET($A$1,-1,0))"), Some(number(16.0)));
+        // The corpus's counting pattern: the cell above, plus one.
+        assert_eq!(
+            eval("IF(TYPE(OFFSET(B9,-1,0))=1,OFFSET(B9,-1,0)+1,0)"),
+            Some(number(6.0))
+        );
+        assert_eq!(eval("TYPE(OFFSET(B9,0,0))"), Some(number(1.0)));
+        assert_eq!(eval("TYPE(A1:A2)"), Some(number(16.0)), "a range is refused");
     }
 }
