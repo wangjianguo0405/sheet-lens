@@ -2198,7 +2198,7 @@ mod tests {
         assert_eq!(eval("-1+2*3", 0, 0, &[]), Some(Value::Number(5.0)));
         assert_eq!(eval("2^3^2", 0, 0, &[]), Some(Value::Number(512.0)));
         // An unknown function is undecidable rather than false.
-        assert_eq!(eval("SEARCH(\"a\",$A1)", 3, 0, &[]), None);
+        assert_eq!(eval("RAND()", 3, 0, &[]), None);
     }
 
     #[test]

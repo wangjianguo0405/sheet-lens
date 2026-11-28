@@ -903,6 +903,13 @@ impl crate::formula::Context for CellValues<'_> {
         }
         out
     }
+    fn filename(&self, sheet: Option<&str>) -> Option<String> {
+        let path = Path::new(&self.book.info.path);
+        let file = path.file_name().map(|name| name.to_string_lossy().into_owned())?;
+        let mut shown = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        shown.push(format!("[{file}]{}", sheet.unwrap_or(&self.sheet)));
+        Some(shown.to_string_lossy().into_owned())
+    }
 }
 
 /// A stored value as a formula sees it. A date in a formula is its serial
@@ -914,8 +921,42 @@ fn held(value: &Data) -> Value {
         Data::String(text) => Value::Text(text.clone()),
         Data::Bool(flag) => Value::Bool(*flag),
         Data::DateTime(when) => Value::Number(when.as_f64()),
+        // An error the file cached is still an error to a formula: `ISERROR`
+        // has to see it as one.
+        Data::Error(error) => Value::Error(error_code(error)),
         _ => Value::Blank,
     }
+}
+
+fn error_code(error: &calamine::CellErrorType) -> &'static str {
+    use calamine::CellErrorType;
+    match error {
+        CellErrorType::Div0 => "#DIV/0!",
+        CellErrorType::NA => "#N/A",
+        CellErrorType::Name => "#NAME?",
+        CellErrorType::Null => "#NULL!",
+        CellErrorType::Num => "#NUM!",
+        CellErrorType::Ref => "#REF!",
+        CellErrorType::Value => "#VALUE!",
+        CellErrorType::GettingData => "#DATA!",
+    }
+}
+
+/// A formula's answer as the cell that carries it shows it: through the cell's
+/// own date format when it has one, the same rendering a cached date goes
+/// through, and otherwise as the plain value.
+fn worked_cell(value: &Value, format: Option<&str>) -> Cell {
+    let mut cell = cell_at(None);
+    if let (Value::Number(number), Some(code)) = (value, format) {
+        let when = ExcelDateTime::new(*number, calamine::ExcelDateTimeType::DateTime, false);
+        if let Some(text) = numfmt::apply(&Data::DateTime(when), code) {
+            cell.kind = "date";
+            cell.text = text;
+            return cell;
+        }
+    }
+    write_formula(value, &mut cell);
+    cell
 }
 
 /// A formula's answer, as the cell that carries it shows it.

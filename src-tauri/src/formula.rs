@@ -9,6 +9,8 @@
 
 use std::collections::HashSet;
 
+use chrono::{Datelike, NaiveDate};
+
 /// The value a cell holds, as far as a comparison is concerned. A cell the sheet
 /// never mentions is `Blank` rather than missing: that is what an empty cell is
 /// to a formula.
@@ -38,6 +40,12 @@ pub(crate) trait Context {
     /// A rectangle of cells, row by row, both corners included. `from` and `to`
     /// are already in sheet order, whichever way the formula wrote them.
     fn area_in(&self, sheet: Option<&str>, from: (u32, u32), to: (u32, u32)) -> Vec<Value>;
+    /// What `CELL("filename")` reports — the workbook's own path and the sheet
+    /// named by the reference, or this formula's sheet when it names none.
+    /// A call site with no workbook behind it has no name to give.
+    fn filename(&self, _sheet: Option<&str>) -> Option<String> {
+        None
+    }
 }
 
 /// A cell with nothing to read beside it: the formula is evaluated for where it
@@ -240,6 +248,12 @@ fn binary(op: Op, a: Value, b: Value) -> Option<Value> {
     match op {
         Op::Add | Op::Subtract | Op::Multiply | Op::Divide | Op::Power => {
             let (a, b) = (number(&a)?, number(&b)?);
+            if op == Op::Divide && b == 0.0 {
+                return Some(Value::Error("#DIV/0!"));
+            }
+            if op == Op::Power && a == 0.0 && b < 0.0 {
+                return Some(Value::Error("#DIV/0!"));
+            }
             let value = match op {
                 Op::Add => a + b,
                 Op::Subtract => a - b,
@@ -247,7 +261,13 @@ fn binary(op: Op, a: Value, b: Value) -> Option<Value> {
                 Op::Divide => a / b,
                 _ => a.powf(b),
             };
-            value.is_finite().then_some(Value::Number(value))
+            // A result that is not a number is Excel's error, and `ISERROR`
+            // has to see it as one.
+            if value.is_finite() {
+                Some(Value::Number(value))
+            } else {
+                Some(Value::Error("#NUM!"))
+            }
         }
         Op::Concat => Some(Value::Text(format!("{}{}", text(&a), text(&b)))),
         Op::Equal => Some(Value::Bool(compare(&a, &b).is_some_and(|order| order.is_eq()))),
@@ -300,6 +320,7 @@ fn call(name: &str, args: &[Formula], context: &dyn Context) -> Option<Value> {
         "ISBLANK" => Some(Value::Bool(arg(0)? == Value::Blank)),
         "ISNUMBER" => Some(Value::Bool(matches!(arg(0)?, Value::Number(_)))),
         "ISTEXT" => Some(Value::Bool(matches!(arg(0)?, Value::Text(_)))),
+        "ISERROR" => Some(Value::Bool(matches!(arg(0)?, Value::Error(_)))),
         "MOD" => {
             let (a, b) = (count(0)?, count(1)?);
             (b != 0.0).then(|| Value::Number(a - b * (a / b).floor()))
@@ -334,6 +355,49 @@ fn call(name: &str, args: &[Formula], context: &dyn Context) -> Option<Value> {
             let start = count(1)?.max(1.0) as usize - 1;
             let want = count(2)?.max(0.0) as usize;
             Some(Value::Text(value.chars().skip(start).take(want).collect()))
+        }
+        // `SEARCH` looks for text without caring about case and with Excel's
+        // wildcards; `FIND` matches the text exactly. Both answer a 1-based
+        // position, and `#VALUE!` when there is none.
+        "SEARCH" | "FIND" => {
+            let needle: Vec<char> = text(&arg(0)?).chars().collect();
+            let haystack: Vec<char> = text(&arg(1)?).chars().collect();
+            let start = if args.len() > 2 { count(2)? } else { 1.0 };
+            let start = start.trunc();
+            if !start.is_finite() || start < 1.0 {
+                return Some(Value::Error("#VALUE!"));
+            }
+            let from = start as usize - 1;
+            let found = (from..=haystack.len()).find(|&at| {
+                if name == "SEARCH" {
+                    search_at(&needle, &haystack[at..])
+                } else {
+                    haystack[at..].starts_with(&needle)
+                }
+            });
+            Some(match found {
+                Some(at) => Value::Number(at as f64 + 1.0),
+                None => Value::Error("#VALUE!"),
+            })
+        }
+        "DATE" => {
+            let serial = date_serial(count(0)?.trunc(), count(1)?.trunc(), count(2)?.trunc());
+            Some(match serial {
+                Some(serial) => Value::Number(serial),
+                None => Value::Error("#NUM!"),
+            })
+        }
+        // The documents use `CELL` only to learn where the workbook lives, so
+        // the other info types stay unanswered rather than guessed at.
+        "CELL" => {
+            if !text(&arg(0)?).eq_ignore_ascii_case("filename") {
+                return None;
+            }
+            let sheet = match args.get(1) {
+                Some(Formula::Cell(sheet, _)) => sheet.as_deref(),
+                _ => None,
+            };
+            Some(Value::Text(context.filename(sheet)?))
         }
         "CONCATENATE" => {
             let mut out = String::new();
@@ -467,6 +531,63 @@ fn wildcard(pattern: &str, text: &str) -> bool {
         }
     }
     go(&pattern, &text)
+}
+
+/// Whether `SEARCH`'s pattern matches at the start of this text: `*` for a run
+/// of characters, `?` for one, `~` for the next character itself, and no case
+/// to any of it. The rest of the text may be anything — the caller is looking
+/// for a position, not for the whole string to match.
+fn search_at(pattern: &[char], text: &[char]) -> bool {
+    match pattern.first() {
+        None => true,
+        Some('~') => match pattern.get(1) {
+            Some(literal) => {
+                text.first().is_some_and(|ch| ch.eq_ignore_ascii_case(literal)) && search_at(&pattern[2..], &text[1..])
+            }
+            None => text.first().is_some_and(|ch| *ch == '~') && search_at(&pattern[1..], &text[1..]),
+        },
+        Some('*') => (0..=text.len()).any(|skip| search_at(&pattern[1..], &text[skip..])),
+        Some('?') => !text.is_empty() && search_at(&pattern[1..], &text[1..]),
+        Some(wanted) => {
+            text.first().is_some_and(|ch| ch.eq_ignore_ascii_case(wanted)) && search_at(&pattern[1..], &text[1..])
+        }
+    }
+}
+
+/// The serial number Excel gives a date, measured against the 1900 system it
+/// ships: month and day run past their own bounds into the next month or year,
+/// years below 1900 count inside it, and everything before 1900-03-01 is one
+/// serial lower than the calendar says, because Excel keeps a 1900-02-29 that
+/// never happened.
+fn date_serial(year: f64, month: f64, day: f64) -> Option<f64> {
+    if !year.is_finite() || !month.is_finite() || !day.is_finite() {
+        return None;
+    }
+    let mut year = year as i64;
+    if (0..1900).contains(&year) {
+        year += 1900;
+    }
+    let month = month as i64;
+    let day = day as i64;
+    if !(1900..=9999).contains(&year) || !(-1_200_000..=1_200_000).contains(&month) {
+        return None;
+    }
+    if !(-4_000_000..=4_000_000).contains(&day) {
+        return None;
+    }
+    let months = year.checked_mul(12)?.checked_add(month - 1)?;
+    let first = NaiveDate::from_ymd_opt(
+        i32::try_from(months.div_euclid(12)).ok()?,
+        months.rem_euclid(12) as u32 + 1,
+        1,
+    )?;
+    let date = first.checked_add_signed(chrono::TimeDelta::days(day - 1))?;
+    let epoch = NaiveDate::from_ymd_opt(1899, 12, 30)?;
+    let mut serial = i64::from(date.num_days_from_ce()) - i64::from(epoch.num_days_from_ce());
+    if date < NaiveDate::from_ymd_opt(1900, 3, 1)? {
+        serial -= 1;
+    }
+    (serial >= 1).then_some(serial as f64)
 }
 
 /// `TEXT(value, "yyyy/mm/dd")`: a number rendered through a format code. The
@@ -937,5 +1058,86 @@ mod tests {
         assert_eq!(binary(Op::NotEqual, Value::Blank, string("x")), Some(Value::Bool(true)));
         // Undecidable is not false: an ordering across kinds cannot be answered.
         assert_eq!(binary(Op::Greater, string("a"), number(1.0)), None);
+    }
+
+    /// What a formula answers with nothing around it to read.
+    fn answer(source: &str) -> Option<Value> {
+        Formula::parse(source)?.eval(&At { row: 0, col: 0 })
+    }
+
+    /// These answers were measured from Excel: `probe-functions.ps1` writes the
+    /// formulas into a workbook, recalculates it and reads back `.Value2`.
+    #[test]
+    fn searches_and_finds_the_way_excel_does() {
+        assert_eq!(answer(r#"SEARCH("b","abc")"#), Some(number(2.0)));
+        assert_eq!(answer(r#"SEARCH("B","abc")"#), Some(number(2.0)));
+        assert_eq!(answer(r#"SEARCH("z","abc")"#), Some(Value::Error("#VALUE!")));
+        assert_eq!(answer(r#"SEARCH("","abc")"#), Some(number(1.0)));
+        assert_eq!(answer(r#"SEARCH("","abc",2)"#), Some(number(2.0)));
+        assert_eq!(answer(r#"SEARCH("?b","abc")"#), Some(number(1.0)));
+        assert_eq!(answer(r#"SEARCH("~?","a?b")"#), Some(number(2.0)));
+        assert_eq!(answer(r#"SEARCH("*","abc")"#), Some(number(1.0)));
+        assert_eq!(answer(r#"SEARCH("b","abc",4)"#), Some(Value::Error("#VALUE!")));
+        assert_eq!(answer(r#"SEARCH("*b","abc")"#), Some(number(1.0)));
+        assert_eq!(answer(r#"SEARCH("b*","abc")"#), Some(number(2.0)));
+        // A fractional start counts from its whole part.
+        assert_eq!(answer(r#"SEARCH("b","abc",2.9)"#), Some(number(2.0)));
+
+        assert_eq!(answer(r#"FIND("b","abc")"#), Some(number(2.0)));
+        assert_eq!(answer(r#"FIND("B","abc")"#), Some(Value::Error("#VALUE!")));
+        assert_eq!(answer(r#"FIND("b","abc",4)"#), Some(Value::Error("#VALUE!")));
+        assert_eq!(answer(r#"FIND("","abc")"#), Some(number(1.0)));
+        // An empty needle may start one past the end.
+        assert_eq!(answer(r#"FIND("","abc",4)"#), Some(number(4.0)));
+        assert_eq!(answer(r#"FIND("b","abc",2.9)"#), Some(number(2.0)));
+    }
+
+    #[test]
+    fn recognises_an_error_as_an_error() {
+        assert_eq!(answer(r#"ISERROR(SEARCH("z","abc"))"#), Some(Value::Bool(true)));
+        assert_eq!(answer(r#"ISERROR("abc")"#), Some(Value::Bool(false)));
+        assert_eq!(answer("ISERROR(1/0)"), Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn dates_become_the_serials_excel_shows() {
+        let date = |y: f64, m: f64, d: f64| answer(&format!("DATE({y},{m},{d})"));
+        assert_eq!(date(2026.0, 11.0, 25.0), Some(number(46351.0)));
+        assert_eq!(date(2020.0, 13.0, 1.0), Some(number(44197.0)));
+        assert_eq!(date(2020.0, 1.0, 0.0), Some(number(43830.0)));
+        assert_eq!(date(119.0, 1.0, 1.0), Some(number(43466.0)));
+        assert_eq!(date(1900.0, 1.0, 1.0), Some(number(1.0)));
+        assert_eq!(date(1900.0, 2.0, 28.0), Some(number(59.0)));
+        assert_eq!(date(1900.0, 3.0, 1.0), Some(number(61.0)));
+        assert_eq!(date(1970.0, 1.0, 1.0), Some(number(25569.0)));
+        // The arguments are cut to whole numbers, as Excel cuts them.
+        assert_eq!(date(2020.9, 1.9, 1.9), Some(number(43831.0)));
+    }
+
+    #[test]
+    fn cell_filename_reports_the_workbook_and_sheet() {
+        // Excel writes `C:\dir\[book.xlsx]Sheet1`, measured on a saved file.
+        struct Named;
+        impl Context for Named {
+            fn here(&self) -> (u32, u32) {
+                (0, 0)
+            }
+            fn anchor(&self) -> (u32, u32) {
+                (0, 0)
+            }
+            fn value_in(&self, _sheet: Option<&str>, _row: u32, _col: u32) -> Value {
+                Value::Blank
+            }
+            fn area_in(&self, _sheet: Option<&str>, _from: (u32, u32), _to: (u32, u32)) -> Vec<Value> {
+                Vec::new()
+            }
+            fn filename(&self, sheet: Option<&str>) -> Option<String> {
+                Some(format!(r"C:\work\[book.xlsx]{}", sheet.unwrap_or("Sheet1")))
+            }
+        }
+        let formula = Formula::parse(r#"CELL("filename",A1)"#).expect("parse");
+        assert_eq!(formula.eval(&Named), Some(string(r"C:\work\[book.xlsx]Sheet1")));
+        let formula = Formula::parse(r#"FIND("]",CELL("filename",A1))"#).expect("parse");
+        assert_eq!(formula.eval(&Named), Some(number(19.0)));
     }
 }
