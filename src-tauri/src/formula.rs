@@ -462,6 +462,79 @@ fn call(name: &str, args: &[Formula], context: &dyn Context) -> Option<Value> {
                 None => Value::Error("#VALUE!"),
             })
         }
+        // `COUNTIFS` counts the rows where every range's own criterion holds.
+        // The ranges have to be the same size; Excel refuses the call when
+        // they are not.
+        "COUNTIFS" => {
+            if args.is_empty() || args.len() % 2 != 0 {
+                return None;
+            }
+            let mut columns: Vec<Vec<Value>> = Vec::new();
+            let mut criteria: Vec<Value> = Vec::new();
+            for pair in args.chunks(2) {
+                let index = columns.len() * 2;
+                columns.push(spread(args, index, context)?);
+                criteria.push(pair[1].eval(context)?);
+            }
+            if columns.iter().any(|column| column.len() != columns[0].len()) {
+                return Some(Value::Error("#VALUE!"));
+            }
+            let hits = (0..columns[0].len())
+                .filter(|&row| {
+                    columns
+                        .iter()
+                        .zip(&criteria)
+                        .all(|(column, rule)| criteria_holds(&column[row], rule))
+                })
+                .count();
+            Some(Value::Number(hits as f64))
+        }
+        // `COUNTBLANK` counts what shows nothing: an empty cell, or text that
+        // spells nothing.
+        "COUNTBLANK" => {
+            let blanks = spread(args, 0, context)?
+                .iter()
+                .filter(|value| match value {
+                    Value::Blank => true,
+                    Value::Text(text) => text.is_empty(),
+                    _ => false,
+                })
+                .count();
+            Some(Value::Number(blanks as f64))
+        }
+        // `SUBSTITUTE` replaces text exactly: every occurrence, or the one at
+        // the given position counting from one.
+        "SUBSTITUTE" => {
+            let source = text(&arg(0)?);
+            let old = text(&arg(1)?);
+            let new = text(&arg(2)?);
+            if old.is_empty() {
+                return Some(Value::Text(source));
+            }
+            if args.len() > 3 {
+                let wanted = count(3)?.trunc();
+                if wanted < 1.0 {
+                    return Some(Value::Error("#VALUE!"));
+                }
+                let mut out = String::new();
+                let mut rest = source.as_str();
+                let mut seen = 1i64;
+                while let Some(at) = rest.find(&old) {
+                    if seen == wanted as i64 {
+                        out.push_str(&rest[..at]);
+                        out.push_str(&new);
+                        out.push_str(&rest[at + old.len()..]);
+                        return Some(Value::Text(out));
+                    }
+                    out.push_str(&rest[..at + old.len()]);
+                    rest = &rest[at + old.len()..];
+                    seen += 1;
+                }
+                Some(Value::Text(source))
+            } else {
+                Some(Value::Text(source.replace(&old, &new)))
+            }
+        }
         "MOD" => {
             let (a, b) = (count(0)?, count(1)?);
             (b != 0.0).then(|| Value::Number(a - b * (a / b).floor()))
@@ -619,19 +692,44 @@ fn numbers_in(args: &[Formula], context: &dyn Context) -> Option<Vec<f64>> {
 
 /// Whether a value answers `COUNTIF`'s criterion: a value, `">=5"`, or text with
 /// Excel's `*` and `?` wildcards in it.
+///
+/// COUNTIF does not count blanks the way a formula compares them: a numeric
+/// criterion skips an empty cell even though `A1=0` is true for one, while
+/// `""` counts it and an explicit `"="` does not. A criterion cell that is
+/// itself empty is read as zero.
 fn criteria_holds(value: &Value, criteria: &Value) -> bool {
+    let zero = Value::Number(0.0);
+    let criteria = match criteria {
+        Value::Blank => &zero,
+        other => other,
+    };
     let Value::Text(rule) = criteria else {
-        return compare(value, criteria).is_some_and(|order| order.is_eq());
+        return match (value, criteria) {
+            (Value::Blank, Value::Number(_)) => false,
+            _ => compare(value, criteria).is_some_and(|order| order.is_eq()),
+        };
     };
     const SIGNS: [&str; 6] = [">=", "<=", "<>", ">", "<", "="];
-    let (test, rest) = SIGNS
+    let found = SIGNS
         .iter()
-        .find_map(|sign| rule.strip_prefix(sign).map(|rest| (*sign, rest)))
-        .unwrap_or(("=", rule));
+        .find_map(|sign| rule.strip_prefix(sign).map(|rest| (*sign, rest)));
+    let (test, rest) = found.unwrap_or(("=", rule.as_str()));
     let wanted = match number_text(rest) {
         Some(wanted) => Value::Number(wanted),
         None => Value::Text(rest.to_owned()),
     };
+    if matches!(value, Value::Blank) {
+        return match (&wanted, test) {
+            // An order or an equality against a number leaves an empty cell
+            // out; "not equal" is the one criterion that counts it.
+            (Value::Number(_), "<>") => true,
+            (Value::Number(_), _) => false,
+            // `""` counts empty cells; an explicit `"="` counts only text
+            // that spells nothing.
+            (Value::Text(text), "=") if text.is_empty() => found.is_none(),
+            _ => compare(value, &wanted).is_some_and(|order| matches_order(test, order)),
+        };
+    }
     if test == "=" && matches!(&wanted, Value::Text(text) if text.contains(['*', '?'])) {
         let Value::Text(have) = value else {
             return false;
@@ -639,16 +737,20 @@ fn criteria_holds(value: &Value, criteria: &Value) -> bool {
         return wildcard(&text_string(&wanted), have);
     }
     match compare(value, &wanted) {
-        Some(order) => match test {
-            "=" => order.is_eq(),
-            "<>" => !order.is_eq(),
-            ">" => order.is_gt(),
-            ">=" => order.is_ge(),
-            "<" => order.is_lt(),
-            _ => order.is_le(),
-        },
+        Some(order) => matches_order(test, order),
         // Across kinds there is no order; only "not equal" can be answered.
         None => test == "<>",
+    }
+}
+
+fn matches_order(test: &str, order: std::cmp::Ordering) -> bool {
+    match test {
+        "=" => order.is_eq(),
+        "<>" => !order.is_eq(),
+        ">" => order.is_gt(),
+        ">=" => order.is_ge(),
+        "<" => order.is_lt(),
+        _ => order.is_le(),
     }
 }
 
@@ -1514,5 +1616,72 @@ mod tests {
 
         // A whole column in a range function reaches the used cells only.
         assert_eq!(eval("MAX($E:$E)"), Some(number(300.0)));
+    }
+
+    /// Measured from Excel (`probe-countifs.ps1`): A is 1/2/3, B is x/y/x,
+    /// C is a/b/a, D1 is empty, D2 is 1, D3 is `=""`.
+    #[test]
+    fn counts_conditionally_and_substitutes_the_way_excel_does() {
+        let grid = Grid {
+            here: (0, 0),
+            cells: vec![
+                (None, 0, 0, number(1.0)),
+                (None, 1, 0, number(2.0)),
+                (None, 2, 0, number(3.0)),
+                (None, 0, 1, string("x")),
+                (None, 1, 1, string("y")),
+                (None, 2, 1, string("x")),
+                (None, 0, 2, string("a")),
+                (None, 1, 2, string("b")),
+                (None, 2, 2, string("a")),
+                (None, 1, 3, number(1.0)),
+                (None, 2, 3, string("")),
+            ],
+        };
+        let eval = |source: &str| Formula::parse(source).and_then(|formula| formula.eval(&grid));
+
+        assert_eq!(eval(r#"COUNTIFS($A$1:$A$3,">1")"#), Some(number(2.0)));
+        assert_eq!(eval(r#"COUNTIFS($A$1:$A$3,">1",$B$1:$B$3,"x")"#), Some(number(1.0)));
+        assert_eq!(eval(r#"COUNTIFS($A$1:$A$3,">=2",$B$1:$B$3,"<>y")"#), Some(number(1.0)));
+        assert_eq!(eval(r#"COUNTIFS($B$1:$B$3,"x*")"#), Some(number(2.0)));
+        assert_eq!(
+            eval(r#"COUNTIFS($A$1:$A$2,">0",$B$1:$B$3,"x")"#),
+            Some(Value::Error("#VALUE!"))
+        );
+        assert_eq!(eval(r#"COUNTIFS($A:$A,">0")"#), Some(number(3.0)));
+        assert_eq!(eval(r#"COUNTIFS($B:$B,"x",$C:$C,"a")"#), Some(number(2.0)));
+        assert_eq!(
+            eval(r#"COUNTIFS($A$1:$A$3,">1",$B$1:$B$3,"x",$C$1:$C$3,"a")"#),
+            Some(number(1.0))
+        );
+        assert_eq!(eval(r#"COUNTIFS($A$1:$A$3,">1",$B$1:$B$3,"")"#), Some(number(0.0)));
+
+        assert_eq!(eval(r#"SUBSTITUTE("abcabc","b","X")"#), Some(string("aXcaXc")));
+        assert_eq!(eval(r#"SUBSTITUTE("abcabc","b","X",2)"#), Some(string("abcaXc")));
+        assert_eq!(eval(r#"SUBSTITUTE("abc","","X")"#), Some(string("abc")));
+        assert_eq!(eval(r#"SUBSTITUTE("abc","d","X")"#), Some(string("abc")));
+        assert_eq!(eval(r#"SUBSTITUTE("abcabc","b","X",3)"#), Some(string("abcabc")));
+        assert_eq!(eval(r#"SUBSTITUTE("abc","a","X",0)"#), Some(Value::Error("#VALUE!")));
+        assert_eq!(eval(r#"SUBSTITUTE("ABCabc","A","x")"#), Some(string("xBCabc")));
+        assert_eq!(eval(r#"SUBSTITUTE(12345,3,9)"#), Some(string("12945")));
+        assert_eq!(eval(r#"SUBSTITUTE("a-b-c","-","")"#), Some(string("abc")));
+
+        assert_eq!(eval(r#"COUNTBLANK($D$1:$D$3)"#), Some(number(2.0)));
+    }
+
+    /// Measured from Excel (`probe-criteria.ps1`): over blank, "", 0, 1 and
+    /// "x", these are the counts `COUNTIF` gives.
+    #[test]
+    fn counts_blanks_the_way_excel_does() {
+        let values = vec![Value::Blank, string(""), number(0.0), number(1.0), string("x")];
+        let count = |criteria: Value| values.iter().filter(|value| criteria_holds(value, &criteria)).count();
+        assert_eq!(count(number(0.0)), 1, "a numeric criterion skips blanks");
+        assert_eq!(count(Value::Blank), 1, "an empty criterion cell is zero");
+        assert_eq!(count(string("")), 2, "\"\" counts empty text and blanks");
+        assert_eq!(count(string("<>x")), 4);
+        assert_eq!(count(string(">0")), 1);
+        assert_eq!(count(string("<1")), 1);
+        assert_eq!(count(string("*")), 2, "a wildcard matches text only");
+        assert_eq!(count(string("=")), 1, "an explicit = counts only empty text");
     }
 }
