@@ -2725,6 +2725,7 @@ fn builtin_date_format(id: u32) -> Option<String> {
         21 => "h:mm:ss".to_owned(),
         22 => format!("{} h:mm", short_date()),
         45 => "mm:ss".to_owned(),
+        46 => "[h]:mm:ss".to_owned(),
         _ => return None,
     })
 }
@@ -2740,10 +2741,14 @@ fn builtin_number_format(id: u32) -> Option<String> {
         4 => "#,##0.00".to_owned(),
         9 => "0%".to_owned(),
         10 => "0.00%".to_owned(),
+        11 => "0.00E+00".to_owned(),
+        12 => "# ?/?".to_owned(),
+        13 => "# ??/??".to_owned(),
         37 => "#,##0 ;(#,##0)".to_owned(),
         38 => "#,##0 ;[Red](#,##0)".to_owned(),
         39 => "#,##0.00;(#,##0.00)".to_owned(),
         40 => "#,##0.00;[Red](#,##0.00)".to_owned(),
+        48 => "##0.0E+0".to_owned(),
         _ => return None,
     })
 }
@@ -4292,9 +4297,11 @@ mod tests {
         assert_eq!(builtin_number_format(4).as_deref(), Some("#,##0.00"));
         assert_eq!(builtin_number_format(9).as_deref(), Some("0%"));
         assert_eq!(builtin_number_format(39).as_deref(), Some("#,##0.00;(#,##0.00)"));
-        // Currency and scientific ids are left to the plain rendering.
+        assert_eq!(builtin_number_format(11).as_deref(), Some("0.00E+00"));
+        assert_eq!(builtin_number_format(12).as_deref(), Some("# ?/?"));
+        assert_eq!(builtin_number_format(48).as_deref(), Some("##0.0E+0"));
+        // Currency ids are left to the plain rendering.
         assert_eq!(builtin_number_format(5), None);
-        assert_eq!(builtin_number_format(11), None);
     }
 
     fn style_index(layout: &SheetLayout, row: u32, col: u32) -> Option<u32> {

@@ -45,7 +45,7 @@ fn date(datetime: &ExcelDateTime, code: &str) -> Option<String> {
         return Some(render_day_zero(serial, section));
     }
     let naive = datetime.as_datetime()?;
-    Some(render(&naive, section))
+    Some(render(&naive, section, serial))
 }
 
 /// The part before the first unquoted `;`, which is the one dates use.
@@ -77,10 +77,16 @@ fn has_date_field(section: &str) -> bool {
             }
             '\\' | '_' | '*' => index += 2,
             '[' => {
-                while index < chars.len() && chars[index] != ']' {
-                    index += 1;
+                let start = index + 1;
+                let mut end = start;
+                while end < chars.len() && chars[end] != ']' {
+                    end += 1;
                 }
-                index += 1;
+                let inside: String = chars[start..end].iter().collect();
+                if elapsed_spec(&inside).is_some() {
+                    return true;
+                }
+                index = end + 1;
             }
             ch if "ymdhs".contains(ch.to_ascii_lowercase()) => return true,
             _ => index += 1,
@@ -98,9 +104,11 @@ struct Parts {
     minute: u32,
     second: u32,
     weekday: Weekday,
+    /// Whole seconds since serial zero, which `[h]`, `[m]` and `[s]` count.
+    elapsed: u64,
 }
 
-fn parts_of(value: &NaiveDateTime) -> Parts {
+fn parts_of(value: &NaiveDateTime, serial: f64) -> Parts {
     Parts {
         year: value.year(),
         month: value.month(),
@@ -109,11 +117,16 @@ fn parts_of(value: &NaiveDateTime) -> Parts {
         minute: value.minute(),
         second: value.second(),
         weekday: value.weekday(),
+        elapsed: elapsed_seconds(serial),
     }
 }
 
+fn elapsed_seconds(serial: f64) -> u64 {
+    (serial * 86_400.0 + 0.5).max(0.0) as u64
+}
+
 fn render_day_zero(serial: f64, section: &str) -> String {
-    let seconds = (serial * 86_400.0 + 0.5).floor() as u64;
+    let seconds = elapsed_seconds(serial);
     render_parts(
         &Parts {
             year: 1900,
@@ -124,13 +137,14 @@ fn render_day_zero(serial: f64, section: &str) -> String {
             second: (seconds % 60) as u32,
             // Excel's serial zero falls on the Sunday before its day one.
             weekday: Weekday::Sun,
+            elapsed: seconds,
         },
         section,
     )
 }
 
-fn render(value: &NaiveDateTime, section: &str) -> String {
-    render_parts(&parts_of(value), section)
+fn render(value: &NaiveDateTime, section: &str, serial: f64) -> String {
+    render_parts(&parts_of(value, serial), section)
 }
 
 fn render_parts(value: &Parts, section: &str) -> String {
@@ -160,8 +174,28 @@ fn render_parts(value: &Parts, section: &str) -> String {
             // `_x` reserves a space and `*x` repeats a fill; neither matters here.
             '_' | '*' => index += 2,
             '[' => {
+                let before = index;
                 while index < chars.len() && chars[index] != ']' {
                     index += 1;
+                }
+                let inside: String = chars[before + 1..index].iter().collect();
+                if let Some((letter, width)) = elapsed_spec(&inside) {
+                    let total = value.elapsed;
+                    let unit = match letter {
+                        'h' => total / 3_600,
+                        'm' => total / 60,
+                        _ => total,
+                    };
+                    if width >= 2 {
+                        out.push_str(&format!("{unit:02}"));
+                    } else {
+                        out.push_str(&unit.to_string());
+                    }
+                    // An `m` after an elapsed hour counts minutes, as it does
+                    // after a clock hour.
+                    if letter == 'h' {
+                        seen_hour = true;
+                    }
                 }
                 index += 1;
             }
@@ -205,6 +239,18 @@ fn run_length(chars: &[char], start: usize, ch: char) -> usize {
         width += 1;
     }
     width
+}
+
+/// `[h]`, `[mm]`, `[ss]`: a total rather than a clock field. Only an all-letter
+/// bracket is one; `[Red]` and `[Magenta]` name colours.
+fn elapsed_spec(inside: &str) -> Option<(char, usize)> {
+    let lower = inside.to_ascii_lowercase();
+    let mut chars = lower.chars();
+    let letter = chars.next()?;
+    if !"hms".contains(letter) || !chars.all(|ch| ch == letter) {
+        return None;
+    }
+    Some((letter, inside.chars().count()))
 }
 
 fn seconds_follow(chars: &[char], mut index: usize) -> bool {
@@ -331,8 +377,14 @@ enum Token {
     Digit(char),
     Dot,
     Comma,
+    Slash,
     Percent,
     General,
+    /// `E+00` or `E-0`: the sign to write, and how many exponent digits.
+    Exponent {
+        plus: bool,
+        digits: usize,
+    },
 }
 
 /// Renders a number through a format code, or `None` when the code is a date
@@ -519,6 +571,34 @@ fn tokens(section: &str) -> Vec<Token> {
                 out.push(Token::Percent);
                 index += 1;
             }
+            '/' => {
+                out.push(Token::Slash);
+                index += 1;
+            }
+            'E' | 'e' => match chars.get(index + 1) {
+                Some('+') | Some('-') => {
+                    let plus = chars[index + 1] == '+';
+                    let start = index + 2;
+                    let mut end = start;
+                    while chars.get(end) == Some(&'0') {
+                        end += 1;
+                    }
+                    if end > start {
+                        out.push(Token::Exponent {
+                            plus,
+                            digits: end - start,
+                        });
+                        index = end;
+                    } else {
+                        out.push(Token::Text(chars[index].to_string()));
+                        index += 1;
+                    }
+                }
+                _ => {
+                    out.push(Token::Text(chars[index].to_string()));
+                    index += 1;
+                }
+            },
             ch if ch.eq_ignore_ascii_case(&'g') => {
                 let rest: String = chars[index..].iter().collect();
                 if rest.to_ascii_lowercase().starts_with("general") {
@@ -567,6 +647,12 @@ fn render_number(value: f64, section: &str, auto_minus: bool) -> Option<String> 
             }
         }
         return Some(out);
+    }
+    if let Some(at) = items.iter().position(|item| matches!(item, Token::Exponent { .. })) {
+        return render_scientific(scaled, &items, at, auto_minus);
+    }
+    if let Some(at) = items.iter().position(|item| matches!(item, Token::Slash)) {
+        return render_fraction(scaled, &items, at, auto_minus);
     }
     let has_region = items
         .iter()
@@ -654,31 +740,11 @@ fn render_number(value: f64, section: &str, auto_minus: bool) -> Option<String> 
         }
     }
 
-    let mut fraction_text = String::new();
-    if places > 0 {
-        let bytes = fraction_digits.as_bytes();
-        let mut keep = vec![true; places];
-        let mut trimming = true;
-        for index in (0..places).rev() {
-            let digit = bytes[index] as char;
-            if trimming && digit == '0' {
-                match fraction[index] {
-                    '#' => keep[index] = false,
-                    '?' => keep[index] = false,
-                    _ => trimming = false,
-                }
-            } else {
-                trimming = false;
-            }
-        }
-        for index in 0..places {
-            if keep[index] {
-                fraction_text.push(bytes[index] as char);
-            } else if fraction[index] == '?' {
-                fraction_text.push(' ');
-            }
-        }
-    }
+    let fraction_text = if places > 0 {
+        fraction_from(&fraction_digits, &fraction)
+    } else {
+        String::new()
+    };
 
     let mut out = String::new();
     if auto_minus {
@@ -692,6 +758,268 @@ fn render_number(value: f64, section: &str, auto_minus: bool) -> Option<String> 
     }
     emit(suffix, &mut out);
     Some(out)
+}
+
+/// `0.00E+00` and `##0.0E+0`: a mantissa and an exponent. The exponent is a
+/// multiple of the integer placeholder count, which is what makes `##0.0` an
+/// engineering format.
+fn render_scientific(value: f64, items: &[Token], at: usize, auto_minus: bool) -> Option<String> {
+    let Token::Exponent { plus, digits } = items[at] else {
+        return None;
+    };
+    let before = &items[..at];
+    let after = &items[at + 1..];
+    let first = before.iter().position(|item| matches!(item, Token::Digit(_)))?;
+    let prefix = &before[..first];
+    let pattern = &before[first..];
+    let mut integer = Vec::new();
+    let mut fraction = Vec::new();
+    let mut after_dot = false;
+    for item in pattern {
+        match item {
+            Token::Digit(ch) => {
+                if after_dot {
+                    fraction.push(*ch);
+                } else {
+                    integer.push(*ch);
+                }
+            }
+            Token::Dot => after_dot = true,
+            _ => {}
+        }
+    }
+    let slots = integer.len().max(1);
+    let places = fraction.len();
+    let magnitude = value.abs();
+    let exponent = if magnitude == 0.0 {
+        0
+    } else {
+        let floor = magnitude.log10().floor() as i64;
+        floor.div_euclid(slots as i64) * slots as i64
+    };
+    let mantissa = magnitude / 10f64.powi(exponent as i32);
+    let digits_text = round_scaled(mantissa, places);
+    let split = digits_text.len() - places;
+    let mut integer_text = digits_text[..split].to_owned();
+    let mandatory = integer.iter().filter(|ch| **ch == '0').count();
+    // Zero is written out to the full integer width: `000.0E+0`.
+    let wanted = if magnitude == 0.0 { slots } else { mandatory };
+    while integer_text.len() < wanted {
+        integer_text.insert(0, '0');
+    }
+    let fraction_text = if places > 0 {
+        fraction_from(&digits_text[split..], &fraction)
+    } else {
+        String::new()
+    };
+    let mut out = String::new();
+    if auto_minus {
+        out.push('-');
+    }
+    emit(prefix, &mut out);
+    out.push_str(&integer_text);
+    if places > 0 {
+        out.push('.');
+        out.push_str(&fraction_text);
+    }
+    out.push('E');
+    if exponent < 0 {
+        out.push('-');
+    } else if plus {
+        out.push('+');
+    }
+    let exponent_text = exponent.abs().to_string();
+    for _ in exponent_text.len()..digits.max(1) {
+        out.push('0');
+    }
+    out.push_str(&exponent_text);
+    emit(after, &mut out);
+    Some(out)
+}
+
+/// `# ?/?`, `# ??/??`, `?/??` or `# ?/8`: a best fraction with the
+/// denominator the placeholders allow, or the one written out.
+fn render_fraction(value: f64, items: &[Token], slash: usize, auto_minus: bool) -> Option<String> {
+    let mut num_start = slash;
+    while num_start > 0 && matches!(items[num_start - 1], Token::Digit(_)) {
+        num_start -= 1;
+    }
+    if num_start == slash {
+        return None;
+    }
+    let numerator_pattern: Vec<char> = items[num_start..slash]
+        .iter()
+        .filter_map(|item| match item {
+            Token::Digit(ch) => Some(*ch),
+            _ => None,
+        })
+        .collect();
+    let mut den_end = slash + 1;
+    let mut fixed: Option<u64> = None;
+    let denominator_pattern: Vec<char>;
+    match items.get(den_end) {
+        Some(Token::Digit(_)) => {
+            while matches!(items.get(den_end), Some(Token::Digit(_))) {
+                den_end += 1;
+            }
+            denominator_pattern = items[slash + 1..den_end]
+                .iter()
+                .filter_map(|item| match item {
+                    Token::Digit(ch) => Some(*ch),
+                    _ => None,
+                })
+                .collect();
+        }
+        Some(Token::Text(text)) => {
+            let digits: String = text.chars().filter(|ch| ch.is_ascii_digit()).collect();
+            if digits.is_empty() || digits.len() != text.len() {
+                return None;
+            }
+            fixed = digits.parse().ok().filter(|q| *q > 0);
+            denominator_pattern = vec!['0'; digits.len()];
+            den_end += 1;
+        }
+        _ => return None,
+    }
+    let integer_digits: Vec<(usize, char)> = items[..num_start]
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| match item {
+            Token::Digit(ch) => Some((index, *ch)),
+            _ => None,
+        })
+        .collect();
+    let mixed = !integer_digits.is_empty();
+    let first_numeric = if mixed { integer_digits[0].0 } else { num_start };
+    let int_end = if mixed {
+        integer_digits.last().map_or(num_start, |(index, _)| index + 1)
+    } else {
+        num_start
+    };
+    let prefix = &items[..first_numeric];
+    let integer_pattern: Vec<char> = integer_digits.iter().map(|(_, ch)| *ch).collect();
+    let between = &items[int_end..num_start];
+    let suffix = &items[den_end..];
+
+    let magnitude = value.abs();
+    let mut whole = if mixed { magnitude.floor() } else { 0.0 };
+    let remainder = if mixed { magnitude - whole } else { magnitude };
+    let (mut p, q) = match fixed {
+        Some(q) => (((remainder * q as f64).round() as u64), q),
+        None => {
+            let max_q = 10u64
+                .saturating_pow(denominator_pattern.len() as u32)
+                .saturating_sub(1)
+                .max(1);
+            let mut best = (0u64, 1u64, f64::INFINITY);
+            for q in 1..=max_q {
+                let p = (remainder * q as f64).round() as u64;
+                let error = (remainder - p as f64 / q as f64).abs();
+                if error < best.2 {
+                    best = (p, q, error);
+                }
+            }
+            (best.0, best.1)
+        }
+    };
+    if mixed && p == q {
+        // The fraction rounded up to a whole one: show it as the next integer.
+        whole += 1.0;
+        p = 0;
+    }
+    let blank = mixed && p == 0;
+
+    let mut out = String::new();
+    if auto_minus {
+        out.push('-');
+    }
+    emit(prefix, &mut out);
+    if mixed {
+        let whole_text = format!("{}", whole as u64);
+        let text = if whole == 0.0 && !blank {
+            if integer_pattern.iter().any(|ch| *ch == '0') {
+                "0".to_owned()
+            } else if integer_pattern.iter().any(|ch| *ch == '?') {
+                " ".repeat(integer_pattern.len())
+            } else {
+                String::new()
+            }
+        } else {
+            pad_number(&whole_text, &integer_pattern, true)
+        };
+        out.push_str(&text);
+    }
+    if blank {
+        let mut spacing = String::new();
+        emit(between, &mut spacing);
+        let width = spacing.chars().count() + numerator_pattern.len() + 1 + denominator_pattern.len();
+        for _ in 0..width {
+            out.push(' ');
+        }
+    } else {
+        emit(between, &mut out);
+        out.push_str(&pad_number(&p.to_string(), &numerator_pattern, true));
+        out.push('/');
+        out.push_str(&pad_number(&q.to_string(), &denominator_pattern, false));
+    }
+    emit(suffix, &mut out);
+    Some(out)
+}
+
+/// The fractional digits a `0/#/?` pattern keeps: optional zeros fall away
+/// from the right, `?` leaves a space where one would have been, `0` keeps it.
+fn fraction_from(digits: &str, pattern: &[char]) -> String {
+    let places = pattern.len();
+    let bytes = digits.as_bytes();
+    let mut keep = vec![true; places];
+    let mut trimming = true;
+    for index in (0..places).rev() {
+        let digit = bytes[index] as char;
+        if trimming && digit == '0' {
+            match pattern[index] {
+                '#' | '?' => keep[index] = false,
+                _ => trimming = false,
+            }
+        } else {
+            trimming = false;
+        }
+    }
+    let mut out = String::new();
+    for index in 0..places {
+        if keep[index] {
+            out.push(bytes[index] as char);
+        } else if pattern[index] == '?' {
+            out.push(' ');
+        }
+    }
+    out
+}
+
+/// A number set to the width of a placeholder run: `0` pads with zeros, `?`
+/// with spaces, `#` not at all.
+fn pad_number(text: &str, pattern: &[char], right_align: bool) -> String {
+    let width = pattern.len();
+    let pad = if pattern.iter().any(|ch| *ch == '0') {
+        '0'
+    } else if pattern.iter().any(|ch| *ch == '?') {
+        ' '
+    } else {
+        return text.to_owned();
+    };
+    let fill = width.saturating_sub(text.chars().count());
+    let mut out = String::new();
+    if right_align {
+        for _ in 0..fill {
+            out.push(pad);
+        }
+        out.push_str(text);
+    } else {
+        out.push_str(text);
+        for _ in 0..fill {
+            out.push(pad);
+        }
+    }
+    out
 }
 
 fn emit(items: &[Token], out: &mut String) {
@@ -841,6 +1169,46 @@ mod tests {
         assert_eq!(render(5.0, "[Red]0").as_deref(), Some("5"));
         // Serial zero is Excel's day zero, 1900-01-00, not the epoch.
         assert_eq!(apply(&at(0.0), "mm/dd").as_deref(), Some("01/00"));
+    }
+
+    /// Measured from Excel (`probe-numfmt.ps1`).
+    #[test]
+    fn renders_scientific_fractions_and_elapsed_time() {
+        let render = |value: f64, code: &str| number(value, code);
+        assert_eq!(render(12345.0, "0.00E+00").as_deref(), Some("1.23E+04"));
+        assert_eq!(render(0.000123, "0.00E+00").as_deref(), Some("1.23E-04"));
+        assert_eq!(render(-12345.0, "0.00E+00").as_deref(), Some("-1.23E+04"));
+        assert_eq!(render(0.0, "0.00E+00").as_deref(), Some("0.00E+00"));
+        assert_eq!(render(1.5, "0.00E+00").as_deref(), Some("1.50E+00"));
+        assert_eq!(render(12345.0, "##0.0E+0").as_deref(), Some("12.3E+3"));
+        assert_eq!(render(0.000123, "##0.0E+0").as_deref(), Some("123.0E-6"));
+        assert_eq!(render(0.0, "##0.0E+0").as_deref(), Some("000.0E+0"));
+        assert_eq!(render(12345.0, "0.0E-00").as_deref(), Some("1.2E04"));
+
+        assert_eq!(render(1.5, "# ?/?").as_deref(), Some("1 1/2"));
+        assert_eq!(render(0.25, "# ?/?").as_deref(), Some(" 1/4"));
+        assert_eq!(render(0.333, "# ?/?").as_deref(), Some(" 1/3"));
+        assert_eq!(render(0.0, "# ?/?").as_deref(), Some("0    "));
+        assert_eq!(render(0.95, "# ?/?").as_deref(), Some("1    "));
+        assert_eq!(render(0.333, "# ??/??").as_deref(), Some("  1/3 "));
+        assert_eq!(render(0.123, "# ??/??").as_deref(), Some("  8/65"));
+        assert_eq!(render(0.0123, "# ??/??").as_deref(), Some("  1/81"));
+        assert_eq!(render(1.5, "?/??").as_deref(), Some("3/2 "));
+        assert_eq!(render(0.0, "?/??").as_deref(), Some("0/1 "));
+        assert_eq!(render(1.5, "# ?/8").as_deref(), Some("1 4/8"));
+        assert_eq!(render(0.333, "# ?/8").as_deref(), Some(" 3/8"));
+        assert_eq!(render(0.1, "# ?/8").as_deref(), Some(" 1/8"));
+
+        let elapsed = |value: f64, code: &str| apply(&at(value), code);
+        assert_eq!(elapsed(1.5, "[h]:mm:ss").as_deref(), Some("36:00:00"));
+        assert_eq!(elapsed(0.25, "[h]:mm:ss").as_deref(), Some("6:00:00"));
+        assert_eq!(elapsed(2.75, "[h]:mm:ss").as_deref(), Some("66:00:00"));
+        assert_eq!(elapsed(1.5, "[m]:ss").as_deref(), Some("2160:00"));
+        assert_eq!(elapsed(0.5, "[s]").as_deref(), Some("43200"));
+        assert_eq!(elapsed(1.5, "[hh]:mm").as_deref(), Some("36:00"));
+        assert_eq!(elapsed(0.25, "[hh]:mm").as_deref(), Some("06:00"));
+        assert_eq!(elapsed(0.0001, "[h]:mm:ss").as_deref(), Some("0:00:09"));
+        assert_eq!(elapsed(0.99999, "[h]:mm:ss").as_deref(), Some("23:59:59"));
     }
 
     /// A date-typed cell carrying a number format shows the serial.
