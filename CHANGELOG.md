@@ -12,6 +12,20 @@ do before, **Improved** for what it now does differently, and **Fixed** for what
 it used to get wrong. A release with nothing to say under one of them leaves
 that group out.
 
+## [1.0.37] - 2026-11-28
+
+### Added
+
+- A cell whose file carries only a formula — a workbook saved to recalculate on open has no cached values — now shows its result: cell and range references, other sheets, and the functions the documents use, including SUM, COUNTIF/COUNTIFS, IF, VLOOKUP, OFFSET, INDIRECT, TEXT, DATE and the text functions
+- Number formats are drawn, not only dates: thousands separators, percentages, accounting formats that keep the currency symbol left and the number right, custom suffixes, scientific notation, fractions and elapsed times
+
+### Fixed
+
+- A formula that builds an address with `&` lost the character while its text was read, leaving the cell blank
+- Workbooks that recalculate on open used to show the values they had cached; their formulas are worked out now, the rest of a shared formula's cells included
+- COUNTIF and COUNTIFS counted blanks differently from Excel; their criteria follow Excel's rules now
+- MIN and MAX compared from zero, so a range of positive numbers could report a minimum of 0
+
 ## [1.0.36] - 2026-11-27
 
 ### Added
