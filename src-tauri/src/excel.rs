@@ -313,7 +313,16 @@ impl Book {
                 }
                 let formatted = value.zip(format).and_then(|(value, code)| numfmt::apply(value, code));
                 line.push(match formatted {
-                    Some(text) => Cell { kind: "date", text },
+                    Some(text) => Cell {
+                        kind: if format.is_some_and(numfmt::is_date_code)
+                            && value.is_some_and(|value| matches!(value, Data::DateTime(_)))
+                        {
+                            "date"
+                        } else {
+                            "number"
+                        },
+                        text,
+                    },
                     None => cell_at(value),
                 });
             }
@@ -977,7 +986,7 @@ fn worked_cell(value: &Value, format: Option<&str>) -> Cell {
     if let (Value::Number(number), Some(code)) = (value, format) {
         let when = ExcelDateTime::new(*number, calamine::ExcelDateTimeType::DateTime, false);
         if let Some(text) = numfmt::apply(&Data::DateTime(when), code) {
-            cell.kind = "date";
+            cell.kind = if numfmt::is_date_code(code) { "date" } else { "number" };
             cell.text = text;
             return cell;
         }

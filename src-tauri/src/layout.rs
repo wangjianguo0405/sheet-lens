@@ -553,7 +553,8 @@ impl Styles {
                 .num_formats
                 .get(&entry.num_fmt_id)
                 .cloned()
-                .or_else(|| builtin_date_format(entry.num_fmt_id)),
+                .or_else(|| builtin_date_format(entry.num_fmt_id))
+                .or_else(|| builtin_number_format(entry.num_fmt_id)),
             border: self.borders.get(entry.border_id).and_then(|b| b.clone()),
         };
         (!style.is_empty()).then_some(style)
@@ -2728,6 +2729,25 @@ fn builtin_date_format(id: u32) -> Option<String> {
     })
 }
 
+/// The built-in formats that carry a number. The currency, scientific and
+/// fraction ids are left to the default rendering: their symbols and shapes
+/// depend on the reader's machine.
+fn builtin_number_format(id: u32) -> Option<String> {
+    Some(match id {
+        1 => "0".to_owned(),
+        2 => "0.00".to_owned(),
+        3 => "#,##0".to_owned(),
+        4 => "#,##0.00".to_owned(),
+        9 => "0%".to_owned(),
+        10 => "0.00%".to_owned(),
+        37 => "#,##0 ;(#,##0)".to_owned(),
+        38 => "#,##0 ;[Red](#,##0)".to_owned(),
+        39 => "#,##0.00;(#,##0.00)".to_owned(),
+        40 => "#,##0.00;[Red](#,##0.00)".to_owned(),
+        _ => return None,
+    })
+}
+
 /// The reader's own short date, as a format pattern.
 ///
 /// The built-in short-date formats (14 and 22) carry no code in the file: Excel
@@ -4264,6 +4284,17 @@ mod tests {
         assert_eq!(builtin_date_format(22).as_deref(), Some("yyyy/m/d h:mm"));
         // A format the workbook wrote itself is drawn as written.
         assert_eq!(builtin_date_format(15).as_deref(), Some("d-mmm-yy"));
+    }
+
+    #[test]
+    fn the_builtin_number_formats_keep_their_excel_codes() {
+        assert_eq!(builtin_number_format(2).as_deref(), Some("0.00"));
+        assert_eq!(builtin_number_format(4).as_deref(), Some("#,##0.00"));
+        assert_eq!(builtin_number_format(9).as_deref(), Some("0%"));
+        assert_eq!(builtin_number_format(39).as_deref(), Some("#,##0.00;(#,##0.00)"));
+        // Currency and scientific ids are left to the plain rendering.
+        assert_eq!(builtin_number_format(5), None);
+        assert_eq!(builtin_number_format(11), None);
     }
 
     fn style_index(layout: &SheetLayout, row: u32, col: u32) -> Option<u32> {
