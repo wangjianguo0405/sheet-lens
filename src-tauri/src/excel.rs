@@ -96,6 +96,9 @@ pub struct Book {
     layouts: HashMap<String, SheetLayout>,
     /// Theme and style tables, shared by every sheet in the workbook.
     layout_cache: layout::Cache,
+    /// The file asks Excel to work every formula out again when it opens it,
+    /// so the values cached beside the formulas are not what Excel shows.
+    recalculate: bool,
 }
 
 pub fn load(path: &str) -> Result<Book, String> {
@@ -116,6 +119,9 @@ pub fn load(path: &str) -> Result<Book, String> {
     // And how each sheet was left — the view, the selected tab and the cursor —
     // which decides what the workbook opens on.
     let states = layout::sheet_states(path);
+    // And whether Excel would recalculate the whole workbook at open, which
+    // makes the values cached beside its formulas stale.
+    let recalculate = layout::recalculates_on_load(path);
 
     for name in names {
         let range = workbook.worksheet_range(&name).map_err(|e| format!("{name}: {e}"))?;
@@ -147,6 +153,7 @@ pub fn load(path: &str) -> Result<Book, String> {
         sheets,
         layouts: HashMap::new(),
         layout_cache: layout::Cache::default(),
+        recalculate,
     })
 }
 
@@ -274,33 +281,40 @@ impl Book {
             known: &known,
             open: &open,
             depth: &depth,
+            recalculate: self.recalculate,
         };
         let mut out = Vec::with_capacity(row_end.saturating_sub(row) as usize);
         for r in row..row_end {
             let mut line = Vec::with_capacity(col_end.saturating_sub(col) as usize);
             for c in col..col_end {
                 let value = height_width.range.get_value((r, c));
-                let formatted = value
-                    .zip(layout.and_then(|found| found.format_at(r, c)))
-                    .and_then(|(value, code)| numfmt::apply(value, code));
+                let format = layout.and_then(|found| found.format_at(r, c));
+                // A workbook Excel recalculates at open has no trustworthy
+                // cached value, so the formula is worked out even where the
+                // file shipped one. Everywhere else only a cell the file left
+                // without a value needs it.
+                let worked = layout
+                    .and_then(|found| found.formulas.get(&(r, c)))
+                    .filter(|_| self.recalculate || value.map_or(true, |value| matches!(value, Data::Empty)))
+                    .and_then(|text| {
+                        values.here.set((r, c));
+                        Formula::parse(text).and_then(|formula| formula.eval(&values))
+                    })
+                    // A formula that comes back with a blank cell in hand —
+                    // `=A1` over an empty A1, or INDIRECT naming one — shows a
+                    // zero in Excel, not an empty cell.
+                    .map(|value| match value {
+                        Value::Blank => Value::Number(0.0),
+                        other => other,
+                    });
+                if let Some(worked) = worked {
+                    line.push(worked_cell(&worked, format));
+                    continue;
+                }
+                let formatted = value.zip(format).and_then(|(value, code)| numfmt::apply(value, code));
                 line.push(match formatted {
                     Some(text) => Cell { kind: "date", text },
-                    None => {
-                        let mut cell = cell_at(value);
-                        // The file states a formula and shipped no value for
-                        // it — Excel works it out at open. It is worked out
-                        // here too, from the cells around it, with anything
-                        // unreadable left as blank as the file left it.
-                        if cell.kind == "empty" {
-                            if let Some(text) = layout.and_then(|found| found.formulas.get(&(r, c))) {
-                                values.here.set((r, c));
-                                if let Some(worked) = Formula::parse(text).and_then(|formula| formula.eval(&values)) {
-                                    write_formula(&worked, &mut cell);
-                                }
-                            }
-                        }
-                        cell
-                    }
+                    None => cell_at(value),
                 });
             }
             out.push(line);
@@ -795,6 +809,9 @@ struct CellValues<'a> {
     known: &'a RefCell<HashMap<(String, u32, u32), Value>>,
     open: &'a RefCell<HashSet<(String, u32, u32)>>,
     depth: &'a std::cell::Cell<u32>,
+    /// The workbook recalculates at open, so a formula is worth more than the
+    /// value cached beside it.
+    recalculate: bool,
 }
 
 impl CellValues<'_> {
@@ -823,31 +840,40 @@ impl CellValues<'_> {
         let Some(found) = self.book.sheets.get(sheet) else {
             return Value::Blank;
         };
-        match found.range.get_value((row, col)) {
-            Some(value) if !matches!(value, Data::Empty) => held(value),
-            // No value of its own: a formula the file left for Excel to work
-            // out, or a cell that really is empty.
-            _ => {
-                let Some(layout) = self.book.layouts.get(sheet) else {
-                    return Value::Blank;
-                };
-                let Some(text) = layout.formulas.get(&(row, col)) else {
-                    return Value::Blank;
-                };
-                let Some(formula) = Formula::parse(text) else {
-                    return Value::Blank;
-                };
-                let nested = CellValues {
-                    book: self.book,
-                    sheet: sheet.to_owned(),
-                    here: std::cell::Cell::new((row, col)),
-                    known: self.known,
-                    open: self.open,
-                    depth: self.depth,
-                };
-                formula.eval(&nested).unwrap_or(Value::Blank)
+        let stored = match found.range.get_value((row, col)) {
+            Some(value) if !matches!(value, Data::Empty) => Some(held(value)),
+            _ => None,
+        };
+        let layout = self.book.layouts.get(sheet);
+        // A workbook that recalculates at open shows the formula's answer, not
+        // the value the file cached beside it; anywhere else the cached value
+        // is what Excel shows, and only a cell without one needs the formula.
+        if self.recalculate || stored.is_none() {
+            if let Some(text) = layout.and_then(|found| found.formulas.get(&(row, col))) {
+                if let Some(formula) = Formula::parse(text) {
+                    let nested = CellValues {
+                        book: self.book,
+                        sheet: sheet.to_owned(),
+                        here: std::cell::Cell::new((row, col)),
+                        known: self.known,
+                        open: self.open,
+                        depth: self.depth,
+                        recalculate: self.recalculate,
+                    };
+                    if let Some(value) = formula.eval(&nested) {
+                        // An error travels with the value it came from, so a
+                        // formula that leans on a broken one stays blank rather
+                        // than counting it as zero. A blank answer is a zero:
+                        // the formula points at an empty cell.
+                        return match value {
+                            Value::Blank => Value::Number(0.0),
+                            other => other,
+                        };
+                    }
+                }
             }
         }
+        stored.unwrap_or(Value::Blank)
     }
 }
 
@@ -1209,6 +1235,7 @@ mod tests {
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
             layouts: HashMap::new(),
             layout_cache: layout::Cache::default(),
+            recalculate: false,
         }
     }
 
@@ -1263,6 +1290,7 @@ mod tests {
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
             layouts: HashMap::new(),
             layout_cache: layout::Cache::default(),
+            recalculate: false,
         }
     }
 
@@ -1439,6 +1467,7 @@ mod tests {
             ]),
             layouts: HashMap::new(),
             layout_cache: layout::Cache::default(),
+            recalculate: false,
         };
 
         let hits = book.search(None, &Matcher::new("さがす", false, false, false));
@@ -1556,6 +1585,10 @@ mod tests {
         // Two cells that name each other.
         layout.formulas.insert((0, 2), "C2+1".to_owned());
         layout.formulas.insert((1, 2), "C1+1".to_owned());
+        // A formula that points at an empty cell shows a zero, while one that
+        // works out to an empty string shows nothing.
+        layout.formulas.insert((5, 1), "A3".to_owned());
+        layout.formulas.insert((5, 0), "\"\"".to_owned());
         let mut book = Book {
             info: WorkbookInfo {
                 path: "fixture".to_owned(),
@@ -1573,6 +1606,7 @@ mod tests {
             sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
             layouts: HashMap::from([("Sheet1".to_owned(), layout)]),
             layout_cache: layout::Cache::default(),
+            recalculate: false,
         };
         let cells = book.cells("Sheet1", 0, 0, 6, 3).unwrap();
         assert_eq!(cells[0][1].text, "5", "SUM over A1:A2");
@@ -1582,5 +1616,49 @@ mod tests {
         assert_eq!(cells[4][1].text, "1", "a blank counts as zero");
         assert_eq!(cells[0][2].kind, "empty", "a cycle stops");
         assert_eq!(cells[1][2].kind, "empty", "a cycle stops");
+        assert_eq!(cells[5][1].text, "0", "a reference to an empty cell is a zero");
+        assert_eq!(cells[5][0].kind, "empty", "an empty string draws nothing");
+    }
+
+    /// A workbook that recalculates at open does not show the values cached
+    /// beside its formulas: Excel works every formula out again when it opens
+    /// it, and the cached values are the ones its author knew were stale.
+    #[test]
+    fn a_workbook_that_recalculates_ignores_the_values_it_cached() {
+        let range: Range<Data> = Range::from_sparse(vec![
+            calamine::Cell::new((0, 0), Data::Float(2.0)),
+            calamine::Cell::new((0, 1), Data::Float(99.0)),
+        ]);
+        let origin = range.start().unwrap_or((0, 0));
+        let mut layout = SheetLayout::empty();
+        layout.rows = 1;
+        layout.cols = 2;
+        layout.formulas.insert((0, 1), "A1*10".to_owned());
+        let mut book = Book {
+            info: WorkbookInfo {
+                path: "fixture".to_owned(),
+                file_name: "fixture".to_owned(),
+                sheets: vec![SheetInfo {
+                    name: "Sheet1".to_owned(),
+                    rows: 1,
+                    cols: 2,
+                    tab_color: None,
+                    hidden: false,
+                    print_area: false,
+                    state: layout::SheetState::default(),
+                }],
+            },
+            sheets: HashMap::from([("Sheet1".to_owned(), Sheet { range, origin })]),
+            layouts: HashMap::from([("Sheet1".to_owned(), layout)]),
+            layout_cache: layout::Cache::default(),
+            recalculate: true,
+        };
+        let cells = book.cells("Sheet1", 0, 0, 1, 2).unwrap();
+        assert_eq!(cells[0][1].text, "20", "the formula, not the 99 the file cached");
+
+        // The same cells read as an ordinary workbook keep the cached value.
+        book.recalculate = false;
+        let cells = book.cells("Sheet1", 0, 0, 1, 2).unwrap();
+        assert_eq!(cells[0][1].text, "99");
     }
 }

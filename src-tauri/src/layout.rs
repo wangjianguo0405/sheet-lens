@@ -712,11 +712,11 @@ pub struct SheetLayout {
     /// folded into `notes` before this is cleared.
     #[serde(skip)]
     pub legacy_rel: Option<String>,
-    /// Cells that state a formula and no value of their own, by `(row, col)`.
-    /// Excel works those out when it opens the file; a writer that leaves the
-    /// cached value empty leaves the viewer a formula and nothing to draw. Not
-    /// part of what the grid sees — `cells` reads it, and the payload carries
-    /// no formulas.
+    /// Cells that state a formula, by `(row, col)`, whether or not the file
+    /// shipped a value with it. Excel works those out when it opens the file,
+    /// and a workbook that recalculates on load has cached values that are
+    /// known to be out of date — `cells` decides which of the two to show. Not
+    /// part of what the grid sees: the payload carries no formulas.
     #[serde(skip)]
     pub formulas: HashMap<(u32, u32), String>,
     /// Cells carrying a note. Excel marks each with a small red triangle in the
@@ -2315,6 +2315,33 @@ pub fn print_area_sheets(path: &str) -> HashSet<String> {
     print_area_names(&workbook).into_keys().collect()
 }
 
+/// Whether Excel has to work every formula out again when it opens this
+/// workbook.
+///
+/// `<calcPr fullCalcOnLoad="1"/>` is the generator saying its cached values
+/// are not current; Excel recalculates on open, so what it shows is not what
+/// the file cached.
+pub fn recalculates_on_load(path: &str) -> bool {
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    let Ok(mut zip) = ZipArchive::new(BufReader::new(file)) else {
+        return false;
+    };
+    let Ok(workbook) = read_entry(&mut zip, "xl/workbook.xml") else {
+        return false;
+    };
+    full_calc_on_load(&workbook)
+}
+
+fn full_calc_on_load(workbook: &str) -> bool {
+    scan(workbook, b"calcPr").iter().any(|element| {
+        element
+            .get("fullcalconload")
+            .is_some_and(|value| value == "1" || value == "true")
+    })
+}
+
 /// Resolves a sheet name to its part inside the zip via workbook relationships.
 fn sheet_part(workbook: &str, rels: &str, sheet_name: &str) -> Result<String, String> {
     let mut targets = HashMap::new();
@@ -3267,12 +3294,16 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
     let mut cell_place: Option<(u32, u32)> = None;
     let mut cell_start = false;
     let mut cell_value_seen = false;
-    // The formula the cell states, and whether the file shipped a value beside
-    // it. A generator that leaves `<v/>` empty hands the viewer a formula and
-    // nothing to draw; only the formula is kept for it.
+    // The formula the cell states. A generator that leaves `<v/>` empty hands
+    // the viewer a formula and nothing to draw; the formula is kept either way.
     let mut cell_formula: Option<String> = None;
     let mut in_cell_formula = false;
-    let mut cell_has_value = false;
+    // A shared formula states its text on the first cell of a run; the cells
+    // after it name the run by `si` and state nothing else. The run is filled
+    // in once the sheet has been read, since a sibling may be seen first.
+    let mut shared_formulas: HashMap<u32, ((u32, u32), String)> = HashMap::new();
+    let mut shared_siblings: Vec<((u32, u32), u32)> = Vec::new();
+    let mut cell_shared_si: Option<u32> = None;
 
     loop {
         buf.clear();
@@ -3559,22 +3590,28 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
                     b"v" => {
                         in_cell_value = rich_cell.is_some();
                         cell_value_seen = true;
-                        // `<v/>` is a value the file did not work out.
-                        if !self_closed {
-                            cell_has_value = true;
-                        }
                     }
                     // Inline strings carry their text as element content.
                     b"is" => {
                         in_cell_text = true;
-                        cell_has_value = true;
                     }
-                    // A cell's own formula. Elements of this name appear only
-                    // inside `<c>`; the shared formula a sibling points at by
-                    // `si` states no text, and `<f/>` is exactly that.
-                    b"f" if cell_place.is_some() && !self_closed => {
-                        in_cell_formula = true;
-                        cell_formula.get_or_insert_with(String::new);
+                    // A cell's own formula. A shared one carries `t="shared"`:
+                    // the first cell of its run states the text, and the cells
+                    // after it are `<f/>` naming the run by `si`.
+                    b"f" if cell_place.is_some() => {
+                        let shared = attr(&element, b"t").as_deref() == Some("shared");
+                        let si = attr(&element, b"si").and_then(|value| value.parse::<u32>().ok());
+                        if self_closed {
+                            if shared {
+                                cell_shared_si = si;
+                            }
+                        } else {
+                            in_cell_formula = true;
+                            cell_formula.get_or_insert_with(String::new);
+                            if shared {
+                                cell_shared_si = si;
+                            }
+                        }
                     }
                     b"c" => {
                         // Cell display values come from calamine; this pass only
@@ -3586,7 +3623,7 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
                         cell_value_seen = attr(&element, b"t").as_deref() == Some("str");
                         cell_start = true;
                         cell_formula = None;
-                        cell_has_value = false;
+                        cell_shared_si = None;
                         // A shared-string cell names its string by number; the
                         // runs are looked up by that number when `<v>` arrives,
                         // because two cells may spell the same text with
@@ -3734,20 +3771,22 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
                                 span.1 = span.1.max(col);
                             }
                         }
-                        // A formula the file shipped no value for: Excel works
-                        // it out when it opens, so the viewer keeps it to do
-                        // what it can with. One that did ship a value needs
-                        // nothing — the cached value is what Excel shows too.
-                        if let (Some(place), Some(formula), false) = (cell_place, cell_formula.take(), cell_has_value) {
-                            let formula = formula.trim();
-                            if !formula.is_empty() {
-                                layout.formulas.insert(place, formula.to_owned());
+                        // The formula is kept whether or not the file shipped a
+                        // value beside it: a workbook that recalculates on load
+                        // carries cached values known to be out of date, and
+                        // `cells` decides which of the two to show.
+                        let formula = cell_formula.take().map(|text| text.trim().to_owned());
+                        if let (Some(place), Some(formula)) = (cell_place, formula.filter(|text| !text.is_empty())) {
+                            if let Some(si) = cell_shared_si.take() {
+                                shared_formulas.insert(si, (place, formula.clone()));
                             }
+                            layout.formulas.insert(place, formula);
+                        } else if let (Some(place), Some(si)) = (cell_place, cell_shared_si.take()) {
+                            shared_siblings.push((place, si));
                         }
                         cell_place = None;
                         cell_start = false;
                         cell_value_seen = false;
-                        cell_has_value = false;
                         in_cell_formula = false;
                     }
                     b"f" => in_cell_formula = false,
@@ -3830,6 +3869,21 @@ fn parse_sheet<R: BufRead>(reader: R, styles: &Styles, rich: &[Option<Vec<RichRu
             Ok(Event::Eof) => break,
             Err(e) => return Err(e.to_string()),
             _ => {}
+        }
+    }
+
+    // Fill each shared formula's run: the text is written once, on the run's
+    // first cell, and every cell that names the run moves with its references
+    // the way Excel filled the rest of the run in.
+    for (place, si) in shared_siblings {
+        let Some(((from_row, from_col), text)) = shared_formulas.get(&si) else {
+            continue;
+        };
+        if (*from_row, *from_col) == place {
+            continue;
+        }
+        if let Some(shifted) = shift_formula(text, (*from_row, *from_col), place) {
+            layout.formulas.entry(place).or_insert(shifted);
         }
     }
 
@@ -3932,6 +3986,139 @@ fn read_entry<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Str
     let mut out = String::new();
     entry.read_to_string(&mut out).map_err(|e| e.to_string())?;
     Ok(out)
+}
+
+/// Moves a shared formula from the cell that states it to one that only names
+/// it, the way Excel fills the run: a reference without a `$` follows the
+/// move, a `$` pins its row or column, and anything inside a string literal or
+/// a quoted sheet name is text rather than a reference.
+fn shift_formula(text: &str, from: (u32, u32), to: (u32, u32)) -> Option<String> {
+    let down = i64::from(to.0) - i64::from(from.0);
+    let right = i64::from(to.1) - i64::from(from.1);
+    if down == 0 && right == 0 {
+        return Some(text.to_owned());
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        // A string or a quoted sheet name runs to its closing quote; a doubled
+        // quote inside it is an escaped one rather than the end.
+        if ch == '"' || ch == '\'' {
+            out.push(ch);
+            index += 1;
+            while index < chars.len() {
+                let inside = chars[index];
+                out.push(inside);
+                index += 1;
+                if inside == ch {
+                    if chars.get(index) == Some(&ch) {
+                        out.push(ch);
+                        index += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some((end, reference)) = shifted_reference(&chars, index, down, right) {
+            out.push_str(&reference);
+            index = end;
+            continue;
+        }
+        out.push(ch);
+        index += 1;
+    }
+    Some(out)
+}
+
+/// One `A1`/`$A$1` token starting at `start`, moved by the two offsets, as the
+/// index just past it and the text to write in its place. Anything that only
+/// looks like a reference — a name, a function, a sheet name before `!` — is
+/// left for the caller to copy through.
+fn shifted_reference(chars: &[char], start: usize, down: i64, right: i64) -> Option<(usize, String)> {
+    let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.';
+    if start > 0 && word(chars[start - 1]) {
+        return None;
+    }
+    let mut index = start;
+    let col_absolute = chars.get(index) == Some(&'$');
+    if col_absolute {
+        index += 1;
+    }
+    let letters = index;
+    while chars.get(index).is_some_and(|ch| ch.is_ascii_uppercase()) {
+        index += 1;
+        if index - letters > 3 {
+            return None;
+        }
+    }
+    if index == letters {
+        return None;
+    }
+    let mut col = 0i64;
+    for ch in &chars[letters..index] {
+        col = col * 26 + i64::from(*ch as u8 - b'A' + 1);
+    }
+    let row_absolute = chars.get(index) == Some(&'$');
+    if row_absolute {
+        index += 1;
+    }
+    let digits = index;
+    while chars.get(index).is_some_and(|ch| ch.is_ascii_digit()) {
+        index += 1;
+        if index - digits > 7 {
+            return None;
+        }
+    }
+    if index == digits {
+        return None;
+    }
+    let mut row = 0i64;
+    for ch in &chars[digits..index] {
+        row = row * 10 + i64::from(*ch as u8 - b'0');
+    }
+    if !(1..=16384).contains(&col) || !(1..=1_048_576).contains(&row) {
+        return None;
+    }
+    // A longer word is a name; `LOG10(` is a function and `A1!` a sheet name.
+    if chars.get(index).is_some_and(|ch| word(*ch)) {
+        return None;
+    }
+    let mut after = index;
+    while chars.get(after) == Some(&' ') {
+        after += 1;
+    }
+    if matches!(chars.get(after), Some('(') | Some('!')) {
+        return None;
+    }
+    let moved_col = if col_absolute { col } else { col + right };
+    let moved_row = if row_absolute { row } else { row + down };
+    if !(1..=16384).contains(&moved_col) || !(1..=1_048_576).contains(&moved_row) {
+        return Some((index, "#REF!".to_owned()));
+    }
+    let mut reference = String::new();
+    if col_absolute {
+        reference.push('$');
+    }
+    reference.push_str(&column_name(moved_col));
+    if row_absolute {
+        reference.push('$');
+    }
+    reference.push_str(&moved_row.to_string());
+    Some((index, reference))
+}
+
+fn column_name(mut col: i64) -> String {
+    let mut out = String::new();
+    while col > 0 {
+        let rest = (col - 1) % 26;
+        out.insert(0, (b'A' + rest as u8) as char);
+        col = (col - 1) / 26;
+    }
+    out
 }
 
 /// First attribute matching `name`, ignoring any namespace prefix.
@@ -4434,10 +4621,10 @@ mod tests {
 
     /// A generated sheet writes its formulas with an empty `<v/>` and lets
     /// Excel work them out at open, so the formula is the only thing there is
-    /// to draw. A cell that did ship a value needs none of that, and a shared
-    /// formula states its text on the first cell of the run only.
+    /// to draw. A cached value does not make the formula go away: a workbook
+    /// that recalculates on load has values that are known to be stale.
     #[test]
-    fn keeps_the_formula_of_a_cell_whose_value_the_file_left_empty() {
+    fn keeps_formulas_beside_the_values_the_file_cached() {
         let styles = parse_styles("<styleSheet/>", Palette::EMPTY);
         let sheet = br#"<worksheet><sheetData>
             <row r="10">
@@ -4449,13 +4636,61 @@ mod tests {
         </sheetData></worksheet>"#;
         let layout = parse_sheet(&sheet[..], &styles, &[]).expect("layout");
         assert_eq!(layout.formulas.get(&(9, 1)).map(String::as_str), Some("ROW()-3"));
-        assert_eq!(layout.formulas.get(&(9, 2)), None, "a cached value needs no formula");
+        assert_eq!(
+            layout.formulas.get(&(9, 2)).map(String::as_str),
+            Some("ROW()"),
+            "a cached value does not remove the formula"
+        );
         assert_eq!(
             layout.formulas.get(&(9, 3)),
             None,
-            "a shared formula states its text on the run's first cell"
+            "a shared formula with no text states nothing"
         );
         assert_eq!(layout.formulas.get(&(9, 4)), None, "an inline string is a value");
+    }
+
+    /// A shared formula is written once, on the first cell of its run, and the
+    /// other cells name it by `si`. A workbook that left their values out has
+    /// nothing to draw unless the formula moves to each cell's own place the
+    /// way Excel filled the run in.
+    #[test]
+    fn moves_a_shared_formula_to_every_cell_that_names_it() {
+        let styles = parse_styles("<styleSheet/>", Palette::EMPTY);
+        let sheet = br#"<worksheet><sheetData>
+            <row r="10">
+                <c r="B10"><f t="shared" ref="B10:D12" si="0">A10+$A$10+$A10+A$10+'My Sheet'!A10+LOG10(A10)+"A10"</f><v/></c>
+                <c r="C10"><f t="shared" si="0"/><v/></c>
+            </row>
+            <row r="11"><c r="B11"><f t="shared" si="0"/><v/></c></row>
+            <row r="12"><c r="B12"><f t="shared" si="0"/><v>7</v></c></row>
+        </sheetData></worksheet>"#;
+        let layout = parse_sheet(&sheet[..], &styles, &[]).expect("layout");
+        let master = "A10+$A$10+$A10+A$10+'My Sheet'!A10+LOG10(A10)+\"A10\"";
+        assert_eq!(layout.formulas.get(&(9, 1)).map(String::as_str), Some(master));
+        assert_eq!(
+            layout.formulas.get(&(9, 2)).map(String::as_str),
+            Some("B10+$A$10+$A10+B$10+'My Sheet'!B10+LOG10(B10)+\"A10\""),
+            "a column to the right moves the columns that are not pinned"
+        );
+        assert_eq!(
+            layout.formulas.get(&(10, 1)).map(String::as_str),
+            Some("A11+$A$10+$A11+A$10+'My Sheet'!A11+LOG10(A11)+\"A10\""),
+            "a row below moves the rows that are not pinned"
+        );
+        assert_eq!(
+            layout.formulas.get(&(11, 1)).map(String::as_str),
+            Some("A12+$A$10+$A12+A$10+'My Sheet'!A12+LOG10(A12)+\"A10\""),
+            "a cell with a cached value still gets the formula"
+        );
+    }
+
+    #[test]
+    fn reads_whether_the_workbook_recalculates_on_load() {
+        assert!(full_calc_on_load(
+            r#"<workbook><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>"#
+        ));
+        assert!(!full_calc_on_load(r#"<workbook><calcPr calcId="191029"/></workbook>"#));
+        assert!(!full_calc_on_load("<workbook/>"));
     }
 
     /// The entities inside a formula arrive as events of their own, and a
