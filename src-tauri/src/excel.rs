@@ -289,6 +289,20 @@ impl Book {
             for c in col..col_end {
                 let value = height_width.range.get_value((r, c));
                 let format = layout.and_then(|found| found.format_at(r, c));
+                let width = layout.map(|found| {
+                    found
+                        .col_widths_chars
+                        .get(&c)
+                        .copied()
+                        .unwrap_or(found.default_col_width_chars)
+                });
+                let family = layout.and_then(|found| {
+                    found
+                        .style_index(r, c)
+                        .and_then(|index| found.styles.get(index as usize))
+                        .and_then(|style| style.family.as_deref())
+                        .or(found.font_family.as_deref())
+                });
                 // A workbook Excel recalculates at open has no trustworthy
                 // cached value, so the formula is worked out even where the
                 // file shipped one. Everywhere else only a cell the file left
@@ -308,12 +322,14 @@ impl Book {
                         other => other,
                     });
                 if let Some(worked) = worked {
-                    line.push(worked_cell(&worked, format));
+                    line.push(worked_cell(&worked, format, width, family));
                     continue;
                 }
-                let formatted = value.zip(format).and_then(|(value, code)| numfmt::apply(value, code));
+                let formatted = value
+                    .zip(format)
+                    .and_then(|(value, code)| numfmt::rendered(value, code));
                 line.push(match formatted {
-                    Some(text) => Cell {
+                    Some(rendered) => Cell {
                         kind: if format.is_some_and(numfmt::is_date_code)
                             && value.is_some_and(|value| matches!(value, Data::DateTime(_)))
                         {
@@ -321,7 +337,7 @@ impl Book {
                         } else {
                             "number"
                         },
-                        text,
+                        text: fill_text(rendered.text, &rendered.fills, width, family),
                     },
                     None => cell_at(value),
                 });
@@ -981,18 +997,92 @@ fn error_code(error: &calamine::CellErrorType) -> &'static str {
 /// A formula's answer as the cell that carries it shows it: through the cell's
 /// own date format when it has one, the same rendering a cached date goes
 /// through, and otherwise as the plain value.
-fn worked_cell(value: &Value, format: Option<&str>) -> Cell {
+fn worked_cell(value: &Value, format: Option<&str>, width: Option<f64>, family: Option<&str>) -> Cell {
     let mut cell = cell_at(None);
     if let (Value::Number(number), Some(code)) = (value, format) {
         let when = ExcelDateTime::new(*number, calamine::ExcelDateTimeType::DateTime, false);
-        if let Some(text) = numfmt::apply(&Data::DateTime(when), code) {
+        if let Some(rendered) = numfmt::rendered(&Data::DateTime(when), code) {
             cell.kind = if numfmt::is_date_code(code) { "date" } else { "number" };
-            cell.text = text;
+            cell.text = fill_text(rendered.text, &rendered.fills, width, family);
             return cell;
         }
     }
     write_formula(value, &mut cell);
     cell
+}
+
+/// Excel's `*x` fills the cell's remaining width with x. The width is measured
+/// in the default font's digit widths, and how many fill characters fit is a
+/// matter of the cell font's own widths — these two ratios were read off
+/// MS PGothic and Calibri at 11pt (`probe-fill.ps1`), and bracket the fonts
+/// the corpus uses.
+fn fill_text(text: String, fills: &[(usize, char)], width: Option<f64>, family: Option<&str>) -> String {
+    let Some(width) = width else {
+        return text;
+    };
+    let Some(&(at, fill)) = fills.first() else {
+        return text;
+    };
+    let (text_unit, fill_unit) = if japanese_font(family) {
+        (0.83, 0.63)
+    } else {
+        (0.72, 0.377)
+    };
+    // The stored width includes the cell's own edge padding.
+    let usable = width - 0.6;
+    let used: f64 = text.chars().map(|ch| if wide(ch) { 2.0 } else { text_unit }).sum();
+    let count = ((usable - used) / fill_unit).round().max(0.0) as usize;
+    if count == 0 {
+        return text;
+    }
+    let mut out = String::with_capacity(text.len() + count);
+    for (index, ch) in text.chars().enumerate() {
+        if index == at {
+            out.extend(std::iter::repeat(fill).take(count));
+        }
+        out.push(ch);
+    }
+    if at >= text.chars().count() {
+        out.extend(std::iter::repeat(fill).take(count));
+    }
+    out
+}
+
+fn japanese_font(family: Option<&str>) -> bool {
+    let Some(family) = family else {
+        return false;
+    };
+    [
+        "ＭＳ",
+        "MS P",
+        "PGothic",
+        "ゴシック",
+        "明朝",
+        "Meiryo",
+        "メイリオ",
+        "Yu ",
+        "游",
+        "Hiragino",
+        "Noto Sans JP",
+        "Noto Serif JP",
+    ]
+    .iter()
+    .any(|name| family.contains(name))
+}
+
+/// Whether a character takes two of Excel's column-width units.
+fn wide(ch: char) -> bool {
+    matches!(ch,
+        '\u{1100}'..='\u{115F}'
+            | '\u{2E80}'..='\u{A4CF}'
+            | '\u{AC00}'..='\u{D7A3}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FE30}'..='\u{FE4F}'
+            | '\u{FF00}'..='\u{FF60}'
+            | '\u{FFE0}'..='\u{FFE6}'
+            | '\u{1F300}'..='\u{1F64F}'
+            | '\u{1F900}'..='\u{1F9FF}'
+            | '\u{20000}'..='\u{3FFFD}')
 }
 
 /// A formula's answer, as the cell that carries it shows it.
@@ -1695,6 +1785,35 @@ mod tests {
         assert_eq!(cells[1][2].kind, "empty", "a cycle stops");
         assert_eq!(cells[5][1].text, "0", "a reference to an empty cell is a zero");
         assert_eq!(cells[5][0].kind, "empty", "an empty string draws nothing");
+    }
+
+    /// Measured from Excel (`probe-fill.ps1`): `$` on the left, the number on
+    /// the right, and the spaces between scaled to the column's width.
+    #[test]
+    fn fills_a_cell_to_its_width_the_way_excel_does() {
+        let base = " $1,234.50 ".to_owned();
+        let filled = |spaces: usize| format!(" ${}1,234.50 ", " ".repeat(spaces));
+        assert_eq!(
+            fill_text(base.clone(), &[(2, ' ')], Some(14.625), Some("MS PGothic")),
+            filled(8)
+        );
+        assert_eq!(
+            fill_text(base.clone(), &[(2, ' ')], Some(20.625), Some("MS PGothic")),
+            filled(17)
+        );
+        assert_eq!(
+            fill_text(base.clone(), &[(2, ' ')], Some(40.625), Some("MS PGothic")),
+            filled(49)
+        );
+        assert_eq!(
+            fill_text(base.clone(), &[(2, ' ')], Some(14.625), Some("Calibri")),
+            filled(16)
+        );
+        assert_eq!(
+            fill_text(base.clone(), &[(2, ' ')], Some(20.625), Some("Calibri")),
+            filled(32)
+        );
+        assert_eq!(fill_text(base, &[(2, ' ')], Some(40.625), Some("Calibri")), filled(85));
     }
 
     /// A workbook that recalculates at open does not show the values cached

@@ -8,18 +8,36 @@
 use calamine::{Data, ExcelDateTime};
 use chrono::{Datelike, NaiveDateTime, Timelike, Weekday};
 
+/// A rendered cell: its text, and where a `*x` fill goes. The fill is not part
+/// of the text — how many times it repeats depends on the cell's width, which
+/// is the caller's to know.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rendered {
+    pub text: String,
+    /// Character index in `text`, and the character to repeat there.
+    pub fills: Vec<(usize, char)>,
+}
+
 /// Renders `value` with `code`, or `None` when the code is one this cannot read.
 pub fn apply(value: &Data, code: &str) -> Option<String> {
+    rendered(value, code).map(|rendered| rendered.text)
+}
+
+/// The text and the fills, for a caller that knows the cell's width.
+pub fn rendered(value: &Data, code: &str) -> Option<Rendered> {
     match value {
         Data::DateTime(datetime) => {
             if let Some(text) = date(datetime, code) {
-                return Some(text);
+                return Some(Rendered {
+                    text,
+                    fills: Vec::new(),
+                });
             }
             // A date-typed cell with a number code shows the serial number.
-            number(datetime.as_f64(), code)
+            render_number_value(datetime.as_f64(), code)
         }
-        Data::Float(value) => number(*value, code),
-        Data::Int(value) => number(*value as f64, code),
+        Data::Float(value) => render_number_value(*value, code),
+        Data::Int(value) => render_number_value(*value as f64, code),
         _ => None,
     }
 }
@@ -380,6 +398,8 @@ enum Token {
     Slash,
     Percent,
     General,
+    /// `*x`: repeat x across whatever room the cell has left.
+    Fill(char),
     /// `E+00` or `E-0`: the sign to write, and how many exponent digits.
     Exponent {
         plus: bool,
@@ -390,6 +410,10 @@ enum Token {
 /// Renders a number through a format code, or `None` when the code is a date
 /// or a construct this does not model.
 pub fn number(value: f64, code: &str) -> Option<String> {
+    render_number_value(value, code).map(|rendered| rendered.text)
+}
+
+fn render_number_value(value: f64, code: &str) -> Option<Rendered> {
     if !value.is_finite() {
         return None;
     }
@@ -398,7 +422,9 @@ pub fn number(value: f64, code: &str) -> Option<String> {
         return None;
     }
     let (section, auto_minus) = choose(&sections, value)?;
-    render_number(value, section, auto_minus)
+    let mut fills = Vec::new();
+    let text = render_number(value, section, auto_minus, &mut fills)?;
+    Some(Rendered { text, fills })
 }
 
 /// The sections separated by an unquoted `;`.
@@ -538,9 +564,14 @@ fn tokens(section: &str) -> Vec<Token> {
                 out.push(Token::Text(" ".to_owned()));
                 index += 2;
             }
-            // `*x` fills the cell with x; the grid draws its own text, so the
-            // fill is left out rather than rendered once and wrong.
-            '*' => index += 2,
+            // `*x` is the fill: the caller repeats x to the cell's edge once
+            // it knows the width.
+            '*' => {
+                if let Some(ch) = chars.get(index + 1) {
+                    out.push(Token::Fill(*ch));
+                }
+                index += 2;
+            }
             '[' => {
                 let start = index + 1;
                 let mut end = start;
@@ -628,7 +659,7 @@ fn currency_symbol(inside: &str) -> Option<String> {
     Some(symbol.to_owned())
 }
 
-fn render_number(value: f64, section: &str, auto_minus: bool) -> Option<String> {
+fn render_number(value: f64, section: &str, auto_minus: bool, fills: &mut Vec<(usize, char)>) -> Option<String> {
     let items = tokens(section);
     let percents = items.iter().filter(|item| matches!(item, Token::Percent)).count();
     let scaled = value * 100f64.powi(percents as i32);
@@ -643,16 +674,17 @@ fn render_number(value: f64, section: &str, auto_minus: bool) -> Option<String> 
                 Token::Text(text) => out.push_str(text),
                 Token::Percent => out.push('%'),
                 Token::General => out.push_str(&general_text(scaled)),
+                Token::Fill(ch) => fills.push((out.chars().count(), *ch)),
                 _ => {}
             }
         }
         return Some(out);
     }
     if let Some(at) = items.iter().position(|item| matches!(item, Token::Exponent { .. })) {
-        return render_scientific(scaled, &items, at, auto_minus);
+        return render_scientific(scaled, &items, at, auto_minus, fills);
     }
     if let Some(at) = items.iter().position(|item| matches!(item, Token::Slash)) {
-        return render_fraction(scaled, &items, at, auto_minus);
+        return render_fraction(scaled, &items, at, auto_minus, fills);
     }
     let has_region = items
         .iter()
@@ -666,6 +698,7 @@ fn render_number(value: f64, section: &str, auto_minus: bool) -> Option<String> 
             match item {
                 Token::Text(text) => out.push_str(text),
                 Token::Percent => out.push('%'),
+                Token::Fill(ch) => fills.push((out.chars().count(), *ch)),
                 _ => {}
             }
         }
@@ -750,20 +783,26 @@ fn render_number(value: f64, section: &str, auto_minus: bool) -> Option<String> 
     if auto_minus {
         out.push('-');
     }
-    emit(prefix, &mut out);
+    emit(prefix, &mut out, fills);
     out.push_str(&integer_text);
     if places > 0 {
         out.push('.');
         out.push_str(&fraction_text);
     }
-    emit(suffix, &mut out);
+    emit(suffix, &mut out, fills);
     Some(out)
 }
 
 /// `0.00E+00` and `##0.0E+0`: a mantissa and an exponent. The exponent is a
 /// multiple of the integer placeholder count, which is what makes `##0.0` an
 /// engineering format.
-fn render_scientific(value: f64, items: &[Token], at: usize, auto_minus: bool) -> Option<String> {
+fn render_scientific(
+    value: f64,
+    items: &[Token],
+    at: usize,
+    auto_minus: bool,
+    fills: &mut Vec<(usize, char)>,
+) -> Option<String> {
     let Token::Exponent { plus, digits } = items[at] else {
         return None;
     };
@@ -816,7 +855,7 @@ fn render_scientific(value: f64, items: &[Token], at: usize, auto_minus: bool) -
     if auto_minus {
         out.push('-');
     }
-    emit(prefix, &mut out);
+    emit(prefix, &mut out, fills);
     out.push_str(&integer_text);
     if places > 0 {
         out.push('.');
@@ -833,13 +872,19 @@ fn render_scientific(value: f64, items: &[Token], at: usize, auto_minus: bool) -
         out.push('0');
     }
     out.push_str(&exponent_text);
-    emit(after, &mut out);
+    emit(after, &mut out, fills);
     Some(out)
 }
 
 /// `# ?/?`, `# ??/??`, `?/??` or `# ?/8`: a best fraction with the
 /// denominator the placeholders allow, or the one written out.
-fn render_fraction(value: f64, items: &[Token], slash: usize, auto_minus: bool) -> Option<String> {
+fn render_fraction(
+    value: f64,
+    items: &[Token],
+    slash: usize,
+    auto_minus: bool,
+    fills: &mut Vec<(usize, char)>,
+) -> Option<String> {
     let mut num_start = slash;
     while num_start > 0 && matches!(items[num_start - 1], Token::Digit(_)) {
         num_start -= 1;
@@ -933,7 +978,7 @@ fn render_fraction(value: f64, items: &[Token], slash: usize, auto_minus: bool) 
     if auto_minus {
         out.push('-');
     }
-    emit(prefix, &mut out);
+    emit(prefix, &mut out, fills);
     if mixed {
         let whole_text = format!("{}", whole as u64);
         let text = if whole == 0.0 && !blank {
@@ -951,18 +996,19 @@ fn render_fraction(value: f64, items: &[Token], slash: usize, auto_minus: bool) 
     }
     if blank {
         let mut spacing = String::new();
-        emit(between, &mut spacing);
+        let mut ignored = Vec::new();
+        emit(between, &mut spacing, &mut ignored);
         let width = spacing.chars().count() + numerator_pattern.len() + 1 + denominator_pattern.len();
         for _ in 0..width {
             out.push(' ');
         }
     } else {
-        emit(between, &mut out);
+        emit(between, &mut out, fills);
         out.push_str(&pad_number(&p.to_string(), &numerator_pattern, true));
         out.push('/');
         out.push_str(&pad_number(&q.to_string(), &denominator_pattern, false));
     }
-    emit(suffix, &mut out);
+    emit(suffix, &mut out, fills);
     Some(out)
 }
 
@@ -1022,13 +1068,14 @@ fn pad_number(text: &str, pattern: &[char], right_align: bool) -> String {
     out
 }
 
-fn emit(items: &[Token], out: &mut String) {
+fn emit(items: &[Token], out: &mut String, fills: &mut Vec<(usize, char)>) {
     for item in items {
         match item {
             Token::Text(text) => out.push_str(text),
             Token::Percent => out.push('%'),
             Token::Comma => out.push(','),
             Token::Dot => out.push('.'),
+            Token::Fill(ch) => fills.push((out.chars().count(), *ch)),
             _ => {}
         }
     }
@@ -1209,6 +1256,16 @@ mod tests {
         assert_eq!(elapsed(0.25, "[hh]:mm").as_deref(), Some("06:00"));
         assert_eq!(elapsed(0.0001, "[h]:mm:ss").as_deref(), Some("0:00:09"));
         assert_eq!(elapsed(0.99999, "[h]:mm:ss").as_deref(), Some("23:59:59"));
+    }
+
+    /// Measured from Excel (`probe-numfmt.ps1`).
+    #[test]
+    fn keeps_where_a_fill_belongs() {
+        let first = rendered(&Data::Float(1234.5), "_(\"$\"* #,##0.00_)").expect("render");
+        assert_eq!(first.text, " $1,234.50 ");
+        assert_eq!(first.fills, vec![(2, ' ')]);
+        // A format without `*` has nowhere to fill.
+        assert!(rendered(&Data::Float(1.0), "0.00").expect("render").fills.is_empty());
     }
 
     /// A date-typed cell carrying a number format shows the serial.
